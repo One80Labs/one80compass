@@ -1,0 +1,33 @@
+﻿Release,Epic,Key,Title,Priority,Acceptance_Criteria,Status
+R1,Foundation,SEC-01,Tenant-aware user authentication,Must,Cognito sign-in and MFA; unauthorized tenant access denied.,Backlog
+R1,Foundation,SEC-02,Customer membership and roles,Must,Admins manage customers; members limited to own customers.,Backlog
+R1,Foundation,SEC-03,Environment and CI/CD,Must,Dev/stage/prod deployments and rollback reproducible.,Backlog
+R1,Portal,POR-01,Customer/project administration,Must,Admin creates customer/project and assigns members.,Backlog
+R1,Portal,POR-02,App directory and navigation,Must,Project selector and app tiles show only authorized links.,Backlog
+R1,Portal,POR-03,Secure existing Lambda links,Must,Direct application URL does not bypass authorization.,Backlog
+R1,Portal,POR-04,Project Overview,Must,"Manual health, notes, quick links and aggregate basic summary.",Backlog
+R1,Documents,DOC-M01,Secure file upload/download,Must,"Tenant scoped S3 authorization, version metadata.",Backlog
+R1,Documents,DOC-M02,Basic file versions and Recycle Bin,Must,Versions retrievable; soft delete and single restore audited.,Backlog
+R1,GitHub,GIT-01,GitHub App and mapping,Must,"Repository, Project and issue identifiers mapped without exposing credentials.",Backlog
+R1,GitHub,GIT-02,Reliable two-way sync,Must,"Webhook ingestion, outgoing API, retries, reconciliation and status.",Backlog
+R1,Plan & Kanban,PLN-M01,Task table and estimates,Must,Issue and numeric effort estimates editable and synchronized.,Backlog
+R1,Plan & Kanban,PLN-M02,Weighted project progress,Must,Leaf-only effort; unestimated=1; no tasks yields no percentage.,Backlog
+R1,Plan & Kanban,PLN-M03,Explained manual override,Must,Explanation mandatory; automatic figure retained and audited.,Backlog
+R1,Plan & Kanban,KAN-01,Basic Kanban,Must,Move issue statuses on board with GitHub sync.,Backlog
+R1,Status Reports,STA-01,On-demand report workflow,Must,"Draft, review, approval, publish, version history.",Backlog
+R1,Governance,AUD-01,Core audit logging,Must,Actor/time/changes and restore events recorded.,Backlog
+R1,Launch,REL-01,Pilot acceptance and security tests,Must,"Security, recovery, synchronization and customer scenario gates pass.",Backlog
+R2,Plan,PLN-A01,Gantt with task date edits,Must,Drag/resize task; validate and sync changes.,Backlog
+R2,Plan,PLN-A02,Dependency preview and approval,Must,Show downstream changes before approval; conflicts flagged if rejected.,Backlog
+R2,Plan,PLN-A03,Hierarchy completion rules,Must,"Rollups, cascade Done/reopen and blocking invalid parent completion.",Backlog
+R2,Milestones,MIL-A01,Hybrid milestone tracking,Must,Target vs forecast; manual confirmation; required reason to reopen.,Backlog
+R2,Baselines,BAS-01,Admin-approved immutable snapshots,Must,Baseline 1 admin-created; later proposals and approval retain history.,Backlog
+R2,Baselines,BAS-02,Baseline variance classification,Must,Newly Scheduled / Added / Removed compared to selected baseline.,Backlog
+R3,AI,AI-01,Cursor report draft importer,Must,GitHub Actions/Lambda register draft for AWS review.,Backlog
+R3,AI,AI-02,Context-aware AI status report,Must,"Previous published report, plan, board and activity available.",Backlog
+R3,AI,AI-03,Advanced report change insight,Must,Baseline and task changes reported without unverified claims.,Backlog
+R4,Recovery,REC-A01,Selective descendant restore,Must,Parent restore lists deleted descendants and validates hierarchy.,Backlog
+R4,Recovery,REC-A02,Partial bulk restoration,Must,Restore valid; conflict results; retry failed only and audit individually.,Backlog
+R4,Documents,DOC-A01,Restore-as-version approval,Must,Review candidate version; preserve current until explicit activation.,Backlog
+R4,Documents,DOC-A02,Side-by-side document comparison,Must,Text diff supported; metadata fallback.,Backlog
+R4,Governance,GOV-01,Advanced recovery and retention,Must,Indefinite version retention; admin-only permanent deletion.,Backlog

@@ -1,0 +1,22 @@
+{
+  "name": "one80compass",
+  "private": true,
+  "version": "0.1.0",
+  "description": "One80Compass multi-customer project workspace",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/*",
+    "infra"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p packages/authz/tsconfig.json --noEmit && tsc -p services/api/tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json --noEmit",
+    "synth": "npm run synth -w infra",
+    "deploy:dev": "npm run deploy -w infra"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
