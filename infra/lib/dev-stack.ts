@@ -21,7 +21,7 @@ export class DevStack extends cdk.Stack {
       userPoolName: "one80compass-dev",
       selfSignUpEnabled: false,
       signInAliases: { email: true },
-      mfa: cognito.Mfa.OPTIONAL,
+      mfa: cognito.Mfa.REQUIRED,
       mfaSecondFactor: { sms: false, otp: true },
       passwordPolicy: {
         minLength: 12,
@@ -139,7 +139,7 @@ export class DevStack extends cdk.Stack {
     const httpApi = new apigwv2.HttpApi(this, "HttpApi", {
       apiName: "one80compass-dev",
       corsPreflight: {
-        allowOrigins: ["http://localhost:5173"],
+        allowOrigins: ["http://localhost:5173", "http://127.0.0.1:5173"],
         allowHeaders: ["authorization", "content-type", "x-correlation-id"],
         allowMethods: [apigwv2.CorsHttpMethod.ANY],
       },
@@ -147,7 +147,13 @@ export class DevStack extends cdk.Stack {
 
     httpApi.addRoutes({
       path: "/{proxy+}",
-      methods: [apigwv2.HttpMethod.ANY],
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.POST,
+        apigwv2.HttpMethod.PUT,
+        apigwv2.HttpMethod.PATCH,
+        apigwv2.HttpMethod.DELETE,
+      ],
       integration: new integrations.HttpLambdaIntegration("ApiIntegration", apiFunction),
       authorizer,
     });

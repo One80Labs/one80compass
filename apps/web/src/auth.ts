@@ -38,7 +38,7 @@ export function submitTotp(user: CognitoUser, email: string, code: string): Prom
     user.sendMFACode(
       code,
       {
-        onSuccess: (session) => resolve(readSession(session, email)),
+        onSuccess: (session) => resolve({ ...readSession(session, email), mfa: true }),
         onFailure: reject,
       },
       "SOFTWARE_TOKEN_MFA",
@@ -65,15 +65,21 @@ export function beginTotpSetup(email: string): Promise<string> {
 export function confirmTotpSetup(email: string, code: string): Promise<void> {
   const user = currentUser(email);
   return new Promise((resolve, reject) => {
-    user.verifySoftwareToken(code, "One80Compass", {
-      onSuccess: () => {
-        user.setUserMfaPreference(
-          null,
-          { PreferredMfa: true, Enabled: true },
-          (error) => (error ? reject(error) : resolve()),
-        );
-      },
-      onFailure: reject,
+    user.getSession((sessionError: Error | null) => {
+      if (sessionError) {
+        reject(sessionError);
+        return;
+      }
+      user.verifySoftwareToken(code, "One80Compass", {
+        onSuccess: () => {
+          user.setUserMfaPreference(
+            null,
+            { PreferredMfa: true, Enabled: true },
+            (preferenceError) => (preferenceError ? reject(preferenceError) : resolve()),
+          );
+        },
+        onFailure: reject,
+      });
     });
   });
 }
@@ -103,18 +109,51 @@ function callbacks(
   };
 }
 
+export function mfaIsEnrolled(email: string): Promise<boolean> {
+  const user = currentUser(email);
+  return new Promise((resolve, reject) => {
+    user.getSession((error: Error | null) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      user.getUserData((dataError, data) => {
+        if (dataError || !data) {
+          reject(dataError ?? new Error("Could not read MFA status."));
+          return;
+        }
+        const settings = data.UserMFASettingList ?? [];
+        resolve(settings.includes("SOFTWARE_TOKEN_MFA"));
+      }, { bypassCache: true });
+    });
+  });
+}
+
 function readSession(session: CognitoUserSession, email: string): Session {
   const payload = session.getIdToken().payload;
   const groups = payload["cognito:groups"];
   const groupList = Array.isArray(groups) ? groups.map(String) : typeof groups === "string" ? [groups] : [];
-  const amr = payload.amr;
-  const mfa = Array.isArray(amr) && amr.map(String).includes("mfa");
+  const accessPayload = decodeJwtPayload(session.getAccessToken().getJwtToken());
   return {
     email,
     idToken: session.getIdToken().getJwtToken(),
     adminGroup: groupList.includes("one80-admin"),
-    mfa,
+    mfa: claimHasMfa(payload) || claimHasMfa(accessPayload),
   };
+}
+
+function claimHasMfa(payload: { amr?: unknown }): boolean {
+  const amr = payload.amr;
+  if (Array.isArray(amr)) return amr.map(String).some((value) => value.toLowerCase().includes("mfa"));
+  if (typeof amr === "string") return amr.toLowerCase().includes("mfa");
+  return false;
+}
+
+function decodeJwtPayload(token: string): { amr?: unknown } {
+  const segment = token.split(".")[1];
+  if (!segment) return {};
+  const json = atob(segment.replace(/-/g, "+").replace(/_/g, "/"));
+  return JSON.parse(json) as { amr?: unknown };
 }
 
 function currentUser(email: string): CognitoUser {

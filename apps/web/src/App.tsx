@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { CognitoUser } from "amazon-cognito-identity-js";
 import { api, ApiError } from "./api";
-import { beginTotpSetup, completeNewPassword, confirmTotpSetup, signIn, signOut, submitTotp, type Session } from "./auth";
+import { beginTotpSetup, completeNewPassword, confirmTotpSetup, mfaIsEnrolled, signIn, signOut, submitTotp, type Session } from "./auth";
 
 type Customer = { customerId: string; name: string };
 type Project = { projectId: string; customerId: string; name: string };
@@ -68,7 +68,7 @@ function SignIn({ onSession }: { onSession: (session: Session) => void }) {
 
   return (
     <form onSubmit={onSubmit}>
-      <h2>Sign in</h2>
+      <h2>{mode === "totp" ? "Authenticator code" : "Sign in"}</h2>
       {mode === "password" && (
         <label>
           Email
@@ -95,8 +95,33 @@ function Workspace({ session, onSession }: { session: Session; onSession: (sessi
   const [secret, setSecret] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [enrolled, setEnrolled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!session.adminGroup || session.mfa) return;
+    mfaIsEnrolled(session.email)
+      .then(setEnrolled)
+      .catch(() => setEnrolled(false));
+  }, [session.adminGroup, session.email, session.mfa]);
 
   if (session.adminGroup && !session.mfa) {
+    if (enrolled) {
+      return (
+        <section className="card">
+          <h2>Authenticator already enrolled</h2>
+          <p>Sign out, enter your password, and then enter the current 6-digit code from Passwords. Do not create a new secret.</p>
+          <button
+            type="button"
+            onClick={() => {
+              signOut();
+              onSession(null);
+            }}
+          >
+            Sign out
+          </button>
+        </section>
+      );
+    }
     return (
       <form
         onSubmit={async (event) => {

@@ -14,4 +14,4 @@ Routes for the first slice:
 - `GET /projects/{projectId}`
 - `GET /projects/{projectId}/applications`
 
-A missing or foreign project returns 404. Administrator routes return 403 `MFA_REQUIRED` until the token `amr` claim includes `mfa`. A customer id in the JSON body is ignored.
+A missing or foreign project returns 404. Administrator routes require the `one80-admin` group on a token API Gateway has already verified. The pool requires MFA before that token exists. A customer id in the JSON body is ignored.

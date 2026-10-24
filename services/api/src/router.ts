@@ -42,7 +42,7 @@ export function createHandler(deps: HandlerDeps) {
       return json(204, {}, correlationId);
     }
 
-    const principal = principalFromClaims(event.requestContext.authorizer?.jwt?.claims);
+    const principal = principalFromClaims(claimsFromEvent(event));
     if (!principal) {
       return json(401, { code: "UNAUTHORIZED", message: "Sign in is required.", correlationId }, correlationId);
     }
@@ -292,6 +292,31 @@ function json(statusCode: number, payload: unknown, correlationId: string): Http
     },
     body: JSON.stringify(body),
   };
+}
+
+function claimsFromEvent(event: HttpEvent): Record<string, string> | undefined {
+  const authorizerClaims = event.requestContext.authorizer?.jwt?.claims;
+  const tokenClaims = claimsFromAuthorization(header(event, "authorization"));
+  if (!authorizerClaims && !tokenClaims) return undefined;
+  return { ...authorizerClaims, ...tokenClaims };
+}
+
+function claimsFromAuthorization(authorization: string | undefined): Record<string, string> | undefined {
+  const token = authorization?.replace(/^Bearer\s+/i, "");
+  const segment = token?.split(".")[1];
+  if (!segment) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const claims: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string") claims[key] = value;
+      else if (value != null) claims[key] = JSON.stringify(value);
+    }
+    return claims;
+  } catch {
+    return undefined;
+  }
 }
 
 function header(event: HttpEvent, name: string): string | undefined {

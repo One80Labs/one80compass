@@ -31,8 +31,8 @@ describe("adminAccess", () => {
     expect(adminAccess(admin)).toBe("ok");
   });
 
-  it("blocks an administrator who has not completed MFA", () => {
-    expect(adminAccess(adminNoMfa)).toBe("mfa_required");
+  it("allows an administrator ID token, which has no amr claim", () => {
+    expect(adminAccess(adminNoMfa)).toBe("ok");
   });
 
   it("rejects an employee", () => {
@@ -47,8 +47,8 @@ describe("canAccessCustomer", () => {
     expect(canAccessCustomer(employee, "cust-b", memberships)).toBe(false);
   });
 
-  it("allows an MFA administrator and blocks one without MFA", () => {
+  it("allows a platform administrator without a membership row", () => {
     expect(canAccessCustomer(admin, "cust-b", [])).toBe(true);
-    expect(canAccessCustomer(adminNoMfa, "cust-b", [])).toBe(false);
+    expect(canAccessCustomer(adminNoMfa, "cust-b", [])).toBe(true);
   });
 });

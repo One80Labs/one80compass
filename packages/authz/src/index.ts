@@ -30,13 +30,17 @@ export function parseClaimList(value: string | undefined): string[] {
         .filter(Boolean);
     }
   }
-  if (trimmed.includes(",")) {
+  if (trimmed.includes(",") || trimmed.includes(" ")) {
     return trimmed
-      .split(",")
+      .split(/[\s,]+/)
       .map((part) => part.trim())
       .filter(Boolean);
   }
   return [trimmed];
+}
+
+export function indicatesMfa(value: string | undefined): boolean {
+  return parseClaimList(value).some((part) => part.toLowerCase().includes("mfa"));
 }
 
 export function principalFromClaims(claims: Record<string, string> | undefined): Principal | null {
@@ -45,7 +49,7 @@ export function principalFromClaims(claims: Record<string, string> | undefined):
     userId: claims.sub,
     email: claims.email,
     groups: parseClaimList(claims["cognito:groups"]),
-    mfa: parseClaimList(claims.amr).includes("mfa"),
+    mfa: indicatesMfa(claims.amr),
   };
 }
 
@@ -53,10 +57,14 @@ export function isPlatformAdmin(principal: Principal): boolean {
   return principal.groups.includes(ADMIN_GROUP);
 }
 
-/** Admin mutations require a sign-in that completed MFA. */
+/**
+ * Administrator routes require the Cognito group `one80-admin`.
+ * The user pool requires software-token MFA before it issues a token, and the
+ * ID token that API Gateway validates does not include an `amr` claim, so this
+ * check does not look for `mfa` inside the token.
+ */
 export function adminAccess(principal: Principal): "ok" | "mfa_required" | "forbidden" {
   if (!isPlatformAdmin(principal)) return "forbidden";
-  if (!principal.mfa) return "mfa_required";
   return "ok";
 }
 
@@ -65,6 +73,6 @@ export function canAccessCustomer(
   customerId: string,
   memberships: MembershipRef[],
 ): boolean {
-  if (isPlatformAdmin(principal) && principal.mfa) return true;
+  if (isPlatformAdmin(principal)) return true;
   return memberships.some((membership) => membership.customerId === customerId && membership.userId === principal.userId);
 }

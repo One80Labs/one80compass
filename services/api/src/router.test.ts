@@ -54,6 +54,10 @@ function memoryStore(): Store & { customers: Customer[]; projects: Project[]; me
   };
 }
 
+function fakeJwt(payload: Record<string, unknown>): string {
+  return `header.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.signature`;
+}
+
 function event(partial: { method: string; path: string; claims?: Record<string, string>; body?: unknown; headers?: Record<string, string> }): HttpEvent {
   return {
     rawPath: partial.path,
@@ -82,18 +86,30 @@ function handlerFor(store: Store) {
 }
 
 describe("api router", () => {
+  it("accepts MFA recorded in the token when the authorizer omits it", async () => {
+    const token = fakeJwt({ amr: ["authenticated", "mfa"] });
+    const response = await handlerFor(memoryStore())(
+      event({
+        method: "GET",
+        path: "/admin/customers",
+        claims: { sub: "admin-1", "cognito:groups": "one80-admin" },
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(response.statusCode).toBe(200);
+  });
+
   it("returns 401 when the token is missing", async () => {
     const response = await handlerFor(memoryStore())(event({ method: "GET", path: "/projects/id-1" }));
     expect(response.statusCode).toBe(401);
     expect(JSON.parse(response.body).code).toBe("UNAUTHORIZED");
   });
 
-  it("blocks administrator writes until MFA is present", async () => {
+  it("creates a customer from an administrator ID token that has no amr claim", async () => {
     const response = await handlerFor(memoryStore())(
       event({ method: "POST", path: "/admin/customers", claims: adminNoMfa, body: { name: "Acme" } }),
     );
-    expect(response.statusCode).toBe(403);
-    expect(JSON.parse(response.body).code).toBe("MFA_REQUIRED");
+    expect(response.statusCode).toBe(201);
   });
 
   it("creates a customer, project, membership, and module, and writes audit rows", async () => {

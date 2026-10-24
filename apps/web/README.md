@@ -1,6 +1,6 @@
 # Web
 
-Vite and React. Sign-in uses the Cognito user pool from the dev stack. The app sends the ID token, because that token carries the `amr` claim the API uses for administrator MFA.
+Vite and React. Sign-in uses the Cognito user pool from the dev stack. The app sends the ID token. API Gateway checks that token, and the pool requires MFA before Cognito issues it.
 
 Copy the stack outputs into `apps/web/.env.local`:
 
