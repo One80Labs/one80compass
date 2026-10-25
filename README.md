@@ -20,4 +20,4 @@ npm run dev -w @one80compass/web
 
 The first administrator is `nick@one80labs.com`. Cognito emails a temporary password. Administrator actions require an authenticator app.
 
-Push this repository to `https://github.com/ndkramer/one80compass.git` at least once an hour while implementation is in progress. Do not commit it to the unrelated course checkout in the home directory.
+Push this repository to `https://github.com/One80Labs/one80compass.git` at least once an hour while implementation is in progress. Do not commit it to the unrelated course checkout in the home directory.
