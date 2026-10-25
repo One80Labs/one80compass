@@ -10,6 +10,9 @@ const pool = new CognitoUserPool({
   ClientId: import.meta.env.VITE_USER_POOL_CLIENT_ID,
 });
 
+/** Stage and production builds set VITE_MFA_REQUIRED=true. The dev pool does not ask for a code. */
+export const mfaRequired = import.meta.env.VITE_MFA_REQUIRED === "true";
+
 export type Session = {
   email: string;
   idToken: string;
@@ -104,8 +107,8 @@ export function restoreSession(): Promise<Session | null> {
       const email =
         typeof emailClaim === "string" ? emailClaim : typeof usernameClaim === "string" ? usernameClaim : user.getUsername();
       const restored = readSession(session, email);
-      // The pool requires MFA before it issues a token, and the ID token has no amr claim.
-      resolve(restored.adminGroup ? { ...restored, mfa: true } : restored);
+      // A pool that requires MFA issues the token only after the code, and the ID token has no amr claim.
+      resolve(mfaRequired && restored.adminGroup ? { ...restored, mfa: true } : restored);
     });
   });
 }

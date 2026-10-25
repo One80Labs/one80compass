@@ -1,4 +1,4 @@
-import { CognitoIdentityProviderClient, AdminCreateUserCommand, AdminGetUserCommand, UsernameExistsException } from "@aws-sdk/client-cognito-identity-provider";
+import { CognitoIdentityProviderClient, AdminCreateUserCommand, AdminGetUserCommand, ListUsersInGroupCommand, UsernameExistsException } from "@aws-sdk/client-cognito-identity-provider";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
@@ -28,6 +28,21 @@ export const handler = createHandler({
   signDownload: files.signDownload,
   webhookSecret,
   githubConfigured,
+  listAdminUserIds: async () => {
+    const ids: string[] = [];
+    let nextToken: string | undefined;
+    do {
+      const page = await cognito.send(
+        new ListUsersInGroupCommand({ UserPoolId: userPoolId, GroupName: "one80-admin", NextToken: nextToken, Limit: 60 }),
+      );
+      for (const user of page.Users ?? []) {
+        const subject = user.Attributes?.find((attribute) => attribute.Name === "sub")?.Value;
+        if (subject) ids.push(subject);
+      }
+      nextToken = page.NextToken;
+    } while (nextToken);
+    return ids;
+  },
   enqueue: async (message) => {
     if (!queueUrl) throw new Error("SYNC_QUEUE_URL is required.");
     await sqs.send(new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: JSON.stringify(message) }));

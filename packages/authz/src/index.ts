@@ -59,9 +59,10 @@ export function isPlatformAdmin(principal: Principal): boolean {
 
 /**
  * Administrator routes require the Cognito group `one80-admin`.
- * The user pool requires software-token MFA before it issues a token, and the
- * ID token that API Gateway validates does not include an `amr` claim, so this
- * check does not look for `mfa` inside the token.
+ * The dev pool does not require MFA. Stage and production must require a
+ * software token before Cognito issues a token. The ID token that API Gateway
+ * validates does not include an `amr` claim, so this check does not look for
+ * `mfa` inside the token.
  */
 export function adminAccess(principal: Principal): "ok" | "mfa_required" | "forbidden" {
   if (!isPlatformAdmin(principal)) return "forbidden";

@@ -18,6 +18,6 @@ Deploy uses AWS profile `one80compass` and account `168034219908` in `us-east-2`
 npm run dev -w @one80compass/web
 ```
 
-The first administrator is `nick@one80labs.com`. Cognito emails a temporary password. Administrator actions require an authenticator app.
+The first administrator is `nick@one80labs.com`. Cognito emails a temporary password. The dev site signs in with that email and password. An authenticator comes back when stage and production are created.
 
 Push this repository to `https://github.com/One80Labs/one80compass.git` at least once an hour while implementation is in progress. Do not commit it to the unrelated course checkout in the home directory.

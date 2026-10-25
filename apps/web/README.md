@@ -1,6 +1,6 @@
 # Web
 
-Vite and React. Sign-in uses the Cognito user pool from the dev stack. The browser keeps that session, so a refresh stays signed in. The app sends the ID token. API Gateway checks that token, and the pool requires MFA before Cognito issues it.
+Vite and React. Sign-in uses the Cognito user pool from the dev stack. The browser keeps that session, so a refresh stays signed in. The app sends the ID token. API Gateway checks that token. The dev pool accepts email and password. Set `VITE_MFA_REQUIRED=true` only for a build whose pool requires an authenticator.
 
 Overview stores health and notes. Documents uploads a file through a short-lived S3 URL, keeps older versions, and restores a soft-deleted file without replacing the current version.
 

@@ -217,6 +217,11 @@ export function Shell({
               ))}
           </nav>
           <div className="nav-bottom">
+            {session.adminGroup && !preview && (
+              <Link className={location.pathname === "/members" ? "nav-link active" : "nav-link"} to="/members" onClick={closeNav}>
+                <span className="ico">☺</span>Members
+              </Link>
+            )}
             <Link className={location.pathname === "/settings" ? "nav-link active" : "nav-link"} to="/settings" onClick={closeNav}>
               <span className="ico">⚙</span>Settings
             </Link>

@@ -46,6 +46,8 @@ export type HandlerDeps = {
   enqueue: (message: SyncMessage) => Promise<void>;
   githubConfigured: boolean;
   webhookSecret: string;
+  /** Cognito subjects in the one80-admin group. Membership rows stay employees. */
+  listAdminUserIds: () => Promise<string[]>;
 };
 
 type Ctx = {
@@ -94,6 +96,8 @@ export function createHandler(deps: HandlerDeps) {
       if (planned) return planned;
       const reported = await handleReports({ deps, principal, method, path, body, correlationId });
       if (reported) return reported;
+
+      if (path === "/admin/members" && method === "GET") return listMembers(deps, ctx);
 
       const customerList = path.match(/^\/admin\/customers$/);
       if (customerList && method === "POST") return createCustomer(deps, ctx);
@@ -187,6 +191,40 @@ async function createCustomer(deps: HandlerDeps, ctx: Ctx): Promise<HttpResult> 
     after: { name: customer.name },
   });
   return json(201, customer, ctx.correlationId);
+}
+
+async function listMembers(deps: HandlerDeps, ctx: Ctx): Promise<HttpResult> {
+  const gate = requireAdmin(ctx);
+  if (gate) return gate;
+  const adminIds = new Set(await deps.listAdminUserIds());
+  const customers = await deps.store.listCustomers();
+  const members: {
+    userId: string;
+    email: string;
+    customerId: string;
+    customerName: string;
+    access: "Administrator" | "Employee";
+    projects: { projectId: string; name: string }[];
+  }[] = [];
+  for (const customer of customers) {
+    const [memberships, projects] = await Promise.all([
+      deps.store.listMembershipsForCustomer(customer.customerId),
+      deps.store.listProjects(customer.customerId),
+    ]);
+    const projectRows = projects.map((project) => ({ projectId: project.projectId, name: project.name }));
+    for (const membership of memberships) {
+      members.push({
+        userId: membership.userId,
+        email: membership.email,
+        customerId: customer.customerId,
+        customerName: customer.name,
+        access: adminIds.has(membership.userId) ? "Administrator" : "Employee",
+        projects: projectRows,
+      });
+    }
+  }
+  members.sort((left, right) => left.customerName.localeCompare(right.customerName) || left.email.localeCompare(right.email));
+  return json(200, { members }, ctx.correlationId);
 }
 
 async function listCustomers(deps: HandlerDeps, ctx: Ctx): Promise<HttpResult> {

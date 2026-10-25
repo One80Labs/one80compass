@@ -66,6 +66,9 @@ function memoryStore(): Store & {
     async listMembershipsForUser(userId) {
       return memberships.filter((membership) => membership.userId === userId);
     },
+    async listMembershipsForCustomer(customerId) {
+      return memberships.filter((membership) => membership.customerId === customerId);
+    },
     async createApplication(application) {
       applications.push(application);
     },
@@ -233,6 +236,7 @@ function handlerFor(store: Store) {
     },
     githubConfigured: false,
     webhookSecret: "test-secret",
+    listAdminUserIds: async () => ["admin-1"],
   });
 }
 
@@ -317,6 +321,21 @@ describe("api router", () => {
       "member.invited",
       "application.enabled",
     ]);
+
+    const members = await handler(event({ method: "GET", path: "/admin/members", claims: adminClaims }));
+    expect(members.statusCode).toBe(200);
+    expect(JSON.parse(members.body).members).toEqual([
+      {
+        userId: "user-a",
+        email: "ada@example.com",
+        customerId,
+        customerName: "Acme",
+        access: "Employee",
+        projects: [{ projectId: project.projectId, name: "Bridge" }],
+      },
+    ]);
+    const hidden = await handler(event({ method: "GET", path: "/admin/members", claims: employeeClaims }));
+    expect(hidden.statusCode).toBe(403);
   });
 
   it("hides another customer's project from an employee", async () => {

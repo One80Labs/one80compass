@@ -27,6 +27,7 @@ export interface Store {
   listProjects(customerId: string): Promise<Project[]>;
   putMembership(membership: Membership): Promise<void>;
   listMembershipsForUser(userId: string): Promise<Membership[]>;
+  listMembershipsForCustomer(customerId: string): Promise<Membership[]>;
   createApplication(application: ApplicationLink): Promise<void>;
   listApplications(projectId: string): Promise<ApplicationLink[]>;
   putAudit(event: AuditEvent): Promise<void>;
@@ -168,6 +169,17 @@ export class DynamoStore implements Store {
         IndexName: "gsi1",
         KeyConditionExpression: "gsi1pk = :pk",
         ExpressionAttributeValues: { ":pk": user(userId) },
+      }),
+    );
+    return (result.Items ?? []).map(asMembership);
+  }
+
+  async listMembershipsForCustomer(customerId: string): Promise<Membership[]> {
+    const result = await this.doc.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+        ExpressionAttributeValues: { ":pk": cust(customerId), ":sk": "MEMBER#" },
       }),
     );
     return (result.Items ?? []).map(asMembership);

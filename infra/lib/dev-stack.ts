@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import * as cdk from "aws-cdk-lib";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
@@ -13,6 +14,8 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
+import * as route53 from "aws-cdk-lib/aws-route53";
+import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import * as sns from "aws-cdk-lib/aws-sns";
@@ -24,6 +27,9 @@ import * as targets from "aws-cdk-lib/aws-events-targets";
 import { Construct } from "constructs";
 
 const ADMIN_EMAIL = "nick@one80labs.com";
+const SITE_DOMAIN = "one80compass.ai";
+const SITE_CERTIFICATE_ARN = "arn:aws:acm:us-east-1:168034219908:certificate/c630a40c-640f-43ec-898f-11aec9c02ece";
+const SITE_HOSTED_ZONE_ID = "Z0060300L4EB8CFDVZ1D";
 
 export class DevStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: cdk.StackProps) {
@@ -33,8 +39,9 @@ export class DevStack extends cdk.Stack {
       userPoolName: "one80compass-dev",
       selfSignUpEnabled: false,
       signInAliases: { email: true },
-      mfa: cognito.Mfa.REQUIRED,
-      mfaSecondFactor: { sms: false, otp: true },
+      // Dev sign-in is email and password. Stage and production must set this
+      // back to REQUIRED with a software-token second factor before a pilot.
+      mfa: cognito.Mfa.OFF,
       passwordPolicy: {
         minLength: 12,
         requireLowercase: true,
@@ -132,6 +139,9 @@ export class DevStack extends cdk.Stack {
     });
     const site = new cloudfront.Distribution(this, "Site", {
       comment: "One80Compass dev",
+      domainNames: [SITE_DOMAIN, `www.${SITE_DOMAIN}`],
+      certificate: acm.Certificate.fromCertificateArn(this, "SiteCert", SITE_CERTIFICATE_ARN),
+      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       defaultRootObject: "index.html",
       defaultBehavior: {
         origin: new origins.S3Origin(web),
@@ -142,7 +152,13 @@ export class DevStack extends cdk.Stack {
         { httpStatus: 404, responseHttpStatus: 200, responsePagePath: "/index.html", ttl: cdk.Duration.seconds(0) },
       ],
     });
-    const browserOrigins = ["http://localhost:5173", "http://127.0.0.1:5173", `https://${site.distributionDomainName}`];
+    const browserOrigins = [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      `https://${site.distributionDomainName}`,
+      `https://${SITE_DOMAIN}`,
+      `https://www.${SITE_DOMAIN}`,
+    ];
 
     const documents = new s3.Bucket(this, "Documents", {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -196,7 +212,7 @@ export class DevStack extends cdk.Stack {
     syncQueue.grantSendMessages(apiFunction);
     apiFunction.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ["cognito-idp:AdminCreateUser", "cognito-idp:AdminGetUser"],
+        actions: ["cognito-idp:AdminCreateUser", "cognito-idp:AdminGetUser", "cognito-idp:ListUsersInGroup"],
         resources: [pool.userPoolArn],
       }),
     );
@@ -281,7 +297,17 @@ export class DevStack extends cdk.Stack {
       distributionPaths: ["/*"],
     });
 
-    new cdk.CfnOutput(this, "SiteUrl", { value: `https://${site.distributionDomainName}` });
+    const zone = route53.HostedZone.fromHostedZoneAttributes(this, "SiteZone", {
+      hostedZoneId: SITE_HOSTED_ZONE_ID,
+      zoneName: SITE_DOMAIN,
+    });
+    const alias = route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(site));
+    new route53.ARecord(this, "SiteA", { zone, target: alias });
+    new route53.AaaaRecord(this, "SiteAaaa", { zone, target: alias });
+    new route53.ARecord(this, "WwwA", { zone, recordName: "www", target: alias });
+    new route53.AaaaRecord(this, "WwwAaaa", { zone, recordName: "www", target: alias });
+
+    new cdk.CfnOutput(this, "SiteUrl", { value: `https://${SITE_DOMAIN}` });
     new cdk.CfnOutput(this, "UserPoolId", { value: pool.userPoolId });
     new cdk.CfnOutput(this, "UserPoolClientId", { value: client.userPoolClientId });
     new cdk.CfnOutput(this, "ApiUrl", { value: httpApi.apiEndpoint });

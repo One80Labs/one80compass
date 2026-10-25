@@ -7,6 +7,7 @@ Routes for the first slice:
 - `POST /admin/customers` and `GET /admin/customers`
 - `POST /admin/customers/{customerId}/projects`
 - `POST /admin/customers/{customerId}/invitations`
+- `GET /admin/members` lists each membership with the customer name, that customer's projects, and Administrator or Employee. Employees can open every project for their customer. Owner, Contributor, and Viewer are not stored.
 - `GET /admin/customers/{customerId}/audit`
 - `POST /admin/projects/{projectId}/applications`
 - `GET /me`
@@ -31,4 +32,4 @@ Routes for the first slice:
 
 Publishing stores an immutable copy. A later revision edits the working draft and leaves that copy unchanged.
 
-A missing or foreign project returns 404. Administrator routes require the `one80-admin` group on a token API Gateway has already verified. The pool requires MFA before that token exists. A customer id in the JSON body is ignored. Uploads are limited to 25 MiB. Restoring a document does not replace its current version.
+A missing or foreign project returns 404. Administrator routes require the `one80-admin` group on a token API Gateway has already verified. The dev pool does not require MFA before that token exists. A customer id in the JSON body is ignored. Uploads are limited to 25 MiB. Restoring a document does not replace its current version.

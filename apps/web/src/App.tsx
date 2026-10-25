@@ -2,12 +2,13 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Route, Routes, useNavigate } from "react-router-dom";
 import type { CognitoUser } from "amazon-cognito-identity-js";
 import { api, ApiError } from "./api";
-import { beginTotpSetup, completeNewPassword, confirmTotpSetup, mfaIsEnrolled, restoreSession, signIn, signOut, submitTotp, type Session } from "./auth";
+import { beginTotpSetup, completeNewPassword, confirmTotpSetup, mfaIsEnrolled, mfaRequired, restoreSession, signIn, signOut, submitTotp, type Session } from "./auth";
 import { AuditPage } from "./audit";
 import { KanbanPage, PlanPage } from "./plan";
 import { DocumentsPage, DocumentDetailPage, OverviewPage } from "./project";
 import { ReportDetailPage, ReportsPage } from "./reports";
 import { DevLayout } from "./dev-layout";
+import { MembersPage } from "./members";
 import { displayName, ModuleTiles, Shell, usePortal, type PortalActivity } from "./shell";
 
 type Customer = { customerId: string; name: string };
@@ -44,6 +45,7 @@ export function App() {
       <Route path="/projects/:projectId/reports" element={<SignedIn session={session} onSession={setSession}><ReportsPage session={session} /></SignedIn>} />
       <Route path="/projects/:projectId/audit" element={<SignedIn session={session} onSession={setSession}><AuditPage session={session} /></SignedIn>} />
       <Route path="/projects" element={<SignedIn session={session} onSession={setSession}><ProjectsPage /></SignedIn>} />
+      <Route path="/members" element={<SignedIn session={session} onSession={setSession}><MembersPage session={session} /></SignedIn>} />
       <Route path="/settings" element={<SignedIn session={session} onSession={setSession}><SettingsPage session={session} /></SignedIn>} />
       <Route path="/help" element={<SignedIn session={session} onSession={setSession}><HelpPage /></SignedIn>} />
       {import.meta.env.DEV && <Route path="/dev/portal-home" element={<PortalHomePreview />} />}
@@ -71,7 +73,7 @@ function Home({ session, onSession }: { session: Session | null; onSession: (ses
       </main>
     );
   }
-  if (session.adminGroup && !session.mfa) {
+  if (mfaRequired && session.adminGroup && !session.mfa) {
     return (
       <main className="gate">
         <MfaGate session={session} onSession={onSession} />
@@ -132,6 +134,7 @@ function SignIn({ onSession }: { onSession: (session: Session) => void }) {
           <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required />
         </label>
       )}
+      {mode === "password" && !mfaRequired && <p>This development site signs you in with your email and password.</p>}
       <label>
         {label}
         <input
@@ -409,7 +412,7 @@ function SettingsPage({ session }: { session: Session | null }) {
             <div className="docdetailbar">
               <div>
                 <h3>Project access</h3>
-                <p className="small muted">Owner, Contributor, and Viewer roles are a later release. An administrator can invite an employee.</p>
+                <p className="small muted">This table is the signed-in person. Invited people, their customer, and their projects are on the <Link to="/members">members list</Link>.</p>
               </div>
             </div>
             <div className="table-wrap">
