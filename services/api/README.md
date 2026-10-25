@@ -7,7 +7,8 @@ Routes for the first slice:
 - `POST /admin/customers` and `GET /admin/customers`
 - `POST /admin/customers/{customerId}/projects`
 - `POST /admin/customers/{customerId}/invitations`
-- `GET /admin/members` lists each membership with the customer name, that customer's projects, and Administrator or Employee. Employees can open every project for their customer. Owner, Contributor, and Viewer are not stored.
+- `GET /admin/members` lists each membership with the customer name, the projects that person can open, and Administrator or Employee.
+- `PATCH /admin/customers/{customerId}/members/{userId}` sets the display name, sign-in email, and project list. A null project list means every current and future project. Changing an employee email creates the new Cognito user, emails a temporary password when the address is new, and disables the old address when it has no membership left. An administrator email cannot be changed. Administrators can still open every project.
 - `GET /admin/customers/{customerId}/audit`
 - `POST /admin/projects/{projectId}/applications`
 - `GET /me`

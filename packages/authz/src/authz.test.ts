@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminAccess, canAccessCustomer, parseClaimList, principalFromClaims, type Principal } from "./index";
+import { adminAccess, canAccessCustomer, canAccessProject, parseClaimList, principalFromClaims, type Principal } from "./index";
 
 const admin: Principal = { userId: "admin-1", groups: ["one80-admin"], mfa: true };
 const adminNoMfa: Principal = { userId: "admin-1", groups: ["one80-admin"], mfa: false };
@@ -50,5 +50,23 @@ describe("canAccessCustomer", () => {
   it("allows a platform administrator without a membership row", () => {
     expect(canAccessCustomer(admin, "cust-b", [])).toBe(true);
     expect(canAccessCustomer(adminNoMfa, "cust-b", [])).toBe(true);
+  });
+});
+
+describe("canAccessProject", () => {
+  const project = { customerId: "cust-a", projectId: "proj-1" };
+
+  it("lets a member with no project list open every project", () => {
+    expect(canAccessProject(employee, project, [{ customerId: "cust-a", userId: "user-a", projectIds: null }])).toBe(true);
+  });
+
+  it("limits a member to the saved projects", () => {
+    const memberships = [{ customerId: "cust-a", userId: "user-a", projectIds: ["proj-2"] }];
+    expect(canAccessProject(employee, project, memberships)).toBe(false);
+    expect(canAccessProject(employee, { customerId: "cust-a", projectId: "proj-2" }, memberships)).toBe(true);
+  });
+
+  it("lets an administrator open a project without a membership", () => {
+    expect(canAccessProject(admin, project, [])).toBe(true);
   });
 });

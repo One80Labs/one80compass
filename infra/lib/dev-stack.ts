@@ -212,7 +212,13 @@ export class DevStack extends cdk.Stack {
     syncQueue.grantSendMessages(apiFunction);
     apiFunction.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ["cognito-idp:AdminCreateUser", "cognito-idp:AdminGetUser", "cognito-idp:ListUsersInGroup"],
+        actions: [
+          "cognito-idp:AdminCreateUser",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminDisableUser",
+          "cognito-idp:AdminEnableUser",
+          "cognito-idp:ListUsersInGroup",
+        ],
         resources: [pool.userPoolArn],
       }),
     );

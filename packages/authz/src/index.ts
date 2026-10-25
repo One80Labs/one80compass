@@ -12,6 +12,8 @@ export type Principal = {
 export type MembershipRef = {
   customerId: string;
   userId: string;
+  /** Absent or null means every project of the customer. */
+  projectIds?: string[] | null;
 };
 
 export function parseClaimList(value: string | undefined): string[] {
@@ -76,4 +78,18 @@ export function canAccessCustomer(
 ): boolean {
   if (isPlatformAdmin(principal)) return true;
   return memberships.some((membership) => membership.customerId === customerId && membership.userId === principal.userId);
+}
+
+/** Administrators can open every project. An employee opens the projects saved on the membership. */
+export function canAccessProject(
+  principal: Principal,
+  project: { customerId: string; projectId: string },
+  memberships: MembershipRef[],
+): boolean {
+  if (isPlatformAdmin(principal)) return true;
+  return memberships.some((membership) => {
+    if (membership.customerId !== project.customerId || membership.userId !== principal.userId) return false;
+    if (membership.projectIds == null) return true;
+    return membership.projectIds.includes(project.projectId);
+  });
 }

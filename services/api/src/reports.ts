@@ -1,4 +1,4 @@
-import { canAccessCustomer, type Principal } from "../../../packages/authz/src/index";
+import { canAccessProject, type Principal } from "../../../packages/authz/src/index";
 import type { ReportVersion, StatusReport } from "../../../packages/domain/src/index";
 import type { HandlerDeps, HttpResult } from "./router";
 
@@ -139,7 +139,7 @@ async function readable(ctx: ReportCtx, projectId: string) {
   const project = await ctx.deps.store.getProject(projectId);
   if (!project) return null;
   const memberships = await ctx.deps.store.listMembershipsForUser(ctx.principal.userId);
-  if (!canAccessCustomer(ctx.principal, project.customerId, memberships)) return null;
+  if (!canAccessProject(ctx.principal, project, memberships)) return null;
   return project;
 }
 

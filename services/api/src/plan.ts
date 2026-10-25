@@ -1,4 +1,4 @@
-import { adminAccess, canAccessCustomer, type Principal } from "../../../packages/authz/src/index";
+import { adminAccess, canAccessProject, type Principal } from "../../../packages/authz/src/index";
 import {
   DEFAULT_COLUMNS,
   DEFAULT_DONE_STATUSES,
@@ -187,7 +187,7 @@ async function readable(ctx: PlanCtx, projectId: string) {
   const project = await ctx.deps.store.getProject(projectId);
   if (!project) return null;
   const memberships = await ctx.deps.store.listMembershipsForUser(ctx.principal.userId);
-  if (!canAccessCustomer(ctx.principal, project.customerId, memberships)) return null;
+  if (!canAccessProject(ctx.principal, project, memberships)) return null;
   return project;
 }
 

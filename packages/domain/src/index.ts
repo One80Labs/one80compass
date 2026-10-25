@@ -13,8 +13,12 @@ export type Membership = {
   customerId: string;
   userId: string;
   email: string;
+  /** Shown in the members list. Empty until an administrator sets one. */
+  name: string;
   role: "employee";
   createdAt: string;
+  /** Null means every current and future project for the customer. */
+  projectIds: string[] | null;
 };
 
 export type Project = {

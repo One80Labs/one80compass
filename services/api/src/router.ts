@@ -1,12 +1,14 @@
-import { adminAccess, canAccessCustomer, principalFromClaims, type Principal } from "../../../packages/authz/src/index";
+import { adminAccess, canAccessCustomer, canAccessProject, principalFromClaims, type Principal } from "../../../packages/authz/src/index";
 import {
   isModuleKey,
   isProjectHealth,
   MAX_UPLOAD_BYTES,
   type AuditEvent,
   type DocumentVersion,
+  type Membership,
   type PlanIssue,
   type PortalDocument,
+  type Project,
   type ProjectOverview,
   type SyncMessage,
 } from "../../../packages/domain/src/index";
@@ -38,6 +40,8 @@ export type HttpResult = {
 export type HandlerDeps = {
   store: Store;
   inviteUser: (email: string) => Promise<{ userId: string }>;
+  /** Stops sign-in for an address that no longer has a membership. */
+  disableLogin: (email: string) => Promise<void>;
   newId: () => string;
   now: () => Date;
   signUpload: (objectKey: string, sizeBytes: number) => Promise<string>;
@@ -105,6 +109,11 @@ export function createHandler(deps: HandlerDeps) {
 
       const invite = path.match(/^\/admin\/customers\/([^/]+)\/invitations$/);
       if (invite && method === "POST") return inviteEmployee(deps, ctx, decodeURIComponent(invite[1]));
+
+      const member = path.match(/^\/admin\/customers\/([^/]+)\/members\/([^/]+)$/);
+      if (member && method === "PATCH") {
+        return updateMember(deps, ctx, decodeURIComponent(member[1]), decodeURIComponent(member[2]));
+      }
 
       const projects = path.match(/^\/admin\/customers\/([^/]+)\/projects$/);
       if (projects && method === "POST") return createProject(deps, ctx, decodeURIComponent(projects[1]));
@@ -193,38 +202,127 @@ async function createCustomer(deps: HandlerDeps, ctx: Ctx): Promise<HttpResult> 
   return json(201, customer, ctx.correlationId);
 }
 
+type MemberRow = {
+  userId: string;
+  email: string;
+  name: string;
+  customerId: string;
+  customerName: string;
+  access: "Administrator" | "Employee";
+  allProjects: boolean;
+  projects: { projectId: string; name: string }[];
+  customerProjects: { projectId: string; name: string }[];
+};
+
+function memberRow(membership: Membership, customerName: string, projects: Project[], admin: boolean): MemberRow {
+  const customerProjects = projects.map((project) => ({ projectId: project.projectId, name: project.name }));
+  const allProjects = admin || membership.projectIds == null;
+  const visible = allProjects
+    ? customerProjects
+    : customerProjects.filter((project) => membership.projectIds?.includes(project.projectId));
+  return {
+    userId: membership.userId,
+    email: membership.email,
+    name: membership.name,
+    customerId: membership.customerId,
+    customerName,
+    access: admin ? "Administrator" : "Employee",
+    allProjects,
+    projects: visible,
+    customerProjects,
+  };
+}
+
 async function listMembers(deps: HandlerDeps, ctx: Ctx): Promise<HttpResult> {
   const gate = requireAdmin(ctx);
   if (gate) return gate;
   const adminIds = new Set(await deps.listAdminUserIds());
   const customers = await deps.store.listCustomers();
-  const members: {
-    userId: string;
-    email: string;
-    customerId: string;
-    customerName: string;
-    access: "Administrator" | "Employee";
-    projects: { projectId: string; name: string }[];
-  }[] = [];
+  const members: MemberRow[] = [];
   for (const customer of customers) {
     const [memberships, projects] = await Promise.all([
       deps.store.listMembershipsForCustomer(customer.customerId),
       deps.store.listProjects(customer.customerId),
     ]);
-    const projectRows = projects.map((project) => ({ projectId: project.projectId, name: project.name }));
     for (const membership of memberships) {
-      members.push({
-        userId: membership.userId,
-        email: membership.email,
-        customerId: customer.customerId,
-        customerName: customer.name,
-        access: adminIds.has(membership.userId) ? "Administrator" : "Employee",
-        projects: projectRows,
-      });
+      members.push(memberRow(membership, customer.name, projects, adminIds.has(membership.userId)));
     }
   }
   members.sort((left, right) => left.customerName.localeCompare(right.customerName) || left.email.localeCompare(right.email));
   return json(200, { members }, ctx.correlationId);
+}
+
+async function updateMember(deps: HandlerDeps, ctx: Ctx, customerId: string, userId: string): Promise<HttpResult> {
+  const gate = requireAdmin(ctx);
+  if (gate) return gate;
+  const customer = await deps.store.getCustomer(customerId);
+  if (!customer) return notFound(ctx);
+  const [memberships, projects] = await Promise.all([
+    deps.store.listMembershipsForCustomer(customerId),
+    deps.store.listProjects(customerId),
+  ]);
+  const current = memberships.find((membership) => membership.userId === userId);
+  if (!current) return notFound(ctx);
+
+  const name = stringField(ctx.body, "name");
+  if (!name || name.length > 80) return validation(ctx, "A name up to 80 characters is required.");
+  const email = stringField(ctx.body, "email")?.toLowerCase() ?? "";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return validation(ctx, "A valid email is required.");
+
+  const adminIds = new Set(await deps.listAdminUserIds());
+  const administrator = adminIds.has(current.userId);
+  if (administrator && email !== current.email) {
+    return validation(ctx, "The administrator sign-in email cannot be changed.");
+  }
+
+  let projectIds = current.projectIds;
+  if (!administrator) {
+    const selected = selectedProjectIds(ctx.body.projectIds, projects.map((project) => project.projectId));
+    if (selected === "invalid") return validation(ctx, "Choose projects that belong to this customer, or allow every project.");
+    projectIds = selected;
+  }
+
+  let nextUserId = current.userId;
+  if (email !== current.email) {
+    if (memberships.some((membership) => membership.email === email && membership.userId !== current.userId)) {
+      return conflict(ctx, "That email is already a member of this customer.");
+    }
+    const invited = await deps.inviteUser(email);
+    if (invited.userId !== current.userId && adminIds.has(invited.userId)) {
+      return validation(ctx, "That email belongs to an administrator.");
+    }
+    nextUserId = invited.userId;
+  }
+
+  const next: Membership = { ...current, userId: nextUserId, email, name, projectIds };
+  await deps.store.putMembership(next);
+  if (nextUserId !== current.userId) {
+    await deps.store.deleteMembership(customerId, current.userId);
+    const remaining = await deps.store.listMembershipsForUser(current.userId);
+    if (remaining.length === 0 && !adminIds.has(current.userId)) await deps.disableLogin(current.email);
+  }
+
+  await audit(deps, ctx, {
+    customerId,
+    action: "member.updated",
+    targetType: "membership",
+    projectId: null,
+    targetId: nextUserId,
+    before: { email: current.email, name: current.name, projectIds: current.projectIds },
+    after: { email, name, projectIds },
+  });
+  return json(200, memberRow(next, customer.name, projects, administrator), ctx.correlationId);
+}
+
+function selectedProjectIds(value: unknown, known: string[]): string[] | null | "invalid" {
+  if (value === null) return null;
+  if (!Array.isArray(value) || value.length === 0) return "invalid";
+  const ids: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !known.includes(item) || ids.includes(item)) return "invalid";
+    ids.push(item);
+  }
+  return ids;
 }
 
 async function listCustomers(deps: HandlerDeps, ctx: Ctx): Promise<HttpResult> {
@@ -245,8 +343,10 @@ async function inviteEmployee(deps: HandlerDeps, ctx: Ctx, customerId: string): 
     customerId,
     userId: invited.userId,
     email,
+    name: "",
     role: "employee" as const,
     createdAt: deps.now().toISOString(),
+    projectIds: null,
   };
   await deps.store.putMembership(membership);
   await audit(deps, ctx, {
@@ -348,18 +448,20 @@ async function readCustomer(deps: HandlerDeps, ctx: Ctx, customerId: string): Pr
 
 async function listProjects(deps: HandlerDeps, ctx: Ctx, customerId: string): Promise<HttpResult> {
   if (!(await canReadCustomer(deps, ctx, customerId))) return notFound(ctx);
-  return json(200, { projects: await deps.store.listProjects(customerId) }, ctx.correlationId);
+  const memberships = await deps.store.listMembershipsForUser(ctx.principal.userId);
+  const projects = (await deps.store.listProjects(customerId)).filter((project) => canAccessProject(ctx.principal, project, memberships));
+  return json(200, { projects }, ctx.correlationId);
 }
 
 async function getProject(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
-  const project = await deps.store.getProject(projectId);
-  if (!project || !(await canReadCustomer(deps, ctx, project.customerId))) return notFound(ctx);
+  const project = await readableProject(deps, ctx, projectId);
+  if (!project) return notFound(ctx);
   return json(200, project, ctx.correlationId);
 }
 
 async function listApplications(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
-  const project = await deps.store.getProject(projectId);
-  if (!project || !(await canReadCustomer(deps, ctx, project.customerId))) return notFound(ctx);
+  const project = await readableProject(deps, ctx, projectId);
+  if (!project) return notFound(ctx);
   return json(200, { applications: await deps.store.listApplications(projectId) }, ctx.correlationId);
 }
 
@@ -406,6 +508,10 @@ function notFound(ctx: Ctx): HttpResult {
   return json(404, { code: "NOT_FOUND", message: "Not found.", correlationId: ctx.correlationId }, ctx.correlationId);
 }
 
+function conflict(ctx: Ctx, message: string): HttpResult {
+  return json(409, { code: "CONFLICT", message, correlationId: ctx.correlationId }, ctx.correlationId);
+}
+
 function json(statusCode: number, payload: unknown, correlationId: string): HttpResult {
   const body = payload && typeof payload === "object" ? { ...payload, correlationId } : { correlationId };
   return {
@@ -445,8 +551,8 @@ async function latestPublishedReport(deps: HandlerDeps, projectId: string): Prom
 }
 
 async function projectOverview(deps: HandlerDeps, ctx: Ctx, projectId: string, method: string): Promise<HttpResult> {
-  const project = await deps.store.getProject(projectId);
-  if (!project || !(await canReadCustomer(deps, ctx, project.customerId))) return notFound(ctx);
+  const project = await readableProject(deps, ctx, projectId);
+  if (!project) return notFound(ctx);
   const current = (await deps.store.getOverview(projectId)) ?? emptyOverview(project.projectId, project.customerId);
   if (method === "GET") {
     const documents = await deps.store.listDocuments(projectId);
@@ -639,7 +745,9 @@ function emptyOverview(projectId: string, customerId: string): ProjectOverview {
 
 async function readableProject(deps: HandlerDeps, ctx: Ctx, projectId: string) {
   const project = await deps.store.getProject(projectId);
-  if (!project || !(await canReadCustomer(deps, ctx, project.customerId))) return null;
+  if (!project) return null;
+  const memberships = await deps.store.listMembershipsForUser(ctx.principal.userId);
+  if (!canAccessProject(ctx.principal, project, memberships)) return null;
   return project;
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createHmac } from "node:crypto";
 import type { ApplicationLink, AuditEvent, Customer, DocumentVersion, Membership, PlanIssue, PortalDocument, ProgressOverride, Project, ProjectOverview, ProjectSettings, ReportVersion, StatusReport, SyncState } from "../../../packages/domain/src/index";
-import { createHandler, type HttpEvent } from "./router";
+import { createHandler, type HandlerDeps, type HttpEvent } from "./router";
 import type { Store } from "./store";
 
 function memoryStore(): Store & {
@@ -61,7 +61,13 @@ function memoryStore(): Store & {
       return projects.filter((project) => project.customerId === customerId);
     },
     async putMembership(membership) {
-      memberships.push(membership);
+      const index = memberships.findIndex((row) => row.customerId === membership.customerId && row.userId === membership.userId);
+      if (index >= 0) memberships[index] = membership;
+      else memberships.push(membership);
+    },
+    async deleteMembership(customerId, userId) {
+      const index = memberships.findIndex((row) => row.customerId === customerId && row.userId === userId);
+      if (index >= 0) memberships.splice(index, 1);
     },
     async listMembershipsForUser(userId) {
       return memberships.filter((membership) => membership.userId === userId);
@@ -221,11 +227,12 @@ const employeeClaims = { sub: "user-a", email: "ada@example.com", amr: '["authen
 
 const queued: unknown[] = [];
 
-function handlerFor(store: Store) {
+function handlerFor(store: Store, extras: Partial<Pick<HandlerDeps, "inviteUser" | "disableLogin">> = {}) {
   let n = 0;
   return createHandler({
     store,
     inviteUser: async () => ({ userId: "user-a" }),
+    disableLogin: async () => undefined,
     newId: () => `id-${++n}`,
     now: () => new Date("2026-10-24T12:00:00.000Z"),
     maxUploadBytes: 100,
@@ -237,6 +244,7 @@ function handlerFor(store: Store) {
     githubConfigured: false,
     webhookSecret: "test-secret",
     listAdminUserIds: async () => ["admin-1"],
+    ...extras,
   });
 }
 
@@ -328,10 +336,13 @@ describe("api router", () => {
       {
         userId: "user-a",
         email: "ada@example.com",
+        name: "",
         customerId,
         customerName: "Acme",
         access: "Employee",
+        allProjects: true,
         projects: [{ projectId: project.projectId, name: "Bridge" }],
+        customerProjects: [{ projectId: project.projectId, name: "Bridge" }],
       },
     ]);
     const hidden = await handler(event({ method: "GET", path: "/admin/members", claims: employeeClaims }));
@@ -353,8 +364,10 @@ describe("api router", () => {
       customerId,
       userId: "user-a",
       email: "ada@example.com",
+      name: "",
       role: "employee",
       createdAt: "2026-10-24T12:00:00.000Z",
+      projectIds: null,
     });
     const allowed = await handler(event({ method: "GET", path: `/projects/${projectId}`, claims: employeeClaims }));
     expect(allowed.statusCode).toBe(200);
@@ -500,6 +513,81 @@ describe("api router", () => {
     );
     expect(foreign.statusCode).toBe(404);
   });
+
+  it("updates an employee name, email, and project list", async () => {
+    const store = memoryStore();
+    const disabled: string[] = [];
+    const handler = handlerFor(store, {
+      inviteUser: async (email) => ({ userId: email === "ada@example.com" ? "user-a" : "user-b" }),
+      disableLogin: async (email) => {
+        disabled.push(email);
+      },
+    });
+    await handler(event({ method: "POST", path: "/admin/customers", claims: adminClaims, body: { name: "Acme" } }));
+    const customerId = store.customers[0].customerId;
+    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge" } }));
+    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Harbor" } }));
+    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/invitations`, claims: adminClaims, body: { email: "ada@example.com" } }));
+    const bridge = store.projects[0].projectId;
+    const harbor = store.projects[1].projectId;
+
+    const saved = await handler(
+      event({
+        method: "PATCH",
+        path: `/admin/customers/${customerId}/members/user-a`,
+        claims: adminClaims,
+        body: { name: "Ada Lovelace", email: "ada@example.com", projectIds: [bridge] },
+      }),
+    );
+    expect(saved.statusCode).toBe(200);
+    expect(JSON.parse(saved.body)).toMatchObject({ name: "Ada Lovelace", allProjects: false, projects: [{ projectId: bridge, name: "Bridge" }] });
+    const hidden = await handler(event({ method: "GET", path: `/projects/${harbor}`, claims: employeeClaims }));
+    expect(hidden.statusCode).toBe(404);
+    const open = await handler(event({ method: "GET", path: `/projects/${bridge}`, claims: employeeClaims }));
+    expect(open.statusCode).toBe(200);
+
+    const moved = await handler(
+      event({
+        method: "PATCH",
+        path: `/admin/customers/${customerId}/members/user-a`,
+        claims: adminClaims,
+        body: { name: "Ada Lovelace", email: "ada.new@example.com", projectIds: null },
+      }),
+    );
+    expect(moved.statusCode).toBe(200);
+    expect(JSON.parse(moved.body).userId).toBe("user-b");
+    expect(store.memberships.map((membership) => membership.userId)).toEqual(["user-b"]);
+    expect(disabled).toEqual(["ada@example.com"]);
+
+    const refused = await handler(
+      event({
+        method: "PATCH",
+        path: `/admin/customers/${customerId}/members/user-b`,
+        claims: employeeClaims,
+        body: { name: "Ada Lovelace", email: "ada.new@example.com", projectIds: null },
+      }),
+    );
+    expect(refused.statusCode).toBe(403);
+
+    store.memberships.push({
+      customerId,
+      userId: "admin-1",
+      email: "nick@one80labs.com",
+      name: "Nick",
+      role: "employee",
+      createdAt: "2026-10-24T12:00:00.000Z",
+      projectIds: null,
+    });
+    const adminEmail = await handler(
+      event({
+        method: "PATCH",
+        path: `/admin/customers/${customerId}/members/admin-1`,
+        claims: adminClaims,
+        body: { name: "Nick Kramer", email: "other@one80labs.com", projectIds: null },
+      }),
+    );
+    expect(adminEmail.statusCode).toBe(400);
+  });
 });
 
 async function seedProject(handler: (event: HttpEvent) => Promise<{ statusCode: number; body: string }>, store: ReturnType<typeof memoryStore>) {
@@ -510,8 +598,10 @@ async function seedProject(handler: (event: HttpEvent) => Promise<{ statusCode: 
     customerId,
     userId: "user-a",
     email: "ada@example.com",
+    name: "",
     role: "employee",
     createdAt: "2026-10-24T12:00:00.000Z",
+    projectIds: null,
   });
   return store.projects[0].projectId;
 }

@@ -1,4 +1,4 @@
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import {
   isModuleKey,
   type ApplicationLink,
@@ -26,6 +26,7 @@ export interface Store {
   getProject(projectId: string): Promise<Project | null>;
   listProjects(customerId: string): Promise<Project[]>;
   putMembership(membership: Membership): Promise<void>;
+  deleteMembership(customerId: string, userId: string): Promise<void>;
   listMembershipsForUser(userId: string): Promise<Membership[]>;
   listMembershipsForCustomer(customerId: string): Promise<Membership[]>;
   createApplication(application: ApplicationLink): Promise<void>;
@@ -158,6 +159,15 @@ export class DynamoStore implements Store {
           entity: "membership",
           ...membership,
         },
+      }),
+    );
+  }
+
+  async deleteMembership(customerId: string, userId: string): Promise<void> {
+    await this.doc.send(
+      new DeleteCommand({
+        TableName: this.tableName,
+        Key: { pk: cust(customerId), sk: memberSk(userId) },
       }),
     );
   }
@@ -544,12 +554,15 @@ function asProject(item: Item): Project {
   };
 }
 function asMembership(item: Item): Membership {
+  const savedProjects = item.projectIds;
   return {
     customerId: String(item.customerId),
     userId: String(item.userId),
     email: String(item.email),
+    name: typeof item.name === "string" ? item.name : "",
     role: "employee",
     createdAt: String(item.createdAt),
+    projectIds: Array.isArray(savedProjects) ? savedProjects.map(String) : null,
   };
 }
 function asApplication(item: Item): ApplicationLink {

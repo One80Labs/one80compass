@@ -1,4 +1,4 @@
-import { CognitoIdentityProviderClient, AdminCreateUserCommand, AdminGetUserCommand, ListUsersInGroupCommand, UsernameExistsException } from "@aws-sdk/client-cognito-identity-provider";
+import { CognitoIdentityProviderClient, AdminCreateUserCommand, AdminDisableUserCommand, AdminEnableUserCommand, AdminGetUserCommand, ListUsersInGroupCommand, UsernameExistsException } from "@aws-sdk/client-cognito-identity-provider";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
@@ -68,8 +68,14 @@ export const handler = createHandler({
       const existing = await cognito.send(new AdminGetUserCommand({ UserPoolId: userPoolId, Username: email }));
       const userId = existing.UserAttributes?.find((attribute) => attribute.Name === "sub")?.Value;
       if (!userId) throw new Error("Cognito did not return a subject.");
+      if (existing.Enabled === false) {
+        await cognito.send(new AdminEnableUserCommand({ UserPoolId: userPoolId, Username: email }));
+      }
       return { userId };
     }
+  },
+  disableLogin: async (email) => {
+    await cognito.send(new AdminDisableUserCommand({ UserPoolId: userPoolId, Username: email }));
   },
 });
 
