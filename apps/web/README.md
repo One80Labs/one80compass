@@ -2,9 +2,9 @@
 
 Vite and React. Sign-in uses the Cognito user pool from the dev stack. The browser keeps that session, so a refresh stays signed in. The app sends the ID token. API Gateway checks that token. The dev pool accepts email and password. Set `VITE_MFA_REQUIRED=true` only for a build whose pool requires an authenticator.
 
-Overview stores health and notes. Documents uploads a file through a short-lived S3 URL, keeps older versions, and restores a soft-deleted file without replacing the current version.
+Overview stores health and notes. Documents uploads a file through a short-lived S3 URL, keeps older versions, and restores a soft-deleted file without replacing the current version. New folder creates a folder in the current location, including an empty one. A file can be moved into a folder that already exists.
 
-Plan and Kanban read the GitHub projection. Each plan row can change the title, status, and effort; the save is sent to GitHub. Progress counts leaf issues and treats a missing estimate as 1 without writing that 1 back to GitHub. A manual override requires an explanation. The GitHub App credentials stay on the Lambdas.
+Plan and Kanban read the GitHub projection. Each plan row can change the title, status, and effort; the save is sent to GitHub. The Kanban pencil opens that same editor in the shared drawer. Progress counts leaf issues and treats a missing estimate as 1 without writing that 1 back to GitHub. A manual override requires an explanation. The GitHub App credentials stay on the Lambdas.
 
 Status reports move from draft to review, approval, and publish. Each publish keeps a separate copy. Starting a revision edits a new draft and does not change a published copy.
 

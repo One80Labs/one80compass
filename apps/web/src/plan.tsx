@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import { usePortal } from "./shell";
-import { Notice, PageHead, Pill, Tabs } from "./ui";
+import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs } from "./ui";
 
 type PlanIssue = {
   issueId: string;
@@ -136,6 +136,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
   const [filter, setFilter] = useState("All tasks");
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState(false);
+  const [editing, setEditing] = useState<PlanIssue | null>(null);
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
   let issues = plan.data?.issues.filter((issue) => issue.title.toLowerCase().includes(query.toLowerCase())) ?? [];
   if (filter !== "All tasks") issues = [];
@@ -172,7 +173,10 @@ export function KanbanPage({ session }: { session: Session | null }) {
               </div>
               {rows.map((issue) => (
                 <article className="kanban-card" key={issue.issueId}>
-                  <strong>{issue.title}</strong>
+                  <div className="kanban-card-head">
+                    <strong>{issue.title}</strong>
+                    <EditRowButton label={`Edit ${issue.title}`} onClick={() => setEditing(issue)} />
+                  </div>
                   <Pill tone="blue">{issue.effort == null ? "Unestimated" : `${issue.effort} pts`}</Pill>
                   <div className="kanban-foot">
                     <span>Not scheduled</span>
@@ -201,6 +205,18 @@ export function KanbanPage({ session }: { session: Session | null }) {
           title="Add task"
           body="Tasks are created in the connected GitHub project. This board can change status, title, and effort for issues that already exist. It does not add a local-only task."
           onClose={() => setNotice(false)}
+        />
+      )}
+      {editing && (
+        <IssueDrawer
+          key={editing.issueId}
+          issue={editing}
+          columns={columns}
+          onClose={() => setEditing(null)}
+          onSave={async (issueId, change) => {
+            await plan.saveIssue(issueId, change);
+            setEditing(null);
+          }}
         />
       )}
     </>
@@ -244,6 +260,68 @@ function PlanStatus({ plan, session }: { plan: ReturnType<typeof usePlan>; sessi
         </form>
       )}
     </>
+  );
+}
+
+function IssueDrawer({
+  issue,
+  columns,
+  onClose,
+  onSave,
+}: {
+  issue: PlanIssue;
+  columns: string[];
+  onClose: () => void;
+  onSave: (issueId: string, change: { title: string; status: string; effort: number | null }) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(issue.title);
+  const [status, setStatus] = useState(issue.status);
+  const [effort, setEffort] = useState(issue.effort == null ? "" : String(issue.effort));
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const choices = columns.includes(status) || !status ? columns : [status, ...columns];
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    const parsed = effort.trim() === "" ? null : Number(effort);
+    if (parsed != null && (!Number.isFinite(parsed) || parsed < 0)) {
+      setError("Effort must be a number that is zero or more.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(issue.issueId, { title, status, effort: parsed });
+    } catch (caught) {
+      setError(message(caught));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <EditDrawer title={issue.number ? `Issue #${issue.number}` : "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
+      <p>Title, status, and effort are sent to the GitHub issue. Estimate is used when the project has no Effort field.</p>
+      <label>
+        Title
+        <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={200} />
+      </label>
+      <label>
+        Status
+        <select className="field" value={status} onChange={(event) => setStatus(event.target.value)} required>
+          {!status && <option value="">No status</option>}
+          {choices.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Effort
+        <input className="field" value={effort} onChange={(event) => setEffort(event.target.value)} inputMode="decimal" placeholder="Unestimated" />
+      </label>
+      {error && <p className="error">{error}</p>}
+    </EditDrawer>
   );
 }
 
@@ -297,7 +375,7 @@ function IssueRow({
           type="button"
           onClick={() => {
             const parsed = effort.trim() === "" ? null : Number(effort);
-            onSave(issue.issueId, { title, status, effort: parsed });
+            onSave(issue.issueId, { title, status, effort: parsed }).catch(() => undefined);
           }}
         >
           Save
@@ -390,9 +468,10 @@ function usePlan(session: Session | null) {
     async saveIssue(issueId: string, change: { title: string; status: string; effort: number | null }) {
       if (!session) return;
       setError(null);
-      if (change.effort != null && !Number.isFinite(change.effort)) {
-        setError("Effort must be a number.");
-        return;
+      if (change.effort != null && (!Number.isFinite(change.effort) || change.effort < 0)) {
+        const text = "Effort must be a number that is zero or more.";
+        setError(text);
+        throw new Error(text);
       }
       try {
         await api(`/projects/${projectId}/issues/${issueId}`, session.idToken, {
@@ -402,6 +481,7 @@ function usePlan(session: Session | null) {
         await reload();
       } catch (caught) {
         setError(message(caught));
+        throw caught;
       }
     },
     async move(issueId: string, status: string) {

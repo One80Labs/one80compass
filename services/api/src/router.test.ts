@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHmac } from "node:crypto";
-import type { ApplicationLink, AuditEvent, Customer, DocumentVersion, Membership, PlanIssue, PortalDocument, ProgressOverride, Project, ProjectOverview, ProjectSettings, ReportVersion, StatusReport, SyncState } from "../../../packages/domain/src/index";
+import type { ApplicationLink, AuditEvent, Customer, DocumentFolder, DocumentVersion, Membership, PlanIssue, PortalDocument, ProgressOverride, Project, ProjectOverview, ProjectSettings, ReportVersion, StatusReport, SyncState } from "../../../packages/domain/src/index";
 import { createHandler, type HandlerDeps, type HttpEvent } from "./router";
 import type { Store } from "./store";
 
@@ -11,6 +11,7 @@ function memoryStore(): Store & {
   applications: ApplicationLink[];
   audits: AuditEvent[];
   documents: PortalDocument[];
+  folders: DocumentFolder[];
   versions: DocumentVersion[];
   overviews: ProjectOverview[];
   settings: ProjectSettings[];
@@ -27,6 +28,7 @@ function memoryStore(): Store & {
   const applications: ApplicationLink[] = [];
   const audits: AuditEvent[] = [];
   const documents: PortalDocument[] = [];
+  const folders: DocumentFolder[] = [];
   const versions: DocumentVersion[] = [];
   const overviews: ProjectOverview[] = [];
   const settings: ProjectSettings[] = [];
@@ -106,6 +108,18 @@ function memoryStore(): Store & {
     async getDocument(documentId) {
       return documents.find((document) => document.documentId === documentId) ?? null;
     },
+    async listFolders(projectId) {
+      return folders.filter((folder) => folder.projectId === projectId);
+    },
+    async putFolder(folder) {
+      const index = folders.findIndex((item) => item.projectId === folder.projectId && item.path === folder.path);
+      if (index >= 0) folders[index] = folder;
+      else folders.push(folder);
+    },
+    async deleteFolder(projectId, path) {
+      const index = folders.findIndex((folder) => folder.projectId === projectId && folder.path === path);
+      if (index >= 0) folders.splice(index, 1);
+    },
     async listDocuments(projectId) {
       return documents.filter((document) => document.projectId === projectId);
     },
@@ -184,6 +198,7 @@ function memoryStore(): Store & {
       return reportVersions.filter((version) => version.reportId === reportId);
     },
     documents,
+    folders,
     versions,
     overviews,
     settings,
@@ -508,6 +523,36 @@ describe("api router", () => {
       }),
     );
     expect(JSON.parse(restored.body).currentVersionId).toBe(second.versionId);
+
+    const library = await handler(event({ method: "GET", path: `/projects/${projectId}/documents`, claims: employeeClaims }));
+    expect(JSON.parse(library.body).folders.map((folder: { path: string }) => folder.path)).toEqual(["Specs"]);
+    const made = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/folders`, claims: employeeClaims, body: { name: "Drafts", parent: "Specs" } }),
+    );
+    expect(made.statusCode).toBe(201);
+    const moved = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/documents/${first.documentId}`,
+        claims: employeeClaims,
+        body: { folder: "Specs/Drafts" },
+      }),
+    );
+    expect(moved.statusCode).toBe(200);
+    expect(store.documents[0].folder).toBe("Specs/Drafts");
+    const blocked = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/folders/delete`, claims: employeeClaims, body: { path: "Specs/Drafts" } }),
+    );
+    expect(blocked.statusCode).toBe(409);
+    const removed = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/folders`, claims: employeeClaims, body: { name: "Empty", parent: "" } }),
+    );
+    expect(removed.statusCode).toBe(201);
+    const gone = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/folders/delete`, claims: employeeClaims, body: { path: "Empty" } }),
+    );
+    expect(gone.statusCode).toBe(200);
+    expect(store.folders.map((folder) => folder.path)).toEqual(["Specs/Drafts"]);
     const foreign = await handler(
       event({ method: "GET", path: `/projects/${projectId}/documents/${first.documentId}/download`, claims: { ...employeeClaims, sub: "user-b" } }),
     );

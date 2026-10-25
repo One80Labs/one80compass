@@ -66,6 +66,16 @@ export type ProjectOverview = {
   updatedAt: string | null;
 };
 
+/** A project folder. `path` is the full name, such as `Specs` or `Specs/Drafts`. `parent` is empty at the top level. */
+export type DocumentFolder = {
+  projectId: string;
+  customerId: string;
+  path: string;
+  name: string;
+  parent: string;
+  createdAt: string;
+};
+
 export type PortalDocument = {
   documentId: string;
   projectId: string;

@@ -4,6 +4,7 @@ import {
   isProjectHealth,
   MAX_UPLOAD_BYTES,
   type AuditEvent,
+  type DocumentFolder,
   type DocumentVersion,
   type Membership,
   type PlanIssue,
@@ -163,6 +164,17 @@ export function createHandler(deps: HandlerDeps) {
         return documentAction[3] === "delete"
           ? deleteDocument(deps, ctx, decodeURIComponent(documentAction[1]), decodeURIComponent(documentAction[2]))
           : restoreDocument(deps, ctx, decodeURIComponent(documentAction[1]), decodeURIComponent(documentAction[2]));
+      }
+
+      const removeFolder = path.match(/^\/projects\/([^/]+)\/folders\/delete$/);
+      if (removeFolder && method === "POST") return deleteFolder(deps, ctx, decodeURIComponent(removeFolder[1]));
+
+      const folders = path.match(/^\/projects\/([^/]+)\/folders$/);
+      if (folders && method === "POST") return createFolder(deps, ctx, decodeURIComponent(folders[1]));
+
+      const moveDocument = path.match(/^\/projects\/([^/]+)\/documents\/([^/]+)$/);
+      if (moveDocument && method === "PATCH") {
+        return moveDocumentToFolder(deps, ctx, decodeURIComponent(moveDocument[1]), decodeURIComponent(moveDocument[2]));
       }
 
       const documents = path.match(/^\/projects\/([^/]+)\/documents$/);
@@ -620,7 +632,127 @@ async function listProjectDocuments(deps: HandlerDeps, ctx: Ctx, projectId: stri
       return { ...document, currentFileName: version?.fileName ?? null };
     }),
   );
-  return json(200, { documents: listed }, ctx.correlationId);
+  const folders = visibleFolders(await deps.store.listFolders(projectId), documents);
+  return json(200, { documents: listed, folders }, ctx.correlationId);
+}
+
+async function createFolder(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
+  const project = await readableProject(deps, ctx, projectId);
+  if (!project) return notFound(ctx);
+  const name = folderName(ctx.body.name);
+  if (!name) return validation(ctx, "A folder name can use letters, numbers, spaces, and . _ -.");
+  const parent = folderField(ctx.body.parent);
+  if (parent === null) return validation(ctx, "Choose an existing folder.");
+  const documents = await deps.store.listDocuments(projectId);
+  const stored = await deps.store.listFolders(projectId);
+  const known = new Set(visibleFolders(stored, documents).map((folder) => folder.path));
+  if (parent && !known.has(parent)) return validation(ctx, "Choose an existing folder.");
+  const path = parent ? `${parent}/${name}` : name;
+  if (path.length > 120) return validation(ctx, "That folder path is too long.");
+  const existing = stored.find((folder) => folder.path === path);
+  if (existing) return json(200, existing, ctx.correlationId);
+  const folder: DocumentFolder = {
+    projectId,
+    customerId: project.customerId,
+    path,
+    name,
+    parent,
+    createdAt: deps.now().toISOString(),
+  };
+  await deps.store.putFolder(folder);
+  await audit(deps, ctx, {
+    customerId: project.customerId,
+    projectId,
+    action: "folder.created",
+    targetType: "folder",
+    targetId: path,
+    before: null,
+    after: { path, name, parent },
+  });
+  return json(201, folder, ctx.correlationId);
+}
+
+async function deleteFolder(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
+  const project = await readableProject(deps, ctx, projectId);
+  if (!project) return notFound(ctx);
+  const path = folderField(ctx.body.path);
+  if (!path) return validation(ctx, "Choose a folder to remove.");
+  const documents = await deps.store.listDocuments(projectId);
+  const stored = await deps.store.listFolders(projectId);
+  const known = visibleFolders(stored, documents);
+  if (!known.some((item) => item.path === path)) return notFound(ctx);
+  const prefix = `${path}/`;
+  const occupied =
+    documents.some((document) => !document.deletedAt && (document.folder === path || document.folder.startsWith(prefix))) ||
+    stored.some((item) => item.parent === path);
+  if (occupied || !stored.some((item) => item.path === path)) {
+    return conflict(ctx, "Move the files and folders out of this folder before removing it.");
+  }
+  await deps.store.deleteFolder(projectId, path);
+  await audit(deps, ctx, {
+    customerId: project.customerId,
+    projectId,
+    action: "folder.removed",
+    targetType: "folder",
+    targetId: path,
+    before: { path },
+    after: null,
+  });
+  return json(200, { path }, ctx.correlationId);
+}
+
+async function moveDocumentToFolder(deps: HandlerDeps, ctx: Ctx, projectId: string, documentId: string): Promise<HttpResult> {
+  const document = await activeDocument(deps, ctx, projectId, documentId);
+  if (!document) return notFound(ctx);
+  const folder = folderField(ctx.body.folder);
+  if (folder === null) return validation(ctx, "Choose an existing folder.");
+  const documents = await deps.store.listDocuments(projectId);
+  const known = new Set(visibleFolders(await deps.store.listFolders(projectId), documents).map((item) => item.path));
+  if (folder && !known.has(folder)) return validation(ctx, "Choose an existing folder.");
+  const moved = { ...document, folder };
+  await deps.store.putDocument(moved);
+  await audit(deps, ctx, {
+    customerId: document.customerId,
+    projectId,
+    action: "document.moved",
+    targetType: "document",
+    targetId: documentId,
+    before: { folder: document.folder },
+    after: { folder },
+  });
+  return json(200, moved, ctx.correlationId);
+}
+
+function visibleFolders(stored: DocumentFolder[], documents: PortalDocument[]): DocumentFolder[] {
+  const byPath = new Map(stored.map((folder) => [folder.path, folder]));
+  for (const document of documents) {
+    if (document.deletedAt || !document.folder) continue;
+    const parts = document.folder.split("/").filter(Boolean);
+    let parent = "";
+    for (const name of parts) {
+      const path = parent ? `${parent}/${name}` : name;
+      if (!byPath.has(path)) {
+        byPath.set(path, {
+          projectId: document.projectId,
+          customerId: document.customerId,
+          path,
+          name,
+          parent,
+          createdAt: document.createdAt,
+        });
+      }
+      parent = path;
+    }
+  }
+  return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function folderName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const name = value.trim();
+  if (!name || name.length > 80 || name.includes("/") || name.includes("\\") || name.includes("..")) return null;
+  if (!/^[A-Za-z0-9 _.-]+$/.test(name)) return null;
+  return name;
 }
 
 async function createDocument(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {

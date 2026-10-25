@@ -7,6 +7,7 @@ import {
   type DocumentVersion,
   type Membership,
   type PlanIssue,
+  type DocumentFolder,
   type PortalDocument,
   type ProgressOverride,
   type Project,
@@ -39,6 +40,9 @@ export interface Store {
   putDocument(document: PortalDocument): Promise<void>;
   getDocument(documentId: string): Promise<PortalDocument | null>;
   listDocuments(projectId: string): Promise<PortalDocument[]>;
+  listFolders(projectId: string): Promise<DocumentFolder[]>;
+  putFolder(folder: DocumentFolder): Promise<void>;
+  deleteFolder(projectId: string, path: string): Promise<void>;
   putVersion(version: DocumentVersion): Promise<void>;
   getVersion(documentId: string, versionId: string): Promise<DocumentVersion | null>;
   listVersions(documentId: string): Promise<DocumentVersion[]>;
@@ -284,6 +288,35 @@ export class DynamoStore implements Store {
     );
     const item = result.Items?.[0];
     return item ? asDocument(item) : null;
+  }
+
+  async listFolders(projectId: string): Promise<DocumentFolder[]> {
+    const result = await this.doc.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "FOLDER#" },
+      }),
+    );
+    return (result.Items ?? []).map(asFolder);
+  }
+
+  async putFolder(folder: DocumentFolder): Promise<void> {
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: { pk: proj(folder.projectId), sk: folderSk(folder.path), entity: "folder", ...folder },
+      }),
+    );
+  }
+
+  async deleteFolder(projectId: string, path: string): Promise<void> {
+    await this.doc.send(
+      new DeleteCommand({
+        TableName: this.tableName,
+        Key: { pk: proj(projectId), sk: folderSk(path) },
+      }),
+    );
   }
 
   async listDocuments(projectId: string): Promise<PortalDocument[]> {
@@ -532,6 +565,9 @@ function doc(id: string): string {
 function docSk(id: string): string {
   return `DOC#${id}`;
 }
+function folderSk(path: string): string {
+  return `FOLDER#${encodeURIComponent(path)}`;
+}
 function ver(id: string): string {
   return `VER#${id}`;
 }
@@ -600,6 +636,17 @@ function asOverview(item: Item): ProjectOverview {
     healthExplanation: item.healthExplanation == null ? null : String(item.healthExplanation),
     notes: String(item.notes ?? ""),
     updatedAt: item.updatedAt == null ? null : String(item.updatedAt),
+  };
+}
+
+function asFolder(item: Item): DocumentFolder {
+  return {
+    projectId: String(item.projectId),
+    customerId: String(item.customerId),
+    path: String(item.path),
+    name: String(item.name),
+    parent: String(item.parent ?? ""),
+    createdAt: String(item.createdAt),
   };
 }
 

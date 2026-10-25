@@ -16,7 +16,9 @@ Routes for the first slice:
 - `GET /projects/{projectId}`
 - `GET /projects/{projectId}/applications`
 - `GET` and `PUT /projects/{projectId}/overview`
-- `GET` and `POST /projects/{projectId}/documents`
+- `GET` and `POST /projects/{projectId}/documents`. The list includes folders. A folder path on an older file is shown even when that folder was not created separately.
+- `POST /projects/{projectId}/folders` creates a folder in the current parent. `POST .../folders/delete` removes an empty folder.
+- `PATCH /projects/{projectId}/documents/{documentId}` moves a file into an existing folder. An empty folder value moves it back to All documents.
 - `POST /projects/{projectId}/documents/{documentId}/versions` and `.../complete`
 - `GET /projects/{projectId}/documents/{documentId}/download`
 - `POST /projects/{projectId}/documents/{documentId}/delete` and `.../restore`

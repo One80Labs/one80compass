@@ -22,7 +22,9 @@ type ListedDocument = {
   createdAt: string;
   currentFileName: string | null;
   currentVersionId: string | null;
+  deletedAt?: string | null;
 };
+type ListedFolder = { path: string; name: string; parent: string };
 type StoredVersion = {
   versionId: string;
   fileName: string;
@@ -238,14 +240,18 @@ export function DocumentsPage({ session }: { session: Session | null }) {
   const [deleted, setDeleted] = useState<ListedDocument[]>([]);
   const [tab, setTab] = useState("All documents");
   const [query, setQuery] = useState("");
+  const [folders, setFolders] = useState<ListedFolder[]>([]);
+  const [currentFolder, setCurrentFolder] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [creatingFolder, setCreatingFolder] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function reload() {
     if (!session) return;
-    const active = await api<{ documents: ListedDocument[] }>(`/projects/${projectId}/documents`, session.idToken);
+    const active = await api<{ documents: ListedDocument[]; folders: ListedFolder[] }>(`/projects/${projectId}/documents`, session.idToken);
     const bin = await api<{ documents: ListedDocument[] }>(`/projects/${projectId}/documents?state=deleted`, session.idToken);
     setDocuments(active.documents);
+    setFolders(active.folders ?? []);
     setDeleted(bin.documents);
   }
 
@@ -267,8 +273,16 @@ export function DocumentsPage({ session }: { session: Session | null }) {
     await reload();
   }
 
+  const browsing = tab === "All documents";
   const source = tab === "Recycle bin" ? deleted : documents;
-  const visible = source.filter((document) => document.name.toLowerCase().includes(query.toLowerCase()));
+  const scoped = browsing
+    ? source.filter((document) => (query ? inFolderTree(document.folder, currentFolder) : document.folder === currentFolder))
+    : source;
+  const visible = scoped.filter((document) => document.name.toLowerCase().includes(query.toLowerCase()));
+  const childFolders = browsing
+    ? folders.filter((folder) => folder.parent === currentFolder && (!query || folder.name.toLowerCase().includes(query.toLowerCase())))
+    : [];
+  const crumbs = currentFolder ? currentFolder.split("/") : [];
 
   return (
     <>
@@ -276,9 +290,16 @@ export function DocumentsPage({ session }: { session: Session | null }) {
         title="Documents."
         subtitle={`Manage project documents and versions for ${projectName}.`}
         action={
-          <button className="btn primary" type="button" onClick={() => setUploading(true)}>
-            Upload document
-          </button>
+          <div className="row">
+            {browsing && (
+              <button className="btn" type="button" onClick={() => setCreatingFolder(true)}>
+                New folder
+              </button>
+            )}
+            <button className="btn primary" type="button" onClick={() => setUploading(true)}>
+              Upload document
+            </button>
+          </div>
         }
       />
       {!session && <p>Sign in to open documents.</p>}
@@ -291,6 +312,24 @@ export function DocumentsPage({ session }: { session: Session | null }) {
         </section>
       ) : (
         <>
+          {browsing && (
+            <nav className="crumbs" aria-label="Folders">
+              <button type="button" className={currentFolder ? "" : "current"} onClick={() => setCurrentFolder("")}>
+                All documents
+              </button>
+              {crumbs.map((part, index) => {
+                const path = crumbs.slice(0, index + 1).join("/");
+                return (
+                  <span key={path}>
+                    <span aria-hidden="true"> / </span>
+                    <button type="button" className={path === currentFolder ? "current" : ""} onClick={() => setCurrentFolder(path)}>
+                      {part}
+                    </button>
+                  </span>
+                );
+              })}
+            </nav>
+          )}
           <div className="toolbar">
             <input type="search" value={query} placeholder="Search documents…" aria-label="Search documents" onChange={(event) => setQuery(event.target.value)} />
           </div>
@@ -307,6 +346,37 @@ export function DocumentsPage({ session }: { session: Session | null }) {
                 </tr>
               </thead>
               <tbody>
+                {childFolders.map((folder) => (
+                  <tr key={folder.path}>
+                    <td>
+                      <button className="linkish" type="button" onClick={() => { setQuery(""); setCurrentFolder(folder.path); }}>
+                        <FolderMark />
+                        <strong>{folder.name}</strong>
+                      </button>
+                    </td>
+                    <td>Folder</td>
+                    <td />
+                    <td />
+                    <td />
+                    <td>
+                      <button
+                        className="btn small"
+                        type="button"
+                        onClick={() => {
+                          if (!session) return;
+                          api(`/projects/${projectId}/folders/delete`, session.idToken, { method: "POST", body: { path: folder.path } })
+                            .then(() => {
+                              if (currentFolder === folder.path) setCurrentFolder(folder.parent);
+                              return reload();
+                            })
+                            .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not remove the folder."));
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
                 {visible.map((document) => (
                   <tr key={document.documentId}>
                     <td>
@@ -336,16 +406,28 @@ export function DocumentsPage({ session }: { session: Session | null }) {
                           Restore
                         </button>
                       ) : (
-                        <button className="btn small" type="button" onClick={() => navigate(`/projects/${projectId}/documents/${document.documentId}`)}>
-                          Open
-                        </button>
+                        <span className="row">
+                          <button className="btn small" type="button" onClick={() => navigate(`/projects/${projectId}/documents/${document.documentId}`)}>
+                            Open
+                          </button>
+                          <MoveFolder
+                            folders={folders}
+                            value={document.folder}
+                            onMove={(folder) => {
+                              if (!session) return;
+                              api(`/projects/${projectId}/documents/${document.documentId}`, session.idToken, { method: "PATCH", body: { folder } })
+                                .then(reload)
+                                .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not move the document."));
+                            }}
+                          />
+                        </span>
                       )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {visible.length === 0 && <div className="empty">No documents match this view.</div>}
+            {childFolders.length === 0 && visible.length === 0 && <div className="empty">{browsing && currentFolder && !query ? "This folder is empty." : "No documents match this view."}</div>}
           </div>
         </>
       )}
@@ -354,7 +436,9 @@ export function DocumentsPage({ session }: { session: Session | null }) {
           <div className="dialog" role="dialog" aria-modal="true" aria-label="Upload document" onClick={(event) => event.stopPropagation()}>
             <h2>Upload document</h2>
             <p>The file is stored for this project after the upload finishes.</p>
+            <p>{currentFolder ? `This file goes in ${currentFolder}.` : "This file stays in All documents."}</p>
             <UploadForm
+              folder={currentFolder}
               onUpload={async (file, name, folder) => {
                 setError(null);
                 try {
@@ -373,6 +457,17 @@ export function DocumentsPage({ session }: { session: Session | null }) {
           </div>
         </div>
       )}
+      {creatingFolder && session && (
+        <FolderForm
+          parent={currentFolder}
+          onClose={() => setCreatingFolder(false)}
+          onCreate={async (name) => {
+            await api(`/projects/${projectId}/folders`, session.idToken, { method: "POST", body: { name, parent: currentFolder } });
+            setCreatingFolder(false);
+            await reload();
+          }}
+        />
+      )}
     </>
   );
 }
@@ -381,6 +476,7 @@ export function DocumentDetailPage({ session }: { session: Session | null }) {
   const { projectId = "", documentId = "" } = useParams();
   const navigate = useNavigate();
   const [document, setDocument] = useState<ListedDocument | null>(null);
+  const [folders, setFolders] = useState<ListedFolder[]>([]);
   const [versions, setVersions] = useState<StoredVersion[]>([]);
   const [tab, setTab] = useState("Preview");
   const [notice, setNotice] = useState(false);
@@ -388,10 +484,11 @@ export function DocumentDetailPage({ session }: { session: Session | null }) {
 
   async function reload() {
     if (!session) return;
-    const active = await api<{ documents: ListedDocument[] }>(`/projects/${projectId}/documents`, session.idToken);
+    const active = await api<{ documents: ListedDocument[]; folders: ListedFolder[] }>(`/projects/${projectId}/documents`, session.idToken);
     const bin = await api<{ documents: ListedDocument[] }>(`/projects/${projectId}/documents?state=deleted`, session.idToken);
     const found = [...active.documents, ...bin.documents].find((item) => item.documentId === documentId) ?? null;
     setDocument(found);
+    setFolders(active.folders ?? []);
     const history = await api<{ versions: StoredVersion[] }>(`/projects/${projectId}/documents/${documentId}/versions`, session.idToken);
     setVersions(history.versions);
   }
@@ -473,7 +570,22 @@ export function DocumentDetailPage({ session }: { session: Session | null }) {
                   <dt>File type</dt>
                   <dd>{kind}</dd>
                   <dt>Folder</dt>
-                  <dd>{document.folder || "None"}</dd>
+                  <dd>
+                    {document.deletedAt ? (
+                      document.folder || "All documents"
+                    ) : (
+                      <MoveFolder
+                        folders={folders}
+                        value={document.folder}
+                        onMove={(folder) => {
+                          if (!session) return;
+                          api(`/projects/${projectId}/documents/${document.documentId}`, session.idToken, { method: "PATCH", body: { folder } })
+                            .then(reload)
+                            .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not move the document."));
+                        }}
+                      />
+                    )}
+                  </dd>
                 </dl>
                 <p className="copy">This preview is a placeholder. The stored file downloads from the project bucket.</p>
                 {session && <VersionForm onUpload={(file) => addVersion(session, projectId, document, file).then(reload)} />}
@@ -534,10 +646,9 @@ async function addVersion(session: Session, projectId: string, document: ListedD
   await api(`/projects/${projectId}/documents/${created.documentId}/versions/${created.versionId}/complete`, session.idToken, { method: "POST" });
 }
 
-function UploadForm({ onUpload }: { onUpload: (file: File, name: string, folder: string) => Promise<void> }) {
+function UploadForm({ folder, onUpload }: { folder: string; onUpload: (file: File, name: string, folder: string) => Promise<void> }) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState("");
-  const [folder, setFolder] = useState("");
   return (
     <form
       onSubmit={async (event) => {
@@ -546,7 +657,6 @@ function UploadForm({ onUpload }: { onUpload: (file: File, name: string, folder:
         await onUpload(file, name, folder);
         setFile(null);
         setName("");
-        setFolder("");
       }}
     >
       <label>
@@ -566,15 +676,75 @@ function UploadForm({ onUpload }: { onUpload: (file: File, name: string, folder:
         Name
         <input className="field" value={name} onChange={(event) => setName(event.target.value)} required />
       </label>
-      <label>
-        Folder
-        <input className="field" value={folder} onChange={(event) => setFolder(event.target.value)} />
-      </label>
       <button className="btn primary" type="submit">
         Upload
       </button>
     </form>
   );
+}
+
+function FolderMark() {
+  return (
+    <svg className="file-icon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+      <path fill="currentColor" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
+    </svg>
+  );
+}
+
+function MoveFolder({ folders, value, onMove }: { folders: ListedFolder[]; value: string; onMove: (folder: string) => void }) {
+  return (
+    <select className="field move-folder" aria-label="Move to folder" value={value} onChange={(event) => onMove(event.target.value)}>
+      <option value="">All documents</option>
+      {folders.map((folder) => (
+        <option key={folder.path} value={folder.path}>
+          {folder.path}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function FolderForm({ parent, onClose, onCreate }: { parent: string; onClose: () => void; onCreate: (name: string) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="dialog-layer" onClick={onClose}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-label="New folder" onClick={(event) => event.stopPropagation()}>
+        <h2>New folder</h2>
+        <p>{parent ? `This folder is created inside ${parent}.` : "This folder is created in All documents."}</p>
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setError(null);
+            try {
+              await onCreate(name);
+            } catch (caught) {
+              setError(caught instanceof Error ? caught.message : "Could not create the folder.");
+            }
+          }}
+        >
+          <label>
+            Name
+            <input className="field" value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} />
+          </label>
+          {error && <p className="error">{error}</p>}
+          <div className="dialog-actions">
+            <button className="btn" type="button" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" type="submit">
+              Create folder
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function inFolderTree(folder: string, current: string): boolean {
+  if (!current) return true;
+  return folder === current || folder.startsWith(`${current}/`);
 }
 
 function VersionForm({ onUpload }: { onUpload: (file: File) => Promise<void> }) {

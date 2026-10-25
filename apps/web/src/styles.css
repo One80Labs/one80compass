@@ -928,11 +928,27 @@ button.tab.active {
   margin-bottom: 10px;
 }
 
+.kanban-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
 .kanban-card strong {
   font-size: 12px;
   line-height: 1.45;
   display: block;
-  margin-bottom: 9px;
+  min-width: 0;
+}
+
+.kanban-card-head strong {
+  margin-bottom: 0;
+}
+
+.kanban-card-head .icon-button {
+  flex: none;
 }
 
 .kanban-foot {
@@ -989,10 +1005,37 @@ button.tab.active {
   cursor: pointer;
 }
 
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0 12px;
+  font-size: 13px;
+}
+
+.crumbs button {
+  background: transparent;
+  color: var(--oc-body);
+  border: 0;
+  padding: 0;
+  width: auto;
+}
+
+.crumbs button.current {
+  font-weight: 700;
+}
+
+.move-folder {
+  width: auto;
+  min-width: 140px;
+}
+
 .file-icon {
   font-size: 17px;
   margin-right: 11px;
   color: #d36c42;
+  vertical-align: text-bottom;
 }
 
 .file-icon.docx {
