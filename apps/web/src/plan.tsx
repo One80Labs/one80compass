@@ -340,6 +340,9 @@ function GithubForm({
       }}
     >
       <h2>GitHub project</h2>
+      <p className="muted small">
+        For the current test board use owner One80Labs, repository one80compass, and project number 1. That board is an organization project. Issues are read from the repository named here. Columns follow the GitHub Status field, and Estimate is used when Effort is absent.
+      </p>
       <label>
         Owner
         <input value={owner} onChange={(event) => setOwner(event.target.value)} required />

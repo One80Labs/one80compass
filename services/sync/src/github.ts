@@ -10,7 +10,14 @@ export type GitHubGateway = {
 type GraphItem = {
   id?: string;
   isArchived?: boolean;
-  content?: { id?: string; number?: number; title?: string; state?: string; milestone?: { title?: string } | null } | null;
+  content?: {
+    id?: string;
+    number?: number;
+    title?: string;
+    state?: string;
+    repository?: { nameWithOwner?: string } | null;
+    milestone?: { title?: string } | null;
+  } | null;
   fieldValues?: { nodes?: FieldValue[] };
 };
 
@@ -22,14 +29,23 @@ type FieldValue = {
 
 type GraphField = { id?: string; name?: string; options?: { id: string; name: string }[] };
 
+type ProjectBody = {
+  id: string;
+  items: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: GraphItem[] };
+  fields: { nodes: GraphField[] };
+};
+
+type ProjectLookup = {
+  repositoryOwner?: {
+    projectV2?: ProjectBody | null;
+    repository?: { projectV2?: ProjectBody | null } | null;
+  } | null;
+};
+
+type ProjectScope = "organization" | "repository";
+
 type ProjectPage = {
-  repository?: {
-    projectV2?: {
-      id: string;
-      items: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: GraphItem[] };
-      fields: { nodes: GraphField[] };
-    };
-  };
+  node?: { items?: ProjectBody["items"] } | null;
 };
 
 /** Reads App credentials from the environment. An empty key means sync is not configured. */
@@ -41,36 +57,27 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
     configured,
     async reconcile(settings) {
       const token = await installationToken(appId, privateKey, settings.owner, settings.repo);
-      const collected: GraphItem[] = [];
-      let projectNodeId = settings.projectNodeId;
-      let fields: GraphField[] = [];
-      let cursor: string | null = null;
-      for (let page = 0; page < 10; page += 1) {
-        const data: ProjectPage = await graphql<ProjectPage>(token, PROJECT_QUERY, {
+      const found = chooseProject(
+        await graphql<ProjectLookup>(token, PROJECT_QUERY, {
           owner: settings.owner,
           name: settings.repo,
           number: settings.projectNumber,
-          cursor,
-        });
-        const project = data.repository?.projectV2;
-        if (!project) throw new Error("The GitHub Project was not found on that repository.");
-        projectNodeId = project.id;
-        fields = project.fields.nodes ?? [];
-        collected.push(...(project.items.nodes ?? []));
-        if (!project.items.pageInfo.hasNextPage) break;
-        cursor = project.items.pageInfo.endCursor;
+          cursor: null,
+        }),
+      );
+      if (!found) throw new Error("The GitHub Project was not found for that owner and repository.");
+      const project = found.project;
+      project.items.nodes = project.items.nodes ?? [];
+      let cursor = project.items.pageInfo.hasNextPage ? project.items.pageInfo.endCursor : null;
+      for (let page = 0; page < 9 && cursor; page += 1) {
+        const data = await graphql<ProjectPage>(token, PROJECT_PAGE_QUERY, { id: project.id, cursor });
+        const items = data.node?.items;
+        if (!items) break;
+        project.items.nodes.push(...(items.nodes ?? []));
+        if (!items.pageInfo.hasNextPage) break;
+        cursor = items.pageInfo.endCursor;
       }
-      const statusField = fields.find((field) => field.name === settings.statusFieldName && field.options);
-      const effortField = fields.find((field) => field.name === settings.effortFieldName);
-      const nextSettings: ProjectSettings = {
-        ...settings,
-        projectNodeId,
-        statusFieldId: statusField?.id ?? null,
-        effortFieldId: effortField?.id ?? null,
-        statusOptions: statusField?.options ?? [],
-      };
-      const issues = collected.filter((item) => item.content?.id).map((item) => toIssue(nextSettings, item, now().toISOString()));
-      return { settings: nextSettings, issues };
+      return readProject(settings, project, found.scope, now().toISOString());
     },
     async updateIssue(settings, issue, change) {
       const token = await installationToken(appId, privateKey, settings.owner, settings.repo);
@@ -127,29 +134,106 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
   };
 }
 
-const PROJECT_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){
-  repository(owner:$owner,name:$name){
-    projectV2(number:$number){
+const PROJECT_FIELDS = `
+  id
+  items(first:100,after:$cursor){
+    pageInfo{hasNextPage endCursor}
+    nodes{
       id
+      isArchived
+      content{... on Issue{id number title state repository{nameWithOwner} milestone{title}}}
+      fieldValues(first:20){nodes{
+        ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
+        ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
+      }}
+    }
+  }
+  fields(first:30){nodes{
+    ... on ProjectV2SingleSelectField{id name options{id name}}
+    ... on ProjectV2Field{id name}
+  }}
+`;
+
+const PROJECT_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){
+  repositoryOwner(login:$owner){
+    ... on Organization {
+      projectV2(number:$number){${PROJECT_FIELDS}}
+    }
+    repository(name:$name){
+      projectV2(number:$number){${PROJECT_FIELDS}}
+    }
+  }
+}`;
+
+const PROJECT_PAGE_QUERY = `query($id:ID!,$cursor:String){
+  node(id:$id){
+    ... on ProjectV2 {
       items(first:100,after:$cursor){
         pageInfo{hasNextPage endCursor}
         nodes{
           id
           isArchived
-          content{... on Issue{id number title state milestone{title}}}
+          content{... on Issue{id number title state repository{nameWithOwner} milestone{title}}}
           fieldValues(first:20){nodes{
             ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
             ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
           }}
         }
       }
-      fields(first:30){nodes{
-        ... on ProjectV2SingleSelectField{id name options{id name}}
-        ... on ProjectV2Field{id name}
-      }}
     }
   }
 }`;
+
+/** Prefers a repository project, then an organization project with the same number. */
+export function chooseProject(data: ProjectLookup): { project: ProjectBody; scope: ProjectScope } | null {
+  const owner = data.repositoryOwner;
+  const repositoryProject = owner?.repository?.projectV2;
+  if (repositoryProject) return { project: repositoryProject, scope: "repository" };
+  const organizationProject = owner?.projectV2;
+  if (organizationProject) return { project: organizationProject, scope: "organization" };
+  return null;
+}
+
+/** Copies Status options onto the board and keeps issues from the mapped repository. */
+export function readProject(
+  settings: ProjectSettings,
+  project: ProjectBody,
+  scope: ProjectScope,
+  now: string,
+): { settings: ProjectSettings; issues: PlanIssue[] } {
+  const fields = project.fields.nodes ?? [];
+  const statusField = fields.find((field) => field.name === settings.statusFieldName && field.options);
+  const effortField = resolveEffortField(fields, settings.effortFieldName);
+  const optionNames = statusField?.options?.map((option) => option.name) ?? [];
+  const columns = optionNames.length > 0 ? optionNames : settings.columns;
+  const matchingDone = settings.doneStatuses.filter((name) => optionNames.length === 0 || optionNames.includes(name));
+  const doneStatuses = matchingDone.length > 0 ? matchingDone : optionNames.filter((name) => name.toLowerCase() === "done");
+  const nextSettings: ProjectSettings = {
+    ...settings,
+    projectNodeId: project.id,
+    statusFieldId: statusField?.id ?? null,
+    effortFieldId: effortField?.id ?? null,
+    effortFieldName: effortField?.name ?? settings.effortFieldName,
+    statusOptions: statusField?.options ?? [],
+    columns,
+    doneStatuses: doneStatuses.length > 0 ? doneStatuses : settings.doneStatuses,
+  };
+  const issues = (project.items.nodes ?? [])
+    .filter((item) => item.content?.id && belongsToRepo(settings, item, scope))
+    .map((item) => toIssue(nextSettings, item, now));
+  return { settings: nextSettings, issues };
+}
+
+function resolveEffortField(fields: GraphField[], name: string): GraphField | undefined {
+  const numberFields = fields.filter((field) => field.name && !field.options);
+  return numberFields.find((field) => field.name === name) ?? numberFields.find((field) => field.name === "Estimate");
+}
+
+function belongsToRepo(settings: ProjectSettings, item: GraphItem, scope: ProjectScope): boolean {
+  const fullName = item.content?.repository?.nameWithOwner;
+  if (!fullName) return scope === "repository";
+  return fullName.toLowerCase() === `${settings.owner}/${settings.repo}`.toLowerCase();
+}
 
 const SET_FIELD = `mutation($project:ID!,$item:ID!,$field:ID!,$value:ProjectV2FieldValue!){
   updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:$value}){projectV2Item{id}}
