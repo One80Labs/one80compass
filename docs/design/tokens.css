@@ -1,0 +1,30 @@
+/* One80Compass UI tokens, derived from the supplied One80Labs style guides.
+   This is the DESIGN TARGET, not a pixel extraction from generated reference images. */
+:root {
+  --oc-ink: #141413;
+  --oc-body: #3D3D3A;
+  --oc-muted: #6B6A64;
+  --oc-bg: #FAF9F5;
+  --oc-surface: #FFFFFF;
+  --oc-surface-muted: #F0EEE6;
+  --oc-divider: #E6E2D8;
+  --oc-accent: #D97757;
+  --oc-accent-strong: #B05D17;
+  --oc-accent-wash: #F7E6DF;
+  --oc-doc-orange: #F58220;
+  --oc-positive: #5E8C3A;
+  --oc-info: #3C7FBE;
+  --oc-warning: #B05D17;
+  --oc-font-ui: 'Figtree', sans-serif;
+  --oc-font-title: 'Source Serif 4', Georgia, serif;
+  --oc-font-mono: 'JetBrains Mono', monospace;
+  --oc-radius-sm: 6px;
+  --oc-radius-md: 10px;
+  --oc-radius-lg: 14px;
+  --oc-sidebar-width: 232px;
+  --oc-topbar-height: 64px;
+  --oc-card-gap: 16px;
+  --oc-content-max-width: 1360px;
+  --oc-page-padding: 32px;
+}
+/* Do not use the 4:3 slide dimensions as application viewport constraints. */

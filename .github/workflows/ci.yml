@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build -w @one80compass/web
+        env:
+          VITE_USER_POOL_ID: us-east-2_example
+          VITE_USER_POOL_CLIENT_ID: example
+          VITE_API_URL: https://example.execute-api.us-east-2.amazonaws.com
+      - run: npm run synth -w infra

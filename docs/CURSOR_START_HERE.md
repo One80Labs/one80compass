@@ -2,10 +2,10 @@
 
 ## Read these project files before planning or coding
 
-1. `One80Labs_Portal_Product_Technical_Spec_v7.5.md` — authoritative consolidated **product requirements**, policies, architecture, and source-of-truth boundaries.
-2. `One80Labs_Portal_Implementation_Plan_v7.5.md` — **release boundaries**, workstreams, dependencies, exit criteria, and validation.
-3. `One80Labs_Portal_GitHub_Backlog_v7.5.csv` — seed backlog for task decomposition (not a substitute for the specification).
-4. `One80Labs_Portal_Overview_v7.5.md` — short introduction; **not the complete requirements**.
+1. `product/One80Labs_Portal_Product_Technical_Spec_v7.5.md` — authoritative consolidated **product requirements**, policies, architecture, and source-of-truth boundaries.
+2. `product/One80Labs_Portal_Implementation_Plan_v7.5.md` — **release boundaries**, workstreams, dependencies, exit criteria, and validation.
+3. `product/One80Labs_Portal_GitHub_Backlog_v7.5.csv` — seed backlog for task decomposition (not a substitute for the specification).
+4. `product/One80Labs_Portal_Overview_v7.5.md` — short introduction; **not the complete requirements**.
 
 The `.docx` versions are human-readable reference copies; read the Markdown versions for Cursor planning. All four of the above files should be physically present inside the **open Cursor workspace**, for example in `docs/`. A file existing in another chat or on the computer outside the workspace does not guarantee that Cursor has received its contents. Explicitly attach/reference each file using Cursor's file-context feature or ask Cursor to read them from workspace paths.
 

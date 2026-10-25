@@ -1,14 +1,41 @@
 import { describe, expect, it } from "vitest";
-import type { ApplicationLink, AuditEvent, Customer, Membership, Project } from "../../../packages/domain/src/index";
+import { createHmac } from "node:crypto";
+import type { ApplicationLink, AuditEvent, Customer, DocumentVersion, Membership, PlanIssue, PortalDocument, ProgressOverride, Project, ProjectOverview, ProjectSettings, ReportVersion, StatusReport, SyncState } from "../../../packages/domain/src/index";
 import { createHandler, type HttpEvent } from "./router";
 import type { Store } from "./store";
 
-function memoryStore(): Store & { customers: Customer[]; projects: Project[]; memberships: Membership[]; applications: ApplicationLink[]; audits: AuditEvent[] } {
+function memoryStore(): Store & {
+  customers: Customer[];
+  projects: Project[];
+  memberships: Membership[];
+  applications: ApplicationLink[];
+  audits: AuditEvent[];
+  documents: PortalDocument[];
+  versions: DocumentVersion[];
+  overviews: ProjectOverview[];
+  settings: ProjectSettings[];
+  issues: PlanIssue[];
+  overrides: ProgressOverride[];
+  syncs: SyncState[];
+  deliveries: string[];
+  reports: StatusReport[];
+  reportVersions: ReportVersion[];
+} {
   const customers: Customer[] = [];
   const projects: Project[] = [];
   const memberships: Membership[] = [];
   const applications: ApplicationLink[] = [];
   const audits: AuditEvent[] = [];
+  const documents: PortalDocument[] = [];
+  const versions: DocumentVersion[] = [];
+  const overviews: ProjectOverview[] = [];
+  const settings: ProjectSettings[] = [];
+  const issues: PlanIssue[] = [];
+  const overrides: ProgressOverride[] = [];
+  const syncs: SyncState[] = [];
+  const deliveries: string[] = [];
+  const reports: StatusReport[] = [];
+  const reportVersions: ReportVersion[] = [];
   return {
     customers,
     projects,
@@ -51,6 +78,112 @@ function memoryStore(): Store & { customers: Customer[]; projects: Project[]; me
     async listAudit(customerId) {
       return audits.filter((event) => event.customerId === customerId);
     },
+    async getOverview(projectId) {
+      return overviews.find((overview) => overview.projectId === projectId) ?? null;
+    },
+    async putOverview(overview) {
+      const index = overviews.findIndex((item) => item.projectId === overview.projectId);
+      if (index >= 0) overviews[index] = overview;
+      else overviews.push(overview);
+    },
+    async createDocument(document) {
+      documents.push(document);
+    },
+    async putDocument(document) {
+      const index = documents.findIndex((item) => item.documentId === document.documentId);
+      if (index >= 0) documents[index] = document;
+      else documents.push(document);
+    },
+    async getDocument(documentId) {
+      return documents.find((document) => document.documentId === documentId) ?? null;
+    },
+    async listDocuments(projectId) {
+      return documents.filter((document) => document.projectId === projectId);
+    },
+    async putVersion(version) {
+      const index = versions.findIndex((item) => item.versionId === version.versionId);
+      if (index >= 0) versions[index] = version;
+      else versions.push(version);
+    },
+    async getVersion(documentId, versionId) {
+      return versions.find((version) => version.documentId === documentId && version.versionId === versionId) ?? null;
+    },
+    async listVersions(documentId) {
+      return versions.filter((version) => version.documentId === documentId);
+    },
+    async getSettings(projectId) {
+      return settings.find((item) => item.projectId === projectId) ?? null;
+    },
+    async putSettings(item) {
+      const index = settings.findIndex((current) => current.projectId === item.projectId);
+      if (index >= 0) settings[index] = item;
+      else settings.push(item);
+    },
+    async listSettings() {
+      return settings;
+    },
+    async getIssue(projectId, issueId) {
+      return issues.find((issue) => issue.projectId === projectId && issue.issueId === issueId) ?? null;
+    },
+    async putIssue(issue) {
+      const index = issues.findIndex((item) => item.issueId === issue.issueId && item.projectId === issue.projectId);
+      if (index >= 0) issues[index] = issue;
+      else issues.push(issue);
+    },
+    async listIssues(projectId) {
+      return issues.filter((issue) => issue.projectId === projectId);
+    },
+    async getOverride(projectId) {
+      return overrides.find((item) => item.projectId === projectId) ?? null;
+    },
+    async putOverride(override) {
+      const index = overrides.findIndex((item) => item.projectId === override.projectId);
+      if (index >= 0) overrides[index] = override;
+      else overrides.push(override);
+    },
+    async getSync(projectId) {
+      return syncs.find((item) => item.projectId === projectId) ?? null;
+    },
+    async putSync(state) {
+      const index = syncs.findIndex((item) => item.projectId === state.projectId);
+      if (index >= 0) syncs[index] = state;
+      else syncs.push(state);
+    },
+    async claimDelivery(deliveryId) {
+      if (deliveries.includes(deliveryId)) return false;
+      deliveries.push(deliveryId);
+      return true;
+    },
+    async createReport(report) {
+      reports.push(report);
+    },
+    async putReport(report) {
+      const index = reports.findIndex((item) => item.reportId === report.reportId);
+      if (index >= 0) reports[index] = report;
+      else reports.push(report);
+    },
+    async getReport(reportId) {
+      return reports.find((report) => report.reportId === reportId) ?? null;
+    },
+    async listReports(projectId) {
+      return reports.filter((report) => report.projectId === projectId);
+    },
+    async putReportVersion(version) {
+      reportVersions.push(version);
+    },
+    async listReportVersions(reportId) {
+      return reportVersions.filter((version) => version.reportId === reportId);
+    },
+    documents,
+    versions,
+    overviews,
+    settings,
+    issues,
+    overrides,
+    syncs,
+    deliveries,
+    reports,
+    reportVersions,
   };
 }
 
@@ -58,11 +191,19 @@ function fakeJwt(payload: Record<string, unknown>): string {
   return `header.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.signature`;
 }
 
-function event(partial: { method: string; path: string; claims?: Record<string, string>; body?: unknown; headers?: Record<string, string> }): HttpEvent {
+function event(partial: {
+  method: string;
+  path: string;
+  claims?: Record<string, string>;
+  body?: unknown;
+  headers?: Record<string, string>;
+  query?: Record<string, string>;
+}): HttpEvent {
   return {
     rawPath: partial.path,
     body: partial.body === undefined ? null : JSON.stringify(partial.body),
     headers: partial.headers,
+    queryStringParameters: partial.query,
     requestContext: {
       http: { method: partial.method },
       requestId: "req-1",
@@ -75,6 +216,8 @@ const adminClaims = { sub: "admin-1", email: "nick@one80labs.com", "cognito:grou
 const adminNoMfa = { sub: "admin-1", email: "nick@one80labs.com", "cognito:groups": "one80-admin", amr: '["authenticated"]' };
 const employeeClaims = { sub: "user-a", email: "ada@example.com", amr: '["authenticated"]' };
 
+const queued: unknown[] = [];
+
 function handlerFor(store: Store) {
   let n = 0;
   return createHandler({
@@ -82,6 +225,14 @@ function handlerFor(store: Store) {
     inviteUser: async () => ({ userId: "user-a" }),
     newId: () => `id-${++n}`,
     now: () => new Date("2026-10-24T12:00:00.000Z"),
+    maxUploadBytes: 100,
+    signUpload: async (objectKey) => `https://files.example/upload/${objectKey}`,
+    signDownload: async (objectKey) => `https://files.example/download/${objectKey}`,
+    enqueue: async (message) => {
+      queued.push(message);
+    },
+    githubConfigured: false,
+    webhookSecret: "test-secret",
   });
 }
 
@@ -150,6 +301,16 @@ describe("api router", () => {
       }),
     );
     expect(tile.statusCode).toBe(201);
+    const again = await handler(
+      event({
+        method: "POST",
+        path: `/admin/projects/${project.projectId}/applications`,
+        claims: adminClaims,
+        body: { moduleKey: "overview", displayName: "Overview" },
+      }),
+    );
+    expect(again.statusCode).toBe(200);
+    expect(store.applications.filter((item) => item.moduleKey === "overview")).toHaveLength(1);
     expect(store.audits.map((row) => row.action)).toEqual([
       "customer.created",
       "project.created",
@@ -179,5 +340,248 @@ describe("api router", () => {
     const allowed = await handler(event({ method: "GET", path: `/projects/${projectId}`, claims: employeeClaims }));
     expect(allowed.statusCode).toBe(200);
     expect(JSON.parse(allowed.body).name).toBe("Bridge");
+    const named = await handler(event({ method: "GET", path: `/customers/${customerId}`, claims: employeeClaims }));
+    expect(JSON.parse(named.body).name).toBe("Acme");
+    const hiddenCustomer = await handler(event({ method: "GET", path: `/customers/${customerId}`, claims: { ...employeeClaims, sub: "user-b" } }));
+    expect(hiddenCustomer.statusCode).toBe(404);
+  });
+
+  it("records overview health and notes for a member", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const saved = await handler(
+      event({
+        method: "PUT",
+        path: `/projects/${projectId}/overview`,
+        claims: employeeClaims,
+        body: { health: "yellow", healthExplanation: "Waiting on a vendor", notes: "Kickoff is Thursday." },
+      }),
+    );
+    expect(saved.statusCode).toBe(200);
+    expect(store.audits.some((row) => row.action === "overview.updated" && row.projectId === projectId)).toBe(true);
+    store.issues.push({
+      issueId: "I_mile",
+      itemId: null,
+      projectId,
+      customerId: store.projects[0].customerId,
+      number: 2,
+      title: "Deck",
+      status: "Todo",
+      effort: 1,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      milestone: "Phase 1",
+      inProject: true,
+      updatedAt: "2026-10-24T12:00:00.000Z",
+    });
+    store.reportVersions.push({
+      versionId: "ver-1",
+      reportId: "rpt-1",
+      projectId,
+      customerId: store.projects[0].customerId,
+      title: "Week 1",
+      body: "Published copy",
+      publishedAt: "2026-10-24T15:00:00.000Z",
+      publishedBy: "user-1",
+    });
+    store.reports.push({
+      reportId: "rpt-1",
+      projectId,
+      customerId: store.projects[0].customerId,
+      title: "Week 1 draft",
+      body: "Working copy",
+      status: "draft",
+      updatedAt: "2026-10-24T16:00:00.000Z",
+      createdAt: "2026-10-24T12:00:00.000Z",
+    });
+    const loaded = await handler(event({ method: "GET", path: `/projects/${projectId}/overview`, claims: employeeClaims }));
+    const body = JSON.parse(loaded.body) as { overview: { health: string }; milestones: string[]; publishedReport: { title: string } };
+    expect(body.overview.health).toBe("yellow");
+    expect(body.milestones).toEqual(["Phase 1"]);
+    expect(body.publishedReport.title).toBe("Week 1");
+    const hidden = await handler(event({ method: "GET", path: `/projects/${projectId}/overview`, claims: { ...employeeClaims, sub: "user-b" } }));
+    expect(hidden.statusCode).toBe(404);
+  });
+
+  it("versions a document without removing the previous file and restores it unchanged", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const tooBig = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents`,
+        claims: employeeClaims,
+        body: { name: "Plan", fileName: "plan.pdf", contentType: "application/pdf", sizeBytes: 101 },
+      }),
+    );
+    expect(tooBig.statusCode).toBe(400);
+
+    const created = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents`,
+        claims: employeeClaims,
+        body: { name: "Plan", folder: "Specs", fileName: "plan.pdf", contentType: "application/pdf", sizeBytes: 10 },
+      }),
+    );
+    expect(created.statusCode).toBe(201);
+    const first = JSON.parse(created.body) as { documentId: string; versionId: string; uploadUrl: string };
+    expect(first.uploadUrl).toContain(first.versionId);
+    expect(first.uploadUrl).toContain(`customers/${store.projects[0].customerId}/`);
+    await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents/${first.documentId}/versions/${first.versionId}/complete`,
+        claims: employeeClaims,
+      }),
+    );
+
+    const added = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents/${first.documentId}/versions`,
+        claims: employeeClaims,
+        body: { fileName: "plan-v2.pdf", contentType: "application/pdf", sizeBytes: 12 },
+      }),
+    );
+    const second = JSON.parse(added.body) as { versionId: string };
+    const completed = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents/${first.documentId}/versions/${second.versionId}/complete`,
+        claims: employeeClaims,
+      }),
+    );
+    expect(JSON.parse(completed.body).currentVersionId).toBe(second.versionId);
+    const versions = await handler(
+      event({ method: "GET", path: `/projects/${projectId}/documents/${first.documentId}/versions`, claims: employeeClaims }),
+    );
+    expect(JSON.parse(versions.body).versions).toHaveLength(2);
+
+    await handler(
+      event({ method: "POST", path: `/projects/${projectId}/documents/${first.documentId}/delete`, claims: employeeClaims, body: {} }),
+    );
+    const active = await handler(event({ method: "GET", path: `/projects/${projectId}/documents`, claims: employeeClaims }));
+    expect(JSON.parse(active.body).documents).toHaveLength(0);
+    const restored = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents/${first.documentId}/restore`,
+        claims: employeeClaims,
+        body: { explanation: "Removed by mistake" },
+      }),
+    );
+    expect(JSON.parse(restored.body).currentVersionId).toBe(second.versionId);
+    const foreign = await handler(
+      event({ method: "GET", path: `/projects/${projectId}/documents/${first.documentId}/download`, claims: { ...employeeClaims, sub: "user-b" } }),
+    );
+    expect(foreign.statusCode).toBe(404);
+  });
+});
+
+async function seedProject(handler: (event: HttpEvent) => Promise<{ statusCode: number; body: string }>, store: ReturnType<typeof memoryStore>) {
+  await handler(event({ method: "POST", path: "/admin/customers", claims: adminClaims, body: { name: "Acme" } }));
+  const customerId = store.customers[0].customerId;
+  await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge" } }));
+  store.memberships.push({
+    customerId,
+    userId: "user-a",
+    email: "ada@example.com",
+    role: "employee",
+    createdAt: "2026-10-24T12:00:00.000Z",
+  });
+  return store.projects[0].projectId;
+}
+
+describe("plan and webhooks", () => {
+  it("rejects a progress override without an explanation and records one with the calculated value", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    store.issues.push({
+      issueId: "I_1",
+      itemId: null,
+      projectId,
+      customerId: store.projects[0].customerId,
+      number: 1,
+      title: "Pour footing",
+      status: "Done",
+      effort: 1,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      milestone: "Phase 1",
+      inProject: true,
+      updatedAt: "2026-10-24T12:00:00.000Z",
+    });
+    const missing = await handler(event({ method: "POST", path: `/projects/${projectId}/progress-override`, claims: employeeClaims, body: { percent: 80 } }));
+    expect(missing.statusCode).toBe(400);
+    const saved = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/progress-override`,
+        claims: employeeClaims,
+        body: { percent: 80, explanation: "Field work is ahead of the board." },
+      }),
+    );
+    expect(saved.statusCode).toBe(200);
+    expect(JSON.parse(saved.body).override.calculatedPercent).toBe(100);
+    expect(store.audits.some((row) => row.action === "progress.overridden")).toBe(true);
+    const hidden = await handler(event({ method: "GET", path: `/projects/${projectId}/plan`, claims: { ...employeeClaims, sub: "user-b" } }));
+    expect(hidden.statusCode).toBe(404);
+  });
+
+  it("rejects an unsigned webhook and queues a signed one", async () => {
+    queued.length = 0;
+    const handler = handlerFor(memoryStore());
+    const unsigned = await handler(event({ method: "POST", path: "/webhooks/github", body: { zen: "keep" }, headers: {} }));
+    expect(unsigned.statusCode).toBe(401);
+    const raw = JSON.stringify({ zen: "keep" });
+    const signature = `sha256=${createHmac("sha256", "test-secret").update(raw).digest("hex")}`;
+    const signed = await handler(
+      event({
+        method: "POST",
+        path: "/webhooks/github",
+        body: { zen: "keep" },
+        headers: { "x-hub-signature-256": signature, "x-github-delivery": "del-1", "x-github-event": "ping" },
+      }),
+    );
+    expect(signed.statusCode).toBe(202);
+    expect(queued).toHaveLength(1);
+  });
+
+  it("publishes an approved report without changing the published copy", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const created = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/reports`, claims: employeeClaims, body: { title: "Week 1", body: "Kickoff is done." } }),
+    );
+    expect(created.statusCode).toBe(201);
+    const reportId = JSON.parse(created.body).reportId as string;
+    const early = await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/publish`, claims: employeeClaims }));
+    expect(early.statusCode).toBe(409);
+    await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/submit`, claims: employeeClaims }));
+    await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/approve`, claims: employeeClaims }));
+    const published = await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/publish`, claims: employeeClaims }));
+    expect(published.statusCode).toBe(200);
+    const versionId = JSON.parse(published.body).version.versionId as string;
+    await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/revise`, claims: employeeClaims }));
+    await handler(
+      event({ method: "PUT", path: `/projects/${projectId}/reports/${reportId}`, claims: employeeClaims, body: { title: "Week 1 revised", body: "Added the vendor note." } }),
+    );
+    const loaded = await handler(event({ method: "GET", path: `/projects/${projectId}/reports/${reportId}`, claims: employeeClaims }));
+    const payload = JSON.parse(loaded.body);
+    expect(payload.report.status).toBe("draft");
+    expect(payload.versions).toHaveLength(1);
+    expect(payload.versions[0].versionId).toBe(versionId);
+    expect(payload.versions[0].body).toBe("Kickoff is done.");
+    const hidden = await handler(event({ method: "GET", path: `/projects/${projectId}/reports`, claims: { ...employeeClaims, sub: "user-b" } }));
+    expect(hidden.statusCode).toBe(404);
   });
 });

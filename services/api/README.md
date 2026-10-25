@@ -13,5 +13,22 @@ Routes for the first slice:
 - `GET /customers/{customerId}/projects`
 - `GET /projects/{projectId}`
 - `GET /projects/{projectId}/applications`
+- `GET` and `PUT /projects/{projectId}/overview`
+- `GET` and `POST /projects/{projectId}/documents`
+- `POST /projects/{projectId}/documents/{documentId}/versions` and `.../complete`
+- `GET /projects/{projectId}/documents/{documentId}/download`
+- `POST /projects/{projectId}/documents/{documentId}/delete` and `.../restore`
+- `GET /customers/{customerId}/audit`
+- `GET /projects/{projectId}/plan`
+- `PUT /projects/{projectId}/github`
+- `POST /projects/{projectId}/sync`
+- `POST /projects/{projectId}/progress-override`
+- `PATCH /projects/{projectId}/issues/{issueId}`
+- `POST /webhooks/github` without a Cognito token; it checks the GitHub signature and queues the delivery
+- `GET` and `POST /projects/{projectId}/reports`
+- `GET` and `PUT /projects/{projectId}/reports/{reportId}`
+- `POST /projects/{projectId}/reports/{reportId}/submit`, `/approve`, `/publish`, and `/revise`
 
-A missing or foreign project returns 404. Administrator routes require the `one80-admin` group on a token API Gateway has already verified. The pool requires MFA before that token exists. A customer id in the JSON body is ignored.
+Publishing stores an immutable copy. A later revision edits the working draft and leaves that copy unchanged.
+
+A missing or foreign project returns 404. Administrator routes require the `one80-admin` group on a token API Gateway has already verified. The pool requires MFA before that token exists. A customer id in the JSON body is ignored. Uploads are limited to 25 MiB. Restoring a document does not replace its current version.

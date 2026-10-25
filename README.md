@@ -1,8 +1,8 @@
 # One80Compass
 
-Secure multi-customer workspace for One80Labs. This repository starts with the first vertical slice: an administrator creates a customer and project, invites an employee, and that employee opens the Overview module. The API rejects calls that have no Cognito token.
+Secure multi-customer workspace for One80Labs. The dev app covers sign-in, administration, Overview, documents, a GitHub-backed plan and Kanban, and status reports. The API rejects calls that have no Cognito token. GitHub webhooks are the exception: they must carry a valid signature.
 
-Requirements live in `docs/`. The dev account and runtime choices are in `docs/adr/0001-first-slice-runtime.md`.
+Requirements live in `docs/product/`. Start at `docs/CURSOR_START_HERE.md`. The dev account and runtime choices are in `docs/adr/0001-first-slice-runtime.md`. The current screen reference is `docs/design/`.
 
 ## Develop
 
@@ -12,7 +12,7 @@ npm test
 npm run deploy:dev
 ```
 
-Deploy uses AWS profile `one80compass` and account `168034219908` in `us-east-2`. After deploy, put the stack outputs in `apps/web/.env.local` as described in `apps/web/README.md`, then:
+Deploy uses AWS profile `one80compass` and account `168034219908` in `us-east-2`. It builds the web app and publishes it. After the first deploy, put the stack outputs in `apps/web/.env.local` as described in `apps/web/README.md`, then deploy again so the hosted site has those values. For local work:
 
 ```bash
 npm run dev -w @one80compass/web

@@ -4,6 +4,7 @@ cdk.out/
 *.js
 *.d.ts
 !apps/web/src/vite-env.d.ts
+!docs/design/app.js
 .env
 .env.local
 .DS_Store

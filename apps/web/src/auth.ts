@@ -88,6 +88,28 @@ export function signOut(): void {
   pool.getCurrentUser()?.signOut();
 }
 
+/** Reloads the Cognito session stored in this browser. A refresh would otherwise show the sign-in form. */
+export function restoreSession(): Promise<Session | null> {
+  const user = pool.getCurrentUser();
+  if (!user) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    user.getSession((error: Error | null, session: CognitoUserSession | null) => {
+      if (error || !session) {
+        resolve(null);
+        return;
+      }
+      const payload = session.getIdToken().payload;
+      const emailClaim = payload.email;
+      const usernameClaim = payload["cognito:username"];
+      const email =
+        typeof emailClaim === "string" ? emailClaim : typeof usernameClaim === "string" ? usernameClaim : user.getUsername();
+      const restored = readSession(session, email);
+      // The pool requires MFA before it issues a token, and the ID token has no amr claim.
+      resolve(restored.adminGroup ? { ...restored, mfa: true } : restored);
+    });
+  });
+}
+
 function authenticate(user: CognitoUser, email: string, password: string): Promise<SignInResult> {
   const details = new AuthenticationDetails({ Username: email, Password: password });
   return new Promise((resolve, reject) => {

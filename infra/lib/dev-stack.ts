@@ -3,12 +3,24 @@ import * as cdk from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cw_actions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
+import * as sns from "aws-cdk-lib/aws-sns";
+import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
+import * as sqs from "aws-cdk-lib/aws-sqs";
+import * as sources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
 import { Construct } from "constructs";
 
 const ADMIN_EMAIL = "nick@one80labs.com";
@@ -111,6 +123,54 @@ export class DevStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    const web = new s3.Bucket(this, "Web", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+    });
+    const site = new cloudfront.Distribution(this, "Site", {
+      comment: "One80Compass dev",
+      defaultRootObject: "index.html",
+      defaultBehavior: {
+        origin: new origins.S3Origin(web),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      errorResponses: [
+        { httpStatus: 403, responseHttpStatus: 200, responsePagePath: "/index.html", ttl: cdk.Duration.seconds(0) },
+        { httpStatus: 404, responseHttpStatus: 200, responsePagePath: "/index.html", ttl: cdk.Duration.seconds(0) },
+      ],
+    });
+    const browserOrigins = ["http://localhost:5173", "http://127.0.0.1:5173", `https://${site.distributionDomainName}`];
+
+    const documents = new s3.Bucket(this, "Documents", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      versioned: true,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      cors: [
+        {
+          allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+          allowedOrigins: browserOrigins,
+          allowedHeaders: ["content-type"],
+          maxAge: 3000,
+        },
+      ],
+    });
+
+    const deadLetters = new sqs.Queue(this, "SyncDeadLetters", {
+      queueName: "one80compass-dev-sync-dlq",
+      retentionPeriod: cdk.Duration.days(14),
+    });
+    const syncQueue = new sqs.Queue(this, "SyncQueue", {
+      queueName: "one80compass-dev-sync",
+      visibilityTimeout: cdk.Duration.seconds(60),
+      deadLetterQueue: { queue: deadLetters, maxReceiveCount: 5 },
+    });
+
     const apiFunction = new nodejs.NodejsFunction(this, "Api", {
       functionName: "one80compass-dev-api",
       entry: path.join(__dirname, "../../services/api/src/main.ts"),
@@ -121,10 +181,19 @@ export class DevStack extends cdk.Stack {
       environment: {
         TABLE_NAME: table.tableName,
         USER_POOL_ID: pool.userPoolId,
+        BUCKET_NAME: documents.bucketName,
+        MAX_UPLOAD_BYTES: String(25 * 1024 * 1024),
+        SYNC_QUEUE_URL: syncQueue.queueUrl,
+        GITHUB_APP_ID: process.env.GITHUB_APP_ID ?? "",
+        GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY ?? "",
+        GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET ?? "",
       },
       bundling: { sourceMap: true, minify: true },
     });
     table.grantReadWriteData(apiFunction);
+    documents.grantPut(apiFunction);
+    documents.grantRead(apiFunction);
+    syncQueue.grantSendMessages(apiFunction);
     apiFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["cognito-idp:AdminCreateUser", "cognito-idp:AdminGetUser"],
@@ -139,10 +208,38 @@ export class DevStack extends cdk.Stack {
     const httpApi = new apigwv2.HttpApi(this, "HttpApi", {
       apiName: "one80compass-dev",
       corsPreflight: {
-        allowOrigins: ["http://localhost:5173", "http://127.0.0.1:5173"],
+        allowOrigins: browserOrigins,
         allowHeaders: ["authorization", "content-type", "x-correlation-id"],
         allowMethods: [apigwv2.CorsHttpMethod.ANY],
       },
+    });
+
+    const syncFunction = new nodejs.NodejsFunction(this, "Sync", {
+      functionName: "one80compass-dev-sync",
+      entry: path.join(__dirname, "../../services/sync/src/handler.ts"),
+      projectRoot: path.join(__dirname, "../.."),
+      depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        TABLE_NAME: table.tableName,
+        GITHUB_APP_ID: process.env.GITHUB_APP_ID ?? "",
+        GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY ?? "",
+        GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET ?? "",
+      },
+      bundling: { sourceMap: true, minify: true },
+    });
+    table.grantReadWriteData(syncFunction);
+    syncFunction.addEventSource(new sources.SqsEventSource(syncQueue, { batchSize: 1 }));
+    new events.Rule(this, "Reconcile", {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(15)),
+      targets: [new targets.LambdaFunction(syncFunction)],
+    });
+
+    httpApi.addRoutes({
+      path: "/webhooks/github",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("WebhookIntegration", apiFunction),
     });
 
     httpApi.addRoutes({
@@ -158,8 +255,36 @@ export class DevStack extends cdk.Stack {
       authorizer,
     });
 
+    const alerts = new sns.Topic(this, "Alerts", { topicName: "one80compass-dev-alerts" });
+    alerts.addSubscription(new subscriptions.EmailSubscription(ADMIN_EMAIL));
+    const notify = new cw_actions.SnsAction(alerts);
+    for (const [id, metric, name] of [
+      ["ApiErrorAlarm", apiFunction.metricErrors({ period: cdk.Duration.minutes(5) }), "one80compass-dev-api-errors"],
+      ["SyncErrorAlarm", syncFunction.metricErrors({ period: cdk.Duration.minutes(5) }), "one80compass-dev-sync-errors"],
+      ["SyncDlqAlarm", deadLetters.metricApproximateNumberOfMessagesVisible({ period: cdk.Duration.minutes(5) }), "one80compass-dev-sync-dlq"],
+    ] as const) {
+      const alarm = new cloudwatch.Alarm(this, id, {
+        alarmName: name,
+        metric,
+        threshold: 1,
+        evaluationPeriods: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
+      alarm.addAlarmAction(notify);
+    }
+
+    new s3deploy.BucketDeployment(this, "WebFiles", {
+      sources: [s3deploy.Source.asset(path.join(__dirname, "../../apps/web/dist"))],
+      destinationBucket: web,
+      distribution: site,
+      distributionPaths: ["/*"],
+    });
+
+    new cdk.CfnOutput(this, "SiteUrl", { value: `https://${site.distributionDomainName}` });
     new cdk.CfnOutput(this, "UserPoolId", { value: pool.userPoolId });
     new cdk.CfnOutput(this, "UserPoolClientId", { value: client.userPoolClientId });
     new cdk.CfnOutput(this, "ApiUrl", { value: httpApi.apiEndpoint });
+    new cdk.CfnOutput(this, "WebhookUrl", { value: `${httpApi.apiEndpoint}/webhooks/github` });
   }
 }
