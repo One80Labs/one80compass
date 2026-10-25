@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "./api";
 import type { Session } from "./auth";
 import { displayName } from "./shell";
+import { EditDrawer, EditRowButton } from "./ui";
 
 type ProjectRef = { projectId: string; name: string };
 
@@ -56,31 +57,30 @@ export function MembersPage({ session }: { session: Session | null }) {
                 <th>Customer</th>
                 <th>Projects</th>
                 <th>Access</th>
+                <th className="row-action">
+                  <span className="sr-only">Edit</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {members?.length === 0 && (
                 <tr>
-                  <td colSpan={5}>No one has been invited yet.</td>
+                  <td colSpan={6}>No one has been invited yet.</td>
                 </tr>
               )}
               {members?.map((member) => {
                 const label = memberName(member);
                 return (
                   <tr key={`${member.customerId}:${member.userId}`}>
-                    <td>
-                      <div className="member-name">
-                        <span>{label}</span>
-                        <button className="btn small" type="button" onClick={() => setEditing(member)}>
-                          Edit
-                        </button>
-                      </div>
-                    </td>
+                    <td>{label}</td>
                     <td>{member.email}</td>
                     <td>{member.customerName}</td>
                     <td>{member.allProjects ? "All projects" : member.projects.length ? member.projects.map((project) => project.name).join(", ") : "No projects"}</td>
                     <td>
                       <span className={member.access === "Administrator" ? "pill good" : "pill"}>{member.access}</span>
+                    </td>
+                    <td className="row-action">
+                      <EditRowButton label={`Edit ${label}`} onClick={() => setEditing(member)} />
                     </td>
                   </tr>
                 );
@@ -131,14 +131,6 @@ function MemberDrawer({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   function toggleProject(projectId: string) {
     setProjectIds((current) => (current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId]));
   }
@@ -168,9 +160,7 @@ function MemberDrawer({
   }
 
   return (
-    <div className="drawer-layer" onClick={onClose}>
-      <form className="drawer" role="dialog" aria-modal="true" aria-label={`Edit ${memberName(member)}`} onClick={(event) => event.stopPropagation()} onSubmit={onSubmit}>
-        <h2>Edit member</h2>
+    <EditDrawer title="Edit member" onClose={onClose} onSubmit={onSubmit} saving={saving}>
         <p>{member.customerName}</p>
         <label>
           Name
@@ -204,15 +194,6 @@ function MemberDrawer({
           </>
         )}
         {error && <p className="error">{error}</p>}
-        <div className="dialog-actions">
-          <button className="btn" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn primary" type="submit" disabled={saving}>
-            {saving ? "Saving" : "Save"}
-          </button>
-        </div>
-      </form>
-    </div>
+    </EditDrawer>
   );
 }

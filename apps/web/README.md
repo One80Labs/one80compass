@@ -10,6 +10,8 @@ Status reports move from draft to review, approval, and publish. Each publish ke
 
 Audit lists the newest recorded changes for the customer, including who made the change and the prior and new values. It is always in the navigation once a project is selected.
 
+`EditDrawer` in `src/ui.tsx` is the shared right-hand editor. Its body scrolls, and Save stays on the left of the footer with Cancel on the right. `EditRowButton` is the pencil control for the last cell of a table row.
+
 Copy the stack outputs into `apps/web/.env.local`:
 
 ```
