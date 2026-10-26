@@ -813,6 +813,11 @@ button.tab.active {
   touch-action: none;
 }
 
+.gantt-bar.rollup {
+  background: #e7b5a2;
+  cursor: default;
+}
+
 .gantt-bar:active {
   cursor: grabbing;
 }

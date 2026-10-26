@@ -44,3 +44,42 @@ export function shiftSchedule(
   const next = addDays(finish, days);
   return { startDate: start, finishDate: next >= start ? next : start };
 }
+
+/** The last day of a GitHub iteration. Duration is the number of days, including the start date. */
+export function iterationFinish(start: string, duration: number): string | null {
+  if (!isIsoDate(start) || !Number.isInteger(duration) || duration < 1) return null;
+  return addDays(start, duration - 1);
+}
+
+export type ScheduledRange = { start: string; finish: string; fromIteration: boolean };
+
+/** An Iteration supplies the bar. Start and Finish are used when the task has no Iteration. */
+export function scheduledRange(issue: {
+  startDate: string | null;
+  finishDate: string | null;
+  iterationStart?: string | null;
+  iterationDuration?: number | null;
+}): ScheduledRange | null {
+  const duration = issue.iterationDuration;
+  if (issue.iterationStart && duration != null) {
+    const finish = iterationFinish(issue.iterationStart, duration);
+    if (finish) return { start: issue.iterationStart, finish, fromIteration: true };
+  }
+  if (issue.startDate && issue.finishDate && isIsoDate(issue.startDate) && isIsoDate(issue.finishDate)) {
+    return { start: issue.startDate, finish: issue.finishDate, fromIteration: false };
+  }
+  return null;
+}
+
+export function scheduleText(issue: {
+  startDate: string | null;
+  finishDate: string | null;
+  iterationTitle?: string | null;
+  iterationStart?: string | null;
+  iterationDuration?: number | null;
+}): string {
+  const range = scheduledRange(issue);
+  if (!range) return "Not scheduled";
+  const dates = `${range.start} – ${range.finish}`;
+  return range.fromIteration && issue.iterationTitle ? `${issue.iterationTitle} · ${dates}` : dates;
+}

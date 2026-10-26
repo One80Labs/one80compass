@@ -38,6 +38,9 @@ type FieldValue = {
   name?: string;
   number?: number;
   date?: string | null;
+  title?: string;
+  startDate?: string | null;
+  duration?: number;
   field?: { id?: string; name?: string };
 };
 
@@ -218,10 +221,19 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
     milestoneDueOn: milestoneDue(item.content?.milestone?.dueOn),
     startDate: milestoneDue(startValue?.date),
     finishDate: milestoneDue(finishValue?.date),
+    ...iterationFields(values),
     predecessorIds: predecessorIds(item),
     inProject: true,
     updatedAt,
   };
+}
+
+function iterationFields(values: FieldValue[]): { iterationTitle: string | null; iterationStart: string | null; iterationDuration: number | null } {
+  const iteration = values.find((value) => value.field?.name?.toLowerCase() === "iteration" && value.startDate);
+  const start = milestoneDue(iteration?.startDate);
+  const duration = typeof iteration?.duration === "number" && Number.isInteger(iteration.duration) && iteration.duration >= 1 ? iteration.duration : null;
+  if (!iteration || !start || duration == null) return { iterationTitle: null, iterationStart: null, iterationDuration: null };
+  return { iterationTitle: iteration.title?.trim() || null, iterationStart: start, iterationDuration: duration };
 }
 
 function predecessorIds(item: GraphItem): string[] {
@@ -242,6 +254,7 @@ const PROJECT_FIELDS = `
         ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
         ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
         ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2Field{id name}}}
+        ... on ProjectV2ItemFieldIterationValue{title startDate duration field{... on ProjectV2FieldCommon{name}}}
       }}
     }
   }
@@ -275,6 +288,7 @@ const PROJECT_PAGE_QUERY = `query($id:ID!,$cursor:String){
             ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
             ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
             ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2Field{id name}}}
+        ... on ProjectV2ItemFieldIterationValue{title startDate duration field{... on ProjectV2FieldCommon{name}}}
           }}
         }
       }

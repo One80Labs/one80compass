@@ -94,6 +94,10 @@ function applyProjectItem(issues: PlanIssue[], settings: ProjectSettings, body: 
   if (fieldName === settings.effortFieldName) next.effort = fieldNumber(fieldValue?.to);
   if (fieldName === settings.startFieldName) next.startDate = fieldDate(fieldValue?.to);
   if (fieldName === settings.finishFieldName) next.finishDate = fieldDate(fieldValue?.to);
+  if (fieldName.toLowerCase() === "iteration") {
+    const parsed = iterationFromWebhook(fieldValue?.to);
+    if (parsed.iterationStart || fieldValue?.to == null) Object.assign(next, parsed);
+  }
   return upsert(issues, next);
 }
 
@@ -117,6 +121,9 @@ function blankIssue(settings: ProjectSettings, issueId: string, now: string): Pl
     milestoneDueOn: null,
     startDate: null,
     finishDate: null,
+    iterationTitle: null,
+    iterationStart: null,
+    iterationDuration: null,
     predecessorIds: [],
     inProject: false,
     updatedAt: now,
@@ -151,6 +158,16 @@ function fieldText(value: unknown): string | null {
   if (typeof value === "string") return value;
   const item = record(value);
   return typeof item?.name === "string" ? item.name : null;
+}
+
+function iterationFromWebhook(value: unknown): { iterationTitle: string | null; iterationStart: string | null; iterationDuration: number | null } {
+  const iteration = record(value);
+  if (!iteration) return { iterationTitle: null, iterationStart: null, iterationDuration: null };
+  const rawStart = typeof iteration.start_date === "string" ? iteration.start_date : typeof iteration.startDate === "string" ? iteration.startDate : "";
+  const start = /^\d{4}-\d{2}-\d{2}/.test(rawStart) ? rawStart.slice(0, 10) : null;
+  const duration = typeof iteration.duration === "number" && Number.isInteger(iteration.duration) && iteration.duration >= 1 ? iteration.duration : null;
+  if (!start || duration == null) return { iterationTitle: null, iterationStart: null, iterationDuration: null };
+  return { iterationTitle: typeof iteration.title === "string" && iteration.title.trim() ? iteration.title.trim() : null, iterationStart: start, iterationDuration: duration };
 }
 
 function fieldDate(value: unknown): string | null {

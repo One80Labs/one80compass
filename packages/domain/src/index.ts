@@ -160,6 +160,12 @@ export type PlanIssue = {
   startDate: string | null;
   /** GitHub Project Finish field, YYYY-MM-DD. Null when the task is not scheduled. */
   finishDate: string | null;
+  /** GitHub Project Iteration title. Null when the task is not in an iteration. */
+  iterationTitle: string | null;
+  /** First day of that iteration. */
+  iterationStart: string | null;
+  /** Length of that iteration in days, including the first day. */
+  iterationDuration: number | null;
   /** GitHub issues that block this one. The task starts the day after the latest of those finishes. */
   predecessorIds: string[];
   inProject: boolean;

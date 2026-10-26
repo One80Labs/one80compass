@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { orderedIssues, planBands, planKind, planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import type { ProposedShift } from "../../../packages/domain/src/dependencies";
 import { scheduleConflicts } from "../../../packages/domain/src/dependencies";
+import { scheduleText, scheduledRange } from "../../../packages/domain/src/schedule";
 import type { MilestoneView } from "../../../packages/domain/src/milestones";
 import { api, ApiError } from "./api";
 import type { Session } from "./auth";
@@ -22,6 +23,9 @@ type PlanIssue = {
   issueType: string | null;
   startDate: string | null;
   finishDate: string | null;
+  iterationTitle?: string | null;
+  iterationStart?: string | null;
+  iterationDuration?: number | null;
   predecessorIds: string[];
   inProject?: boolean;
   archived?: boolean;
@@ -90,6 +94,7 @@ export function PlanPage({ session }: { session: Session | null }) {
                     <br />
                     <small>
                       {bandDone} of {tasks.length} tasks Done
+                      {bandRange(band.rows)}
                     </small>
                   </div>
                   <div className="phase-score">
@@ -110,6 +115,7 @@ export function PlanPage({ session }: { session: Session | null }) {
                           {issue.status === "Done" ? "●" : issue.status === "In Progress" ? "◐" : "○"}
                         </span>
                         {issue.title}
+                        {scheduleText(issue) !== "Not scheduled" && <span className="muted small"> {scheduleText(issue)}</span>}
                       </div>
                     ))}
                   </div>
@@ -999,9 +1005,19 @@ function message(caught: unknown): string {
   return caught instanceof Error || caught instanceof ApiError ? caught.message : "Request failed.";
 }
 
-function scheduleLabel(issue: { startDate: string | null; finishDate: string | null }): string {
-  if (issue.startDate && issue.finishDate) return `${issue.startDate} – ${issue.finishDate}`;
-  return issue.startDate ?? issue.finishDate ?? "Not scheduled";
+function scheduleLabel(issue: Parameters<typeof scheduleText>[0]): string {
+  return scheduleText(issue);
+}
+
+function bandRange(rows: Parameters<typeof scheduledRange>[0][]): string {
+  const ranges = rows.flatMap((row) => {
+    const range = scheduledRange(row);
+    return range ? [range] : [];
+  });
+  if (ranges.length === 0) return "";
+  const start = ranges.reduce((earliest, range) => (range.start < earliest ? range.start : earliest), ranges[0].start);
+  const finish = ranges.reduce((latest, range) => (range.finish > latest ? range.finish : latest), ranges[0].finish);
+  return ` · ${start} – ${finish}`;
 }
 
 function dependencyIssues(issues: PlanIssue[]) {

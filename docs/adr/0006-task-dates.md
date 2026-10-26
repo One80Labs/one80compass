@@ -4,7 +4,7 @@ GitHub Project date fields named Start and Finish are the source of truth for a 
 
 An administrator can add the two fields from the Gantt tab when the project does not already have date fields with those names. A task with no dates stays unscheduled. The Gantt does not invent a bar for it.
 
-A bar needs both dates. Dragging the bar moves the start and the finish by the same number of days. Dragging either end changes that one date. The finish cannot move before the start.
+An Iteration on the GitHub project supplies the Gantt bar. The bar runs from the iteration start through its last day. Start and Finish are used when the task has no Iteration.
 
 The milestone forecast is the latest finish date among that milestone's active tasks, and only when every one of those tasks has a finish date. The target date remains the GitHub milestone due date.
 

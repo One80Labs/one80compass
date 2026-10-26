@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { planRows } from "../../../packages/domain/src/hierarchy";
-import { addDays, scheduleSpan, shiftSchedule } from "../../../packages/domain/src/schedule";
+import { planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
+import { addDays, scheduledRange, scheduleSpan, shiftSchedule, type ScheduledRange } from "../../../packages/domain/src/schedule";
 
 type GanttIssue = {
   issueId: string;
@@ -10,6 +10,10 @@ type GanttIssue = {
   finishDate: string | null;
   number: number | null;
   issueType: string | null;
+  iterationTitle?: string | null;
+  iterationStart?: string | null;
+  iterationDuration?: number | null;
+  kind?: PlanKind;
   depth: number;
 };
 
@@ -40,14 +44,13 @@ export function GanttChart({
     issues.map((issue) => ({ ...issue, number: issue.number ?? null, issueType: issue.issueType ?? null })),
     workstreamNumber,
   );
-  const span = scheduleSpan(rows, today);
+  const ranges = rows.map((_, index) => barRange(rows, index));
+  const span = scheduleSpan(
+    ranges.map((range) => ({ startDate: range?.start ?? null, finishDate: range?.finish ?? null })),
+    today,
+  );
   const marks = [...new Set([0, Math.floor(span.days / 2), Math.max(span.days - 1, 0)])];
   const [draft, setDraft] = useState<{ issueId: string; startDate: string; finishDate: string } | null>(null);
-
-  function shown(issue: GanttIssue): { startDate: string | null; finishDate: string | null } {
-    if (draft?.issueId === issue.issueId) return draft;
-    return issue;
-  }
 
   function beginDrag(event: ReactPointerEvent, issue: GanttIssue, edge: "move" | "start" | "finish") {
     if (!datesReady || !issue.startDate || !issue.finishDate) return;
@@ -81,7 +84,7 @@ export function GanttChart({
     <section className="panel gantt">
       <h3>Gantt</h3>
       <p className="copy">
-        Start and Finish are date fields on the GitHub project. Drag a bar to move both dates. Drag either end to change that date. A task with no dates stays off the chart until both dates are set.
+        Start and Finish are date fields on the GitHub project. An Iteration uses that iteration's dates for the bar. Drag a bar to move both dates when the task has no Iteration. Drag either end to change that date. A task with no dates stays off the chart until both dates are set.
       </p>
       {!datesReady && (
         <p className="copy">
@@ -106,30 +109,39 @@ export function GanttChart({
         </div>
       </div>
       {rows.length === 0 && <p className="copy">No issues yet. Connect the GitHub project.</p>}
-      {rows.map((issue) => {
-        const dates = shown(issue);
-        const scheduled = Boolean(dates.startDate && dates.finishDate);
+      {rows.map((issue, index) => {
+        const range = draft?.issueId === issue.issueId ? { start: draft.startDate, finish: draft.finishDate, fromIteration: false } : ranges[index];
+        const summary = issue.kind === "epic" || issue.kind === "feature";
+        const draggable = Boolean(range && !range.fromIteration && !summary);
         return (
           <div className="gantt-row" key={issue.issueId}>
             <div style={{ paddingLeft: issue.depth * 16 }}>
               <strong>{issue.title}</strong>
               {conflictIds.includes(issue.issueId) && <span className="pill orange">Overlap</span>}
+              <div className="muted small">{range ? rangeLabel(issue, range) : "Not scheduled"}</div>
               <DateFields key={`${issue.startDate ?? ""}:${issue.finishDate ?? ""}`} issue={issue} datesReady={datesReady} busy={busy} onSchedule={onSchedule} />
             </div>
             <div className="gantt-track">
-              {scheduled && dates.startDate && dates.finishDate && (
+              {range && (
                 <div
-                  className="gantt-bar"
-                  style={barStyle(dates.startDate, dates.finishDate, span.origin, span.days)}
+                  className={summary || range.fromIteration ? "gantt-bar rollup" : "gantt-bar"}
+                  style={barStyle(range.start, range.finish, span.origin, span.days)}
                   role="slider"
                   aria-valuemin={0}
                   aria-valuemax={span.days}
-                  aria-valuenow={Math.round((Date.parse(dates.startDate) - Date.parse(span.origin)) / DAY)}
-                  aria-label={`${issue.title}, ${dates.startDate} to ${dates.finishDate}. Drag to move both dates.`}
-                  onPointerDown={(event) => beginDrag(event, { ...issue, startDate: dates.startDate, finishDate: dates.finishDate }, "move")}
+                  aria-valuenow={Math.round((Date.parse(range.start) - Date.parse(span.origin)) / DAY)}
+                  aria-label={`${issue.title}, ${range.start} to ${range.finish}.`}
+                  onPointerDown={(event) => {
+                    if (!draggable || !issue.startDate || !issue.finishDate) return;
+                    beginDrag(event, { ...issue, startDate: issue.startDate, finishDate: issue.finishDate }, "move");
+                  }}
                 >
-                  <span className="gantt-handle" aria-hidden="true" onPointerDown={(event) => beginDrag(event, { ...issue, startDate: dates.startDate, finishDate: dates.finishDate }, "start")} />
-                  <span className="gantt-handle" aria-hidden="true" onPointerDown={(event) => beginDrag(event, { ...issue, startDate: dates.startDate, finishDate: dates.finishDate }, "finish")} />
+                  {draggable && (
+                    <>
+                      <span className="gantt-handle" aria-hidden="true" onPointerDown={(event) => issue.startDate && issue.finishDate && beginDrag(event, { ...issue, startDate: issue.startDate, finishDate: issue.finishDate }, "start")} />
+                      <span className="gantt-handle" aria-hidden="true" onPointerDown={(event) => issue.startDate && issue.finishDate && beginDrag(event, { ...issue, startDate: issue.startDate, finishDate: issue.finishDate }, "finish")} />
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -198,4 +210,26 @@ function localToday(): string {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 10);
+}
+
+function barRange(rows: Array<{ depth: number; kind?: PlanKind } & Parameters<typeof scheduledRange>[0]>, index: number): ScheduledRange | null {
+  const row = rows[index];
+  const own = scheduledRange(row);
+  if (row.kind !== "epic" && row.kind !== "feature") return own;
+  let start = own?.start ?? null;
+  let finish = own?.finish ?? null;
+  for (let child = index + 1; child < rows.length && rows[child].depth > row.depth; child += 1) {
+    const range = scheduledRange(rows[child]);
+    if (!range) continue;
+    if (!start || range.start < start) start = range.start;
+    if (!finish || range.finish > finish) finish = range.finish;
+  }
+  if (!start || !finish) return null;
+  const sameAsOwn = own?.start === start && own.finish === finish;
+  return { start, finish, fromIteration: sameAsOwn ? own.fromIteration : false };
+}
+
+function rangeLabel(issue: { iterationTitle?: string | null }, range: ScheduledRange): string {
+  const dates = `${range.start} – ${range.finish}`;
+  return range.fromIteration && issue.iterationTitle ? `${issue.iterationTitle} · ${dates}` : dates;
 }
