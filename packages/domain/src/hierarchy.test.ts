@@ -144,4 +144,22 @@ describe("planBands", () => {
     expect(bands[1].rows.map((row) => row.title)).toEqual(["Note"]);
     expect(bands[0].rows.some((row) => row.issueId === "ws")).toBe(false);
   });
+
+  it("treats a GitHub type named EPIC as an Epic band", () => {
+    const bands = planBands(
+      [
+        node({ issueId: "epic", title: "EPIC #1", parentIssueId: "ws", number: 2, issueType: "EPIC" }),
+        node({ issueId: "feature", title: "Feature #1", parentIssueId: "epic", number: 3, issueType: "Feature" }),
+        node({ issueId: "task", title: "Task #1", parentIssueId: "feature", number: 1, issueType: "Task" }),
+        node({ issueId: "ws", title: "Workstream #1", parentIssueId: null, number: 4, issueType: "Workstream" }),
+      ],
+      null,
+    );
+    expect(bands.map((band) => band.title)).toEqual(["EPIC #1"]);
+    expect(bands[0].rows.map((row) => [row.title, row.kind])).toEqual([
+      ["EPIC #1", "epic"],
+      ["Feature #1", "feature"],
+      ["Task #1", "issue"],
+    ]);
+  });
 });

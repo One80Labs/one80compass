@@ -132,13 +132,14 @@ export type PlanNode = {
 
 const PLAN_INDENT: Record<PlanKind, number> = { workstream: 0, epic: 0, feature: 1, issue: 2, subissue: 3 };
 
-/** Epic, Feature, and Workstream come from the GitHub issue type. Issue and Sub-issue do not have one. */
+/** Epic, Feature, and Workstream come from the GitHub issue type. The name match ignores capitalization, so EPIC counts as Epic. Issue and Sub-issue do not have one. */
 export function planKind<T extends PlanNode>(issue: T, byId: Map<string, T>, workstreamNumber: number | null, seen = new Set<string>()): PlanKind {
   if (seen.has(issue.issueId)) return "issue";
   seen.add(issue.issueId);
-  if (issue.issueType === "Workstream" || (workstreamNumber != null && issue.number === workstreamNumber)) return "workstream";
-  if (issue.issueType === "Epic") return "epic";
-  if (issue.issueType === "Feature") return "feature";
+  const typeName = issue.issueType?.trim().toLowerCase() ?? "";
+  if (typeName === "workstream" || (workstreamNumber != null && issue.number === workstreamNumber)) return "workstream";
+  if (typeName === "epic") return "epic";
+  if (typeName === "feature") return "feature";
   const parent = issue.parentIssueId ? byId.get(issue.parentIssueId) : undefined;
   if (!parent || parent.issueId === issue.issueId) return "issue";
   const parentKind = planKind(parent, byId, workstreamNumber, seen);
