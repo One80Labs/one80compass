@@ -27,7 +27,11 @@ Routes for the first slice:
 - `PUT /projects/{projectId}/github`
 - `POST /projects/{projectId}/sync`
 - `POST /projects/{projectId}/progress-override`
-- `PATCH /projects/{projectId}/issues/{issueId}`
+- `PATCH /projects/{projectId}/issues/{issueId}` sends title, status, effort, or Start and Finish dates to GitHub. A parent cannot be marked Done while a task under it is still open. Dates are refused until the GitHub project has date fields named Start and Finish. A date that would make a later task start too soon returns `DEPENDENCY_REVIEW` until the request approves those moves or keeps the later dates.
+- `POST /projects/{projectId}/issues/{issueId}/predecessors` links a GitHub blocked-by predecessor. `POST .../predecessors/remove` clears that link. A loop is refused.
+- `POST /projects/{projectId}/schedule-fields` adds those two date fields. Administrator only.
+- `POST /projects/{projectId}/milestones/{milestoneKey}/confirm` confirms a milestone after every task on it is Done. `POST .../reopen` requires an explanation and keeps the earlier confirmation in the history.
+- `POST /projects/{projectId}/baselines` sets Baseline 1 when an administrator sends the explanation, or proposes the next baseline after Baseline 1 exists. `POST .../baselines/{baselineId}/approve` and `.../reject` are administrator only. Rejecting requires an explanation. The task list on an approved baseline is not rewritten.
 - `POST /webhooks/github` without a Cognito token; it checks the GitHub signature and queues the delivery
 - `GET` and `POST /projects/{projectId}/reports`
 - `GET` and `PUT /projects/{projectId}/reports/{reportId}`

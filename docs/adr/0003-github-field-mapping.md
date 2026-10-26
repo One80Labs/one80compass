@@ -13,8 +13,8 @@ Until a customer Project uses different names, Project settings default to:
 
 After the first successful sync, board columns are replaced by the GitHub Status options. If the project has no number field named Effort, the number field Estimate is stored as the effort field.
 
-A leaf with an empty effort counts as 1 point inside the progress calculation. That default is not written back to GitHub. Dependencies and dates stay out of R1. The board moves status only; it does not show hierarchy or a Gantt chart.
+A leaf with an empty effort counts as 1 point inside the progress calculation. That default is not written back to GitHub. Task dates are the GitHub Project fields Start and Finish, described in ADR 0006. Parent and child rules are in ADR 0005. The board moves status by drag. The plan Gantt edits those dates.
 
-GitHub milestone titles are copied with the issue and shown read-only on Overview. Target dates, forecasts, and manual confirmation stay in R2.
+GitHub milestone title, node id, and due date are copied with the issue. Confirmation of a finished milestone is portal-owned and is described in ADR 0005. The forecast is the latest task finish date when every task on the milestone has one.
 
 The browser never receives the GitHub App private key or installation token. The webhook secret stays on the API Lambda.

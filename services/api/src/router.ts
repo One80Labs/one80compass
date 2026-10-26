@@ -7,12 +7,12 @@ import {
   type DocumentFolder,
   type DocumentVersion,
   type Membership,
-  type PlanIssue,
   type PortalDocument,
   type Project,
   type ProjectOverview,
   type SyncMessage,
 } from "../../../packages/domain/src/index";
+import { milestoneViews } from "../../../packages/domain/src/milestones";
 import { projectProgress } from "../../../packages/domain/src/progress";
 import { handlePlan } from "./plan";
 import { handleReports } from "./reports";
@@ -541,15 +541,6 @@ async function listCustomerAudit(deps: HandlerDeps, ctx: Ctx, customerId: string
   return json(200, { events: await deps.store.listAudit(customerId) }, ctx.correlationId);
 }
 
-function milestoneNames(issues: PlanIssue[]): string[] {
-  const names = new Set<string>();
-  for (const issue of issues) {
-    if (!issue.inProject || issue.archived || issue.deletedAt || !issue.milestone) continue;
-    names.add(issue.milestone);
-  }
-  return [...names].sort((left, right) => left.localeCompare(right));
-}
-
 async function latestPublishedReport(deps: HandlerDeps, projectId: string): Promise<{ reportId: string; title: string; publishedAt: string } | null> {
   let latest: { reportId: string; title: string; publishedAt: string } | null = null;
   for (const report of await deps.store.listReports(projectId)) {
@@ -581,7 +572,12 @@ async function projectOverview(deps: HandlerDeps, ctx: Ctx, projectId: string, m
           deletedDocuments: documents.filter((document) => document.deletedAt).length,
           progress: projectProgress(issues, (await deps.store.getSettings(projectId))?.doneStatuses ?? ["Done"]).label,
         },
-        milestones: milestoneNames(issues),
+        milestones: milestoneViews(
+          issues,
+          await deps.store.listMilestones(projectId),
+          (await deps.store.getSettings(projectId))?.doneStatuses ?? ["Done"],
+          deps.now().toISOString().slice(0, 10),
+        ),
         publishedReport: await latestPublishedReport(deps, projectId),
         activity,
       },

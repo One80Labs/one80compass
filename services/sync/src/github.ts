@@ -4,7 +4,13 @@ import type { PlanIssue, ProjectSettings } from "../../../packages/domain/src/in
 export type GitHubGateway = {
   configured: boolean;
   reconcile(settings: ProjectSettings): Promise<{ settings: ProjectSettings; issues: PlanIssue[] }>;
-  updateIssue(settings: ProjectSettings, issue: PlanIssue, change: { title?: string; status?: string; effort?: number | null }): Promise<PlanIssue>;
+  ensureDateFields(settings: ProjectSettings): Promise<{ settings: ProjectSettings; issues: PlanIssue[] }>;
+  updateIssue(
+    settings: ProjectSettings,
+    issue: PlanIssue,
+    change: { title?: string; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null },
+  ): Promise<PlanIssue>;
+  setDependency(settings: ProjectSettings, issue: PlanIssue, predecessorId: string, action: "add" | "remove"): Promise<PlanIssue>;
 };
 
 type GraphItem = {
@@ -16,7 +22,9 @@ type GraphItem = {
     title?: string;
     state?: string;
     repository?: { nameWithOwner?: string } | null;
-    milestone?: { title?: string } | null;
+    milestone?: { id?: string; title?: string; dueOn?: string | null } | null;
+    parent?: { id?: string } | null;
+    blockedBy?: { nodes?: ({ id?: string } | null)[] | null } | null;
   } | null;
   fieldValues?: { nodes?: FieldValue[] };
 };
@@ -24,10 +32,11 @@ type GraphItem = {
 type FieldValue = {
   name?: string;
   number?: number;
+  date?: string | null;
   field?: { id?: string; name?: string };
 };
 
-type GraphField = { id?: string; name?: string; options?: { id: string; name: string }[] };
+type GraphField = { id?: string; name?: string; dataType?: string; options?: { id: string; name: string }[] };
 
 type ProjectBody = {
   id: string;
@@ -79,6 +88,22 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
       }
       return readProject(settings, project, found.scope, now().toISOString());
     },
+    async ensureDateFields(settings) {
+      const token = await installationToken(appId, privateKey, settings.owner, settings.repo);
+      const found = chooseProject(
+        await graphql<ProjectLookup>(token, PROJECT_QUERY, {
+          owner: settings.owner,
+          name: settings.repo,
+          number: settings.projectNumber,
+          cursor: null,
+        }),
+      );
+      if (!found) throw new Error("The GitHub Project was not found for that owner and repository.");
+      for (const name of missingDateFields(found.project.fields.nodes ?? [])) {
+        await graphql(token, CREATE_DATE_FIELD, { project: found.project.id, name, dataType: "DATE" });
+      }
+      return this.reconcile(settings);
+    },
     async updateIssue(settings, issue, change) {
       const token = await installationToken(appId, privateKey, settings.owner, settings.repo);
       const next = { ...issue, updatedAt: now().toISOString() };
@@ -106,7 +131,17 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
         });
         next.effort = change.effort;
       }
+      if (change.startDate !== undefined) next.startDate = await writeDate(token, settings, issue, settings.startFieldId, "Start", change.startDate);
+      if (change.finishDate !== undefined) next.finishDate = await writeDate(token, settings, issue, settings.finishFieldId, "Finish", change.finishDate);
       return next;
+    },
+    async setDependency(settings, issue, predecessorId, action) {
+      const token = await installationToken(appId, privateKey, settings.owner, settings.repo);
+      await graphql(token, action === "add" ? ADD_BLOCKED_BY : REMOVE_BLOCKED_BY, { issue: issue.issueId, blocking: predecessorId });
+      const ids = new Set(issue.predecessorIds);
+      if (action === "add") ids.add(predecessorId);
+      else ids.delete(predecessorId);
+      return { ...issue, predecessorIds: [...ids], updatedAt: now().toISOString() };
     },
   };
 }
@@ -115,6 +150,8 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
   const values = item.fieldValues?.nodes ?? [];
   const status = values.find((value) => value.field?.name === settings.statusFieldName && typeof value.name === "string")?.name ?? "";
   const effortValue = values.find((value) => value.field?.name === settings.effortFieldName && typeof value.number === "number");
+  const startValue = values.find((value) => value.field?.name === settings.startFieldName);
+  const finishValue = values.find((value) => value.field?.name === settings.finishFieldName);
   return {
     issueId: item.content?.id ?? "",
     itemId: item.id ?? null,
@@ -127,11 +164,22 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
     issueState: item.content?.state === "CLOSED" ? "closed" : "open",
     archived: Boolean(item.isArchived),
     deletedAt: null,
-    parentIssueId: null,
+    parentIssueId: item.content?.parent?.id && item.content.parent.id !== item.content.id ? item.content.parent.id : null,
     milestone: item.content?.milestone?.title?.trim() || null,
+    milestoneId: item.content?.milestone?.id?.trim() || null,
+    milestoneDueOn: milestoneDue(item.content?.milestone?.dueOn),
+    startDate: milestoneDue(startValue?.date),
+    finishDate: milestoneDue(finishValue?.date),
+    predecessorIds: predecessorIds(item),
     inProject: true,
     updatedAt,
   };
+}
+
+function predecessorIds(item: GraphItem): string[] {
+  const ids = item.content?.blockedBy?.nodes ?? [];
+  const own = item.content?.id;
+  return [...new Set(ids.map((node) => node?.id).filter((id): id is string => Boolean(id && id !== own)))];
 }
 
 const PROJECT_FIELDS = `
@@ -141,16 +189,17 @@ const PROJECT_FIELDS = `
     nodes{
       id
       isArchived
-      content{... on Issue{id number title state repository{nameWithOwner} milestone{title}}}
-      fieldValues(first:20){nodes{
+      content{... on Issue{id number title state repository{nameWithOwner} milestone{id title dueOn} parent{id} blockedBy(first:20){nodes{id}}}}
+      fieldValues(first:30){nodes{
         ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
         ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
+        ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2Field{id name}}}
       }}
     }
   }
   fields(first:30){nodes{
     ... on ProjectV2SingleSelectField{id name options{id name}}
-    ... on ProjectV2Field{id name}
+    ... on ProjectV2Field{id name dataType}
   }}
 `;
 
@@ -173,10 +222,11 @@ const PROJECT_PAGE_QUERY = `query($id:ID!,$cursor:String){
         nodes{
           id
           isArchived
-          content{... on Issue{id number title state repository{nameWithOwner} milestone{title}}}
-          fieldValues(first:20){nodes{
+          content{... on Issue{id number title state repository{nameWithOwner} milestone{id title dueOn} parent{id} blockedBy(first:20){nodes{id}}}}
+          fieldValues(first:30){nodes{
             ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
             ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
+            ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2Field{id name}}}
           }}
         }
       }
@@ -214,6 +264,10 @@ export function readProject(
     statusFieldId: statusField?.id ?? null,
     effortFieldId: effortField?.id ?? null,
     effortFieldName: effortField?.name ?? settings.effortFieldName,
+    startFieldName: "Start",
+    finishFieldName: "Finish",
+    startFieldId: resolveDateField(fields, "Start")?.id ?? null,
+    finishFieldId: resolveDateField(fields, "Finish")?.id ?? null,
     statusOptions: statusField?.options ?? [],
     columns,
     doneStatuses: doneStatuses.length > 0 ? doneStatuses : settings.doneStatuses,
@@ -225,8 +279,46 @@ export function readProject(
 }
 
 function resolveEffortField(fields: GraphField[], name: string): GraphField | undefined {
-  const numberFields = fields.filter((field) => field.name && !field.options);
+  const numberFields = fields.filter((field) => field.name && !field.options && field.dataType !== "DATE");
   return numberFields.find((field) => field.name === name) ?? numberFields.find((field) => field.name === "Estimate");
+}
+
+function resolveDateField(fields: GraphField[], name: string): GraphField | undefined {
+  return fields.find((field) => field.name === name && field.dataType === "DATE");
+}
+
+/** Date fields named Start and Finish that the project does not already have. */
+export function missingDateFields(fields: { name?: string; dataType?: string }[]): ("Start" | "Finish")[] {
+  const names = new Set(fields.filter((field) => field.dataType === "DATE").map((field) => field.name));
+  return (["Start", "Finish"] as const).filter((name) => !names.has(name));
+}
+
+async function writeDate(
+  token: string,
+  settings: ProjectSettings,
+  issue: PlanIssue,
+  fieldId: string | null,
+  label: string,
+  value: string | null,
+): Promise<string | null> {
+  if (!settings.projectNodeId || !issue.itemId || !fieldId) throw new Error(`${label} is not a date field on the GitHub project.`);
+  if (value === null) {
+    await graphql(token, CLEAR_FIELD, { project: settings.projectNodeId, item: issue.itemId, field: fieldId });
+    return null;
+  }
+  await graphql(token, SET_FIELD, {
+    project: settings.projectNodeId,
+    item: issue.itemId,
+    field: fieldId,
+    value: { date: value },
+  });
+  return value;
+}
+
+function milestoneDue(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = value.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
 }
 
 function belongsToRepo(settings: ProjectSettings, item: GraphItem, scope: ProjectScope): boolean {
@@ -237,6 +329,22 @@ function belongsToRepo(settings: ProjectSettings, item: GraphItem, scope: Projec
 
 const SET_FIELD = `mutation($project:ID!,$item:ID!,$field:ID!,$value:ProjectV2FieldValue!){
   updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:$value}){projectV2Item{id}}
+}`;
+
+const CLEAR_FIELD = `mutation($project:ID!,$item:ID!,$field:ID!){
+  clearProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field}){projectV2Item{id}}
+}`;
+
+const CREATE_DATE_FIELD = `mutation($project:ID!,$name:String!,$dataType:ProjectV2CustomFieldType!){
+  createProjectV2Field(input:{projectId:$project,name:$name,dataType:$dataType}){projectV2Field{... on ProjectV2Field{id name}}}
+}`;
+
+const ADD_BLOCKED_BY = `mutation($issue:ID!,$blocking:ID!){
+  addBlockedBy(input:{issueId:$issue,blockingIssueId:$blocking}){issue{id}}
+}`;
+
+const REMOVE_BLOCKED_BY = `mutation($issue:ID!,$blocking:ID!){
+  removeBlockedBy(input:{issueId:$issue,blockingIssueId:$blocking}){issue{id}}
 }`;
 
 async function installationToken(appId: string, privateKey: string, owner: string, repo: string): Promise<string> {

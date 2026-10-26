@@ -18,6 +18,8 @@ import {
   type StatusReport,
   type SyncState,
 } from "../../../packages/domain/src/index";
+import type { BaselineRecord } from "../../../packages/domain/src/baselines";
+import type { MilestoneRecord } from "../../../packages/domain/src/milestones";
 
 export interface Store {
   createCustomer(customer: Customer): Promise<void>;
@@ -52,6 +54,10 @@ export interface Store {
   getIssue(projectId: string, issueId: string): Promise<PlanIssue | null>;
   putIssue(issue: PlanIssue): Promise<void>;
   listIssues(projectId: string): Promise<PlanIssue[]>;
+  listMilestones(projectId: string): Promise<MilestoneRecord[]>;
+  putMilestone(record: MilestoneRecord): Promise<void>;
+  listBaselines(projectId: string): Promise<BaselineRecord[]>;
+  putBaseline(record: BaselineRecord): Promise<void>;
   getOverride(projectId: string): Promise<ProgressOverride | null>;
   putOverride(override: ProgressOverride): Promise<void>;
   getSync(projectId: string): Promise<SyncState | null>;
@@ -408,6 +414,46 @@ export class DynamoStore implements Store {
     return (result.Items ?? []).map(asIssue);
   }
 
+  async listMilestones(projectId: string): Promise<MilestoneRecord[]> {
+    const result = await this.doc.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "MILESTONE#" },
+      }),
+    );
+    return (result.Items ?? []).map(asMilestone);
+  }
+
+  async putMilestone(record: MilestoneRecord): Promise<void> {
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: { pk: proj(record.projectId), sk: `MILESTONE#${encodeURIComponent(record.milestoneKey)}`, entity: "milestone", ...record },
+      }),
+    );
+  }
+
+  async listBaselines(projectId: string): Promise<BaselineRecord[]> {
+    const result = await this.doc.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "BASELINE#" },
+      }),
+    );
+    return (result.Items ?? []).map(asBaseline);
+  }
+
+  async putBaseline(record: BaselineRecord): Promise<void> {
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: { pk: proj(record.projectId), sk: `BASELINE#${record.baselineId}`, entity: "baseline", ...record },
+      }),
+    );
+  }
+
   async getOverride(projectId: string): Promise<ProgressOverride | null> {
     const result = await this.doc.send(new GetCommand({ TableName: this.tableName, Key: { pk: proj(projectId), sk: "OVERRIDE" } }));
     return result.Item ? asOverride(result.Item) : null;
@@ -692,6 +738,10 @@ function asSettings(item: Item): ProjectSettings {
     effortFieldName: String(item.effortFieldName ?? "Effort"),
     statusFieldId: item.statusFieldId == null ? null : String(item.statusFieldId),
     effortFieldId: item.effortFieldId == null ? null : String(item.effortFieldId),
+    startFieldName: String(item.startFieldName ?? "Start"),
+    finishFieldName: String(item.finishFieldName ?? "Finish"),
+    startFieldId: item.startFieldId == null || item.startFieldId === "" ? null : String(item.startFieldId),
+    finishFieldId: item.finishFieldId == null || item.finishFieldId === "" ? null : String(item.finishFieldId),
     statusOptions: options.map((option) => {
       const record = option as Item;
       return { id: String(record.id), name: String(record.name) };
@@ -716,8 +766,60 @@ function asIssue(item: Item): PlanIssue {
     deletedAt: item.deletedAt == null ? null : String(item.deletedAt),
     parentIssueId: item.parentIssueId == null ? null : String(item.parentIssueId),
     milestone: item.milestone == null || item.milestone === "" ? null : String(item.milestone),
+    milestoneId: item.milestoneId == null || item.milestoneId === "" ? null : String(item.milestoneId),
+    milestoneDueOn: typeof item.milestoneDueOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.milestoneDueOn) ? item.milestoneDueOn : null,
+    startDate: typeof item.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.startDate) ? item.startDate : null,
+    finishDate: typeof item.finishDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.finishDate) ? item.finishDate : null,
+    predecessorIds: Array.isArray(item.predecessorIds) ? [...new Set(item.predecessorIds.map(String).filter((id) => id && id !== String(item.issueId)))] : [],
     inProject: item.inProject !== false,
     updatedAt: String(item.updatedAt),
+  };
+}
+
+function asBaseline(item: Item): BaselineRecord {
+  const tasks = Array.isArray(item.tasks) ? item.tasks : [];
+  const state = item.state === "approved" || item.state === "rejected" ? item.state : "proposed";
+  return {
+    baselineId: String(item.baselineId),
+    projectId: String(item.projectId),
+    customerId: String(item.customerId),
+    number: typeof item.number === "number" && Number.isInteger(item.number) ? item.number : null,
+    state,
+    explanation: String(item.explanation ?? ""),
+    rejection: item.rejection == null || item.rejection === "" ? null : String(item.rejection),
+    tasks: tasks.flatMap((entry) => {
+      const task = entry as Item;
+      if (typeof task.issueId !== "string" || !task.issueId) return [];
+      const start = typeof task.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(task.startDate) ? task.startDate : null;
+      const finish = typeof task.finishDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(task.finishDate) ? task.finishDate : null;
+      return [{ issueId: task.issueId, title: String(task.title ?? "Untitled"), startDate: start, finishDate: finish }];
+    }),
+    createdAt: String(item.createdAt ?? ""),
+    createdBy: String(item.createdBy ?? ""),
+    decidedAt: item.decidedAt == null || item.decidedAt === "" ? null : String(item.decidedAt),
+    decidedBy: item.decidedBy == null || item.decidedBy === "" ? null : String(item.decidedBy),
+  };
+}
+
+function asMilestone(item: Item): MilestoneRecord {
+  const history = Array.isArray(item.history) ? item.history : [];
+  return {
+    projectId: String(item.projectId),
+    customerId: String(item.customerId),
+    milestoneKey: String(item.milestoneKey),
+    title: String(item.title),
+    confirmedAt: item.confirmedAt == null || item.confirmedAt === "" ? null : String(item.confirmedAt),
+    confirmedBy: item.confirmedBy == null || item.confirmedBy === "" ? null : String(item.confirmedBy),
+    history: history.map((entry) => {
+      const record = entry as Item;
+      const action = record.action === "reopened" ? "reopened" : "confirmed";
+      return {
+        action,
+        at: String(record.at ?? ""),
+        actorUserId: String(record.actorUserId ?? ""),
+        explanation: record.explanation == null || record.explanation === "" ? null : String(record.explanation),
+      };
+    }),
   };
 }
 

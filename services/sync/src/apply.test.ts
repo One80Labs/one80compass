@@ -13,6 +13,10 @@ const settings: ProjectSettings = {
   effortFieldName: "Effort",
   statusFieldId: null,
   effortFieldId: null,
+  startFieldName: "Start",
+  finishFieldName: "Finish",
+  startFieldId: null,
+  finishFieldId: null,
   statusOptions: [],
   doneStatuses: ["Done"],
   columns: ["Todo", "In Progress", "Done"],
@@ -35,6 +39,11 @@ describe("applyGithubDelivery", () => {
         deletedAt: null,
         parentIssueId: null,
         milestone: null,
+        milestoneId: null,
+        milestoneDueOn: null,
+        startDate: null,
+        finishDate: null,
+        predecessorIds: [],
         inProject: true,
         updatedAt: "2026-10-24T00:00:00.000Z",
       },
@@ -59,11 +68,13 @@ describe("applyGithubDelivery", () => {
       {
         action: "opened",
         repository: { name: "bridge", owner: { login: "one80labs" } },
-        issue: { node_id: "I_2", number: 2, title: "Deck", state: "open", milestone: { title: "Phase 1" } },
+        issue: { node_id: "I_2", number: 2, title: "Deck", state: "open", milestone: { title: "Phase 1", node_id: "M_1", due_on: "2026-11-02T00:00:00Z" } },
       },
       "2026-10-24T12:00:00.000Z",
     );
     expect(added?.[0].milestone).toBe("Phase 1");
+    expect(added?.[0].milestoneId).toBe("M_1");
+    expect(added?.[0].milestoneDueOn).toBe("2026-11-02");
     const cleared = applyGithubDelivery(
       added ?? [],
       settings,
@@ -94,8 +105,53 @@ describe("applyGithubDelivery", () => {
     expect(next?.[0].inProject).toBe(true);
   });
 
+  it("records a GitHub sub-issue parent and clears it", () => {
+    const added = applyGithubDelivery(
+      [],
+      settings,
+      "issues",
+      {
+        action: "parent_issue_added",
+        repository: { name: "bridge", owner: { login: "one80labs" } },
+        issue: { node_id: "I_child", number: 3, title: "Child", state: "open" },
+        parent_issue: { node_id: "I_parent" },
+      },
+      "2026-10-26T12:00:00.000Z",
+    );
+    expect(added?.find((issue) => issue.issueId === "I_child")?.parentIssueId).toBe("I_parent");
+    const removed = applyGithubDelivery(
+      added ?? [],
+      settings,
+      "issues",
+      {
+        action: "sub_issue_removed",
+        repository: { name: "bridge", owner: { login: "one80labs" } },
+        issue: { node_id: "I_parent", number: 1, title: "Parent", state: "open" },
+        sub_issue: { node_id: "I_child", number: 3, title: "Child" },
+      },
+      "2026-10-26T12:05:00.000Z",
+    );
+    expect(removed?.find((issue) => issue.issueId === "I_child")?.parentIssueId).toBeNull();
+  });
+
   it("ignores a different repository", () => {
     const next = applyGithubDelivery([], settings, "issues", { repository: { name: "other", owner: { login: "one80labs" } }, issue: { node_id: "I_1" } }, "2026-10-24T12:00:00.000Z");
     expect(next).toBeNull();
+  });
+
+  it("copies a Start or Finish date from a project field change", () => {
+    const next = applyGithubDelivery(
+      [],
+      settings,
+      "projects_v2_item",
+      {
+        action: "edited",
+        projects_v2_item: { node_id: "PVTI_1", project_node_id: "PVT_1", content_node_id: "I_1" },
+        changes: { field_value: { field_name: "Finish", to: "2026-11-02" } },
+      },
+      "2026-10-26T12:00:00.000Z",
+    );
+    expect(next?.[0].finishDate).toBe("2026-11-02");
+    expect(next?.[0].startDate).toBeNull();
   });
 });

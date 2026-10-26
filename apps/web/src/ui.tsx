@@ -1,4 +1,4 @@
-import { useEffect, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 /** Page title row used by the HTML reference. */
 export function PageHead({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) {
@@ -51,9 +51,45 @@ export function EditRowButton({ label, onClick }: { label: string; onClick: () =
   );
 }
 
+/** Values of the fields in an edit drawer, in document order. */
+function formSnapshot(form: HTMLFormElement): string {
+  const controls = form.querySelectorAll("input, textarea, select");
+  return Array.from(controls)
+    .map((control) => {
+      if (control instanceof HTMLInputElement && (control.type === "checkbox" || control.type === "radio")) {
+        return control.checked ? "1" : "0";
+      }
+      if (control instanceof HTMLSelectElement && control.multiple) {
+        return Array.from(control.selectedOptions)
+          .map((option) => option.value)
+          .join(",");
+      }
+      return (control as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value;
+    })
+    .join("\u0001");
+}
+
+function drawerIsDirty(form: HTMLFormElement | null, initial: string | null): boolean {
+  return form != null && initial != null && formSnapshot(form) !== initial;
+}
+
+/** X used to dismiss an edit drawer. */
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7A1 1 0 0 0 5.7 7.11L10.59 12 5.7 16.89a1 1 0 1 0 1.41 1.41L12 13.41l4.89 4.89a1 1 0 0 0 1.41-1.41L13.41 12l4.89-4.89a1 1 0 0 0 0-1.4z"
+      />
+    </svg>
+  );
+}
+
 /**
  * Right-hand edit panel. The body scrolls. Save stays on the left of the footer and Cancel on the right,
  * and both stay visible while the body scrolls or the window changes size.
+ * The X in the upper right closes the drawer. Closing with the X, Cancel, Escape, or the backdrop
+ * asks before discarding edits: save them, or close without saving.
  */
 export function EditDrawer({
   title,
@@ -68,31 +104,86 @@ export function EditDrawer({
   onSubmit: (event: FormEvent) => void;
   saving?: boolean;
 }) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const initialSnapshot = useRef<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  useLayoutEffect(() => {
+    if (formRef.current) initialSnapshot.current = formSnapshot(formRef.current);
+  }, []);
+
+  const requestClose = useCallback(() => {
+    if (drawerIsDirty(formRef.current, initialSnapshot.current)) {
+      setConfirming(true);
+      return;
+    }
+    onClose();
+  }, [onClose]);
+
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      if (confirming) {
+        setConfirming(false);
+        return;
+      }
+      requestClose();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [confirming, requestClose]);
+
+  function saveUnsaved() {
+    setConfirming(false);
+    formRef.current?.requestSubmit();
+  }
+
+  function discard() {
+    setConfirming(false);
+    onClose();
+  }
 
   return (
-    <div className="drawer-layer" onClick={onClose}>
-      <form className="drawer" role="dialog" aria-modal="true" aria-label={title} onClick={(event) => event.stopPropagation()} onSubmit={onSubmit}>
-        <div className="drawer-body">
-          <h2>{title}</h2>
-          {children}
+    <>
+      <div className="drawer-layer" onClick={requestClose}>
+        <form ref={formRef} className="drawer" role="dialog" aria-modal="true" aria-label={title} onClick={(event) => event.stopPropagation()} onSubmit={onSubmit}>
+          <div className="drawer-head">
+            <h2>{title}</h2>
+            <button className="icon-button drawer-close" type="button" aria-label="Close" onClick={requestClose}>
+              <CloseIcon />
+            </button>
+          </div>
+          <div className="drawer-body">{children}</div>
+          <footer className="drawer-footer">
+            <button className="btn primary" type="submit" disabled={saving}>
+              {saving ? "Saving" : "Save"}
+            </button>
+            <button className="btn" type="button" onClick={requestClose}>
+              Cancel
+            </button>
+          </footer>
+        </form>
+      </div>
+      {confirming && (
+        <div className="dialog-layer drawer-confirm" onClick={() => setConfirming(false)}>
+          <section className="dialog" role="alertdialog" aria-modal="true" aria-label="Unsaved changes" onClick={(event) => event.stopPropagation()}>
+            <h2>Unsaved changes</h2>
+            <p>This drawer has changes that are not saved. Save them, or close without saving.</p>
+            <div className="dialog-actions">
+              <button className="btn" type="button" onClick={() => setConfirming(false)}>
+                Keep editing
+              </button>
+              <button className="btn" type="button" onClick={discard}>
+                Close without saving
+              </button>
+              <button className="btn primary" type="button" onClick={saveUnsaved} disabled={saving}>
+                {saving ? "Saving" : "Save changes"}
+              </button>
+            </div>
+          </section>
         </div>
-        <footer className="drawer-footer">
-          <button className="btn primary" type="submit" disabled={saving}>
-            {saving ? "Saving" : "Save"}
-          </button>
-          <button className="btn" type="button" onClick={onClose}>
-            Cancel
-          </button>
-        </footer>
-      </form>
-    </div>
+      )}
+    </>
   );
 }
 

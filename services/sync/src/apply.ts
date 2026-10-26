@@ -31,11 +31,36 @@ function applyIssueEvent(issues: PlanIssue[], settings: ProjectSettings, body: R
     number: typeof issue.number === "number" ? issue.number : current.number,
     title: typeof issue.title === "string" ? issue.title : current.title,
     issueState: issue.state === "closed" ? "closed" : "open",
-    milestone: "milestone" in issue ? milestoneTitle(issue.milestone) : current.milestone,
+    ...("milestone" in issue
+      ? milestoneFields(issue.milestone)
+      : { milestone: current.milestone, milestoneId: current.milestoneId, milestoneDueOn: current.milestoneDueOn }),
     deletedAt: action === "deleted" ? now : action === "opened" || action === "reopened" ? null : current.deletedAt,
+    parentIssueId: parentLink(action, body, issueId, current.parentIssueId),
     updatedAt: now,
   };
-  return upsert(issues, next);
+  let result = upsert(issues, next);
+  const sub = record(body.sub_issue);
+  const subId = typeof sub?.node_id === "string" ? sub.node_id : null;
+  if ((action === "sub_issue_added" || action === "sub_issue_removed") && subId && subId !== issueId) {
+    const child = result.find((item) => item.issueId === subId) ?? blankIssue(settings, subId, now);
+    const cleared = action === "sub_issue_removed" && child.parentIssueId === issueId;
+    result = upsert(result, {
+      ...child,
+      number: typeof sub?.number === "number" ? sub.number : child.number,
+      title: typeof sub?.title === "string" ? sub.title : child.title,
+      parentIssueId: action === "sub_issue_added" ? issueId : cleared ? null : child.parentIssueId,
+      updatedAt: now,
+    });
+  }
+  return result;
+}
+
+function parentLink(action: string, body: Record<string, unknown>, issueId: string, current: string | null): string | null {
+  if (action === "parent_issue_removed") return null;
+  if (action !== "parent_issue_added") return current;
+  const parent = record(body.parent_issue);
+  const parentId = typeof parent?.node_id === "string" ? parent.node_id : null;
+  return parentId && parentId !== issueId ? parentId : current;
 }
 
 function applyProjectItem(issues: PlanIssue[], settings: ProjectSettings, body: Record<string, unknown>, now: string): PlanIssue[] | null {
@@ -59,6 +84,8 @@ function applyProjectItem(issues: PlanIssue[], settings: ProjectSettings, body: 
   const fieldName = typeof fieldValue?.field_name === "string" ? fieldValue.field_name : "";
   if (fieldName === settings.statusFieldName) next.status = fieldText(fieldValue?.to) ?? next.status;
   if (fieldName === settings.effortFieldName) next.effort = fieldNumber(fieldValue?.to);
+  if (fieldName === settings.startFieldName) next.startDate = fieldDate(fieldValue?.to);
+  if (fieldName === settings.finishFieldName) next.finishDate = fieldDate(fieldValue?.to);
   return upsert(issues, next);
 }
 
@@ -77,6 +104,11 @@ function blankIssue(settings: ProjectSettings, issueId: string, now: string): Pl
     deletedAt: null,
     parentIssueId: null,
     milestone: null,
+    milestoneId: null,
+    milestoneDueOn: null,
+    startDate: null,
+    finishDate: null,
+    predecessorIds: [],
     inProject: false,
     updatedAt: now,
   };
@@ -94,15 +126,31 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-function milestoneTitle(value: unknown): string | null {
+function milestoneFields(value: unknown): { milestone: string | null; milestoneId: string | null; milestoneDueOn: string | null } {
   const milestone = record(value);
-  return typeof milestone?.title === "string" && milestone.title.trim() ? milestone.title : null;
+  const title = typeof milestone?.title === "string" && milestone.title.trim() ? milestone.title.trim() : null;
+  if (!title) return { milestone: null, milestoneId: null, milestoneDueOn: null };
+  const rawDue = typeof milestone?.due_on === "string" ? milestone.due_on.slice(0, 10) : null;
+  return {
+    milestone: title,
+    milestoneId: typeof milestone?.node_id === "string" && milestone.node_id.trim() ? milestone.node_id : null,
+    milestoneDueOn: rawDue && /^\d{4}-\d{2}-\d{2}$/.test(rawDue) ? rawDue : null,
+  };
 }
 
 function fieldText(value: unknown): string | null {
   if (typeof value === "string") return value;
   const item = record(value);
   return typeof item?.name === "string" ? item.name : null;
+}
+
+function fieldDate(value: unknown): string | null {
+  if (typeof value === "string") {
+    const date = value.slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+  }
+  const item = record(value);
+  return typeof item?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date) ? item.date : null;
 }
 
 function fieldNumber(value: unknown): number | null {

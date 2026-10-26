@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createHmac } from "node:crypto";
 import type { ApplicationLink, AuditEvent, Customer, DocumentFolder, DocumentVersion, Membership, PlanIssue, PortalDocument, ProgressOverride, Project, ProjectOverview, ProjectSettings, ReportVersion, StatusReport, SyncState } from "../../../packages/domain/src/index";
+import type { BaselineRecord } from "../../../packages/domain/src/baselines";
+import type { MilestoneRecord } from "../../../packages/domain/src/milestones";
 import { createHandler, type HandlerDeps, type HttpEvent } from "./router";
 import type { Store } from "./store";
 
@@ -21,6 +23,8 @@ function memoryStore(): Store & {
   deliveries: string[];
   reports: StatusReport[];
   reportVersions: ReportVersion[];
+  milestones: MilestoneRecord[];
+  baselines: BaselineRecord[];
 } {
   const customers: Customer[] = [];
   const projects: Project[] = [];
@@ -38,6 +42,8 @@ function memoryStore(): Store & {
   const deliveries: string[] = [];
   const reports: StatusReport[] = [];
   const reportVersions: ReportVersion[] = [];
+  const milestones: MilestoneRecord[] = [];
+  const baselines: BaselineRecord[] = [];
   return {
     customers,
     projects,
@@ -197,6 +203,22 @@ function memoryStore(): Store & {
     async listReportVersions(reportId) {
       return reportVersions.filter((version) => version.reportId === reportId);
     },
+    async listMilestones(projectId) {
+      return milestones.filter((record) => record.projectId === projectId);
+    },
+    async putMilestone(record) {
+      const index = milestones.findIndex((item) => item.projectId === record.projectId && item.milestoneKey === record.milestoneKey);
+      if (index >= 0) milestones[index] = record;
+      else milestones.push(record);
+    },
+    async listBaselines(projectId) {
+      return baselines.filter((record) => record.projectId === projectId);
+    },
+    async putBaseline(record) {
+      const index = baselines.findIndex((item) => item.baselineId === record.baselineId);
+      if (index >= 0) baselines[index] = record;
+      else baselines.push(record);
+    },
     documents,
     folders,
     versions,
@@ -208,6 +230,8 @@ function memoryStore(): Store & {
     deliveries,
     reports,
     reportVersions,
+    milestones,
+    baselines,
   };
 }
 
@@ -421,6 +445,11 @@ describe("api router", () => {
       deletedAt: null,
       parentIssueId: null,
       milestone: "Phase 1",
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
       inProject: true,
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
@@ -447,7 +476,7 @@ describe("api router", () => {
     const loaded = await handler(event({ method: "GET", path: `/projects/${projectId}/overview`, claims: employeeClaims }));
     const body = JSON.parse(loaded.body) as { overview: { health: string }; milestones: string[]; publishedReport: { title: string } };
     expect(body.overview.health).toBe("yellow");
-    expect(body.milestones).toEqual(["Phase 1"]);
+    expect(body.milestones).toEqual([expect.objectContaining({ title: "Phase 1", state: "open", workOpen: true })]);
     expect(body.publishedReport.title).toBe("Week 1");
     const hidden = await handler(event({ method: "GET", path: `/projects/${projectId}/overview`, claims: { ...employeeClaims, sub: "user-b" } }));
     expect(hidden.statusCode).toBe(404);
@@ -670,6 +699,11 @@ describe("plan and webhooks", () => {
       deletedAt: null,
       parentIssueId: null,
       milestone: "Phase 1",
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
       inProject: true,
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
@@ -688,6 +722,272 @@ describe("plan and webhooks", () => {
     expect(store.audits.some((row) => row.action === "progress.overridden")).toBe(true);
     const hidden = await handler(event({ method: "GET", path: `/projects/${projectId}/plan`, claims: { ...employeeClaims, sub: "user-b" } }));
     expect(hidden.statusCode).toBe(404);
+  });
+
+  it("refuses to mark a parent Done while a task under it is open", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    const base = {
+      itemId: null,
+      projectId,
+      customerId,
+      effort: 1,
+      issueState: "open" as const,
+      archived: false,
+      deletedAt: null,
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
+      inProject: true,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    };
+    store.issues.push(
+      { ...base, issueId: "I_parent", number: 1, title: "Parent", status: "Ready", parentIssueId: null },
+      { ...base, issueId: "I_child", number: 2, title: "Child", status: "Ready", parentIssueId: "I_parent" },
+    );
+    const refused = await handler(
+      event({ method: "PATCH", path: `/projects/${projectId}/issues/I_parent`, claims: employeeClaims, body: { status: "Done" } }),
+    );
+    expect(refused.statusCode).toBe(409);
+    expect(JSON.parse(refused.body).code).toBe("PARENT_INCOMPLETE");
+    store.issues[1].status = "Done";
+    const leaf = await handler(
+      event({ method: "PATCH", path: `/projects/${projectId}/issues/I_parent`, claims: employeeClaims, body: { status: "Done" } }),
+    );
+    expect(JSON.parse(leaf.body).code).toBe("SYNC_NOT_CONFIGURED");
+  });
+
+  it("rejects a finish date before the start and refuses dates until GitHub has Start and Finish fields", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    store.issues.push({
+      issueId: "I_date",
+      itemId: null,
+      projectId,
+      customerId: store.projects[0].customerId,
+      number: 4,
+      title: "Deck",
+      status: "Ready",
+      effort: 1,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
+      inProject: true,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    });
+    const order = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/I_date`,
+        claims: employeeClaims,
+        body: { startDate: "2026-11-02", finishDate: "2026-10-01" },
+      }),
+    );
+    expect(order.statusCode).toBe(400);
+    const missing = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/I_date`,
+        claims: employeeClaims,
+        body: { startDate: "2026-10-26", finishDate: "2026-11-02" },
+      }),
+    );
+    expect(missing.statusCode).toBe(409);
+    expect(JSON.parse(missing.body).code).toBe("DATES_NOT_CONFIGURED");
+  });
+
+  it("asks for approval before a date change moves a later task and refuses a dependency loop", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.settings.push({
+      projectId,
+      customerId,
+      owner: "One80Labs",
+      repo: "one80compass",
+      projectNumber: 1,
+      projectNodeId: "PVT_1",
+      statusFieldName: "Status",
+      effortFieldName: "Effort",
+      statusFieldId: null,
+      effortFieldId: null,
+      startFieldName: "Start",
+      finishFieldName: "Finish",
+      startFieldId: "start",
+      finishFieldId: "finish",
+      statusOptions: [],
+      doneStatuses: ["Done"],
+      columns: ["Ready", "Done"],
+    });
+    const base = {
+      itemId: null,
+      projectId,
+      customerId,
+      effort: 1,
+      issueState: "open" as const,
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      inProject: true,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    };
+    store.issues.push(
+      { ...base, issueId: "A", number: 1, title: "Deck", status: "Ready", startDate: "2026-10-01", finishDate: "2026-10-05", predecessorIds: [] },
+      { ...base, issueId: "B", number: 2, title: "Rail", status: "Ready", startDate: "2026-10-06", finishDate: "2026-10-08", predecessorIds: ["A"] },
+    );
+    const review = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/A`,
+        claims: employeeClaims,
+        body: { startDate: "2026-10-01", finishDate: "2026-10-10" },
+      }),
+    );
+    expect(review.statusCode).toBe(409);
+    const body = JSON.parse(review.body) as { code: string; proposals: { toStart: string; toFinish: string }[] };
+    expect(body.code).toBe("DEPENDENCY_REVIEW");
+    expect(body.proposals[0]).toMatchObject({ toStart: "2026-10-11", toFinish: "2026-10-13" });
+    const loop = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/issues/A/predecessors`, claims: employeeClaims, body: { predecessorId: "B" } }),
+    );
+    expect(loop.statusCode).toBe(409);
+    expect(JSON.parse(loop.body).code).toBe("DEPENDENCY_CYCLE");
+    const kept = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/A`,
+        claims: employeeClaims,
+        body: { startDate: "2026-10-01", finishDate: "2026-10-10", dependencyDecision: "reject" },
+      }),
+    );
+    expect(JSON.parse(kept.body).code).toBe("SYNC_NOT_CONFIGURED");
+  });
+
+  it("confirms a milestone when every task on it is Done and requires an explanation to reopen it", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.issues.push({
+      issueId: "I_mile",
+      itemId: null,
+      projectId,
+      customerId,
+      number: 3,
+      title: "Deck",
+      status: "Ready",
+      effort: 1,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      milestone: "Phase 1",
+      milestoneId: "M_1",
+      milestoneDueOn: "2026-10-01",
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
+      inProject: true,
+      updatedAt: "2026-10-24T12:00:00.000Z",
+    });
+    const early = await handler(event({ method: "POST", path: `/projects/${projectId}/milestones/M_1/confirm`, claims: employeeClaims, body: {} }));
+    expect(early.statusCode).toBe(409);
+    store.issues[0].status = "Done";
+    const confirmed = await handler(event({ method: "POST", path: `/projects/${projectId}/milestones/M_1/confirm`, claims: employeeClaims, body: {} }));
+    expect(confirmed.statusCode).toBe(200);
+    expect(JSON.parse(confirmed.body).milestone.state).toBe("confirmed");
+    expect(JSON.parse(confirmed.body).milestone.late).toBe(false);
+    const missing = await handler(event({ method: "POST", path: `/projects/${projectId}/milestones/M_1/reopen`, claims: employeeClaims, body: {} }));
+    expect(missing.statusCode).toBe(400);
+    const reopened = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/milestones/M_1/reopen`,
+        claims: employeeClaims,
+        body: { explanation: "The deck measurement was wrong." },
+      }),
+    );
+    expect(reopened.statusCode).toBe(200);
+    expect(JSON.parse(reopened.body).milestone.state).toBe("ready");
+    expect(store.milestones[0].history.map((event) => event.action)).toEqual(["confirmed", "reopened"]);
+    expect(store.audits.some((row) => row.action === "milestone.reopened")).toBe(true);
+  });
+
+  it("lets an administrator set Baseline 1 and approve a later proposal without rewriting its tasks", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.issues.push({
+      issueId: "I_open",
+      itemId: null,
+      projectId,
+      customerId,
+      number: 1,
+      title: "Deck",
+      status: "Ready",
+      effort: 1,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
+      inProject: true,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    });
+    const blocked = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines`, claims: employeeClaims, body: { explanation: "First cut." } }));
+    expect(blocked.statusCode).toBe(403);
+    const first = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines`, claims: adminClaims, body: { explanation: "Reviewed with the team." } }));
+    expect(first.statusCode).toBe(200);
+    const baseline1 = JSON.parse(first.body).baseline as { number: number; state: string; tasks: { startDate: string | null }[] };
+    expect(baseline1).toMatchObject({ number: 1, state: "approved" });
+    expect(baseline1.tasks[0].startDate).toBeNull();
+    const proposed = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines`, claims: employeeClaims, body: { explanation: "Dates are in." } }));
+    expect(proposed.statusCode).toBe(200);
+    const proposal = JSON.parse(proposed.body).baseline as { baselineId: string; state: string; tasks: { title: string }[] };
+    expect(proposal.state).toBe("proposed");
+    const employeeDecision = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/baselines/${proposal.baselineId}/approve`, claims: employeeClaims, body: {} }),
+    );
+    expect(employeeDecision.statusCode).toBe(403);
+    const approved = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/baselines/${proposal.baselineId}/approve`, claims: adminClaims, body: {} }),
+    );
+    expect(approved.statusCode).toBe(200);
+    const baseline2 = JSON.parse(approved.body).baseline as { number: number; tasks: { title: string }[] };
+    expect(baseline2.number).toBe(2);
+    expect(baseline2.tasks).toEqual(proposal.tasks);
+    const again = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines`, claims: employeeClaims, body: { explanation: "One more." } }));
+    const openId = JSON.parse(again.body).baseline.baselineId as string;
+    const missingReason = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines/${openId}/reject`, claims: adminClaims, body: {} }));
+    expect(missingReason.statusCode).toBe(400);
+    const rejected = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/baselines/${openId}/reject`, claims: adminClaims, body: { explanation: "The dates are still moving." } }),
+    );
+    expect(JSON.parse(rejected.body).baseline.state).toBe("rejected");
+    expect(store.audits.some((row) => row.action === "baseline.established")).toBe(true);
   });
 
   it("rejects an unsigned webhook and queues a signed one", async () => {

@@ -3,7 +3,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import { usePortal } from "./shell";
+import { MilestonePanel } from "./plan";
 import { Notice, PageHead, Pill, Tabs, fileKind, formatSize, formatWhen } from "./ui";
+import type { MilestoneView } from "../../../packages/domain/src/milestones";
 
 type Health = "green" | "yellow" | "red" | "";
 type OverviewResponse = {
@@ -11,7 +13,7 @@ type OverviewResponse = {
   overview: { health: Health | null; healthExplanation: string | null; notes: string };
   links: { applicationId: string; displayName: string; moduleKey: string }[];
   summary: { activeDocuments: number; deletedDocuments: number; progress?: string };
-  milestones: string[];
+  milestones: MilestoneView[];
   publishedReport: { reportId: string; title: string; publishedAt: string } | null;
   activity: { eventId: string; action: string; at: string }[];
 };
@@ -117,7 +119,7 @@ export function OverviewPage({ session }: { session: Session | null }) {
             </div>
             <div>
               <label>Milestone</label>
-              <strong>{data.milestones[0] ?? "None"}</strong>
+              <strong>{data.milestones[0]?.title ?? "None"}</strong>
             </div>
             <div>
               <label>Started</label>
@@ -135,28 +137,29 @@ export function OverviewPage({ session }: { session: Session | null }) {
               {data.overview.healthExplanation && <p className="copy">Health note: {data.overview.healthExplanation}</p>}
             </div>
             <div>
-              <h3 className="section-title">Milestones</h3>
-              {data.milestones.length === 0 ? (
-                <p className="copy">No GitHub milestones on this project yet.</p>
-              ) : (
-                <ul className="goal-list">
-                  {data.milestones.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              )}
+              <MilestonePanel
+                session={session}
+                projectId={projectId}
+                milestones={data.milestones}
+                onReload={async () => {
+                  const result = await api<OverviewResponse>(`/projects/${projectId}/overview`, session?.idToken ?? "");
+                  setData(result);
+                }}
+              />
             </div>
           </div>
           <Tabs label="Overview" tabs={["Timeline", "Key stakeholders", "Links", "GitHub"]} value={tab} onChange={setTab} />
           {tab === "Timeline" &&
             (data.milestones.length === 0 ? (
-              <p className="copy">Phase dates are a later release. Milestone names appear here when GitHub sends them.</p>
+              <p className="copy">No GitHub milestones on this project yet. Phase dates for the whole project are still a later part of this release.</p>
             ) : (
               <div className="timeline">
                 {data.milestones.map((item) => (
-                  <div className="timeline-step current" key={item}>
-                    <strong>{item}</strong>
-                    No dates stored
+                  <div className={`timeline-step ${item.state === "confirmed" ? "" : "current"}`} key={item.key}>
+                    <strong>{item.title}</strong>
+                    {item.targetDate ? ` Target ${item.targetDate}` : " No target date"}
+                    {item.late ? " · Late" : ""}
+                    {item.state === "ready" ? " · Ready for confirmation" : item.state === "confirmed" ? " · Confirmed" : " · Open"}
                   </div>
                 ))}
               </div>

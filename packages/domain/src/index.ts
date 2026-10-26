@@ -123,6 +123,11 @@ export type ProjectSettings = {
   effortFieldName: string;
   statusFieldId: string | null;
   effortFieldId: string | null;
+  startFieldName: string;
+  finishFieldName: string;
+  /** Null until the project has a date field with that name. */
+  startFieldId: string | null;
+  finishFieldId: string | null;
   statusOptions: { id: string; name: string }[];
   doneStatuses: string[];
   columns: string[];
@@ -141,8 +146,18 @@ export type PlanIssue = {
   archived: boolean;
   deletedAt: string | null;
   parentIssueId: string | null;
-  /** GitHub milestone title. Read-only on Overview. Null when the issue has no milestone. */
+  /** GitHub milestone title. Null when the issue has no milestone. */
   milestone: string | null;
+  /** GitHub milestone node id. Null when the sync only knew the title. */
+  milestoneId: string | null;
+  /** GitHub milestone due date, YYYY-MM-DD. Null when GitHub has no due date. */
+  milestoneDueOn: string | null;
+  /** GitHub Project Start field, YYYY-MM-DD. Null when the task is not scheduled. */
+  startDate: string | null;
+  /** GitHub Project Finish field, YYYY-MM-DD. Null when the task is not scheduled. */
+  finishDate: string | null;
+  /** GitHub issues that block this one. The task starts the day after the latest of those finishes. */
+  predecessorIds: string[];
   inProject: boolean;
   updatedAt: string;
 };
@@ -203,4 +218,21 @@ export type SyncMessage =
       title?: string;
       status?: string;
       effort?: number | null;
-    };
+      startDate?: string | null;
+      finishDate?: string | null;
+    }
+  | {
+      type: "update-schedule";
+      projectId: string;
+      idempotencyKey: string;
+      changes: {
+        issueId: string;
+        title?: string;
+        status?: string;
+        effort?: number | null;
+        startDate?: string | null;
+        finishDate?: string | null;
+      }[];
+    }
+  | { type: "set-dependency"; projectId: string; issueId: string; predecessorId: string; action: "add" | "remove"; idempotencyKey: string }
+  | { type: "ensure-date-fields"; projectId: string };
