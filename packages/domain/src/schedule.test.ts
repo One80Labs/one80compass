@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, chartRanges, isIsoDate, iterationFinish, scheduledRange, scheduleSpan, scheduleText, shiftSchedule } from "./schedule";
+import { addDays, chartRanges, datesAfterIterationPick, isIsoDate, iterationFinish, scheduledRange, scheduleSpan, scheduleText, shiftSchedule } from "./schedule";
 
 describe("schedule", () => {
   it("rejects a calendar date that does not exist", () => {
@@ -19,26 +19,34 @@ describe("schedule", () => {
     expect(scheduleSpan([{ startDate: "2026-10-10", finishDate: "2026-10-12" }], "2026-10-26").origin).toBe("2026-10-09");
   });
 
-  it("uses an iteration span of fourteen days and otherwise the Start and Finish fields", () => {
+  it("draws the bar from Start and Finish, and copies iteration dates when an iteration is chosen", () => {
     expect(iterationFinish("2026-10-25", 14)).toBe("2026-11-07");
-    expect(
-      scheduledRange({ startDate: "2026-10-26", finishDate: "2026-11-02", iterationStart: "2026-10-25", iterationDuration: 14 }),
-    ).toEqual({ start: "2026-10-25", finish: "2026-11-07", fromIteration: true });
-    expect(scheduleText({ startDate: null, finishDate: null, iterationTitle: "Iteration 1", iterationStart: "2026-10-25", iterationDuration: 14 })).toBe(
-      "Iteration 1 · 2026-10-25 – 2026-11-07",
-    );
+    expect(scheduledRange({ startDate: "2026-10-26", finishDate: "2026-11-02" })).toEqual({
+      start: "2026-10-26",
+      finish: "2026-11-02",
+      fromIteration: false,
+    });
+    expect(scheduleText({ startDate: null, finishDate: null })).toBe("Not scheduled");
+    expect(datesAfterIterationPick({ hadIteration: false, pickedBefore: false, startDate: "2026-01-01", iterationStart: "2026-10-25", iterationEnd: "2026-11-07" })).toEqual({
+      startDate: "2026-10-25",
+      finishDate: "2026-11-07",
+    });
+    expect(datesAfterIterationPick({ hadIteration: true, pickedBefore: false, startDate: "2026-10-25", iterationStart: "2026-11-08", iterationEnd: "2026-11-21" })).toEqual({
+      startDate: "2026-10-25",
+      finishDate: "2026-11-21",
+    });
+    expect(datesAfterIterationPick({ hadIteration: true, pickedBefore: false, startDate: "2026-12-01", iterationStart: "2026-11-08", iterationEnd: "2026-11-21" })).toEqual({
+      startDate: "2026-11-08",
+      finishDate: "2026-11-21",
+    });
   });
 
-  it("gives an Epic and a Feature the same bar as the task iteration under them", () => {
+  it("gives an Epic and a Feature the same bar as the task dates under them", () => {
     const ranges = chartRanges([
       { depth: 0, kind: "epic", startDate: null, finishDate: null },
       { depth: 1, kind: "feature", startDate: null, finishDate: null },
-      { depth: 2, kind: "issue", startDate: "2026-10-26", finishDate: "2026-11-02", iterationStart: "2026-10-25", iterationDuration: 14 },
+      { depth: 2, kind: "issue", startDate: "2026-10-26", finishDate: "2026-11-02" },
     ]);
-    expect(ranges.map((range) => (range ? `${range.start} ${range.finish}` : null))).toEqual([
-      "2026-10-25 2026-11-07",
-      "2026-10-25 2026-11-07",
-      "2026-10-25 2026-11-07",
-    ]);
+    expect(ranges.map((range) => (range ? `${range.start} ${range.finish}` : null))).toEqual(["2026-10-26 2026-11-02", "2026-10-26 2026-11-02", "2026-10-26 2026-11-02"]);
   });
 });

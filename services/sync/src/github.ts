@@ -1,15 +1,11 @@
 import { createSign } from "node:crypto";
-import type { PlanIssue, ProjectSettings } from "../../../packages/domain/src/index";
+import type { GitHubUser, IssueChange, IterationChoice, PlanIssue, ProjectSettings } from "../../../packages/domain/src/index";
 
 export type GitHubGateway = {
   configured: boolean;
   reconcile(settings: ProjectSettings): Promise<{ settings: ProjectSettings; issues: PlanIssue[] }>;
   ensureDateFields(settings: ProjectSettings): Promise<{ settings: ProjectSettings; issues: PlanIssue[] }>;
-  updateIssue(
-    settings: ProjectSettings,
-    issue: PlanIssue,
-    change: { title?: string; description?: string | null; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null },
-  ): Promise<PlanIssue>;
+  updateIssue(settings: ProjectSettings, issue: PlanIssue, change: IssueChange): Promise<PlanIssue>;
   setDependency(settings: ProjectSettings, issue: PlanIssue, predecessorId: string, action: "add" | "remove"): Promise<PlanIssue>;
   createPlanItem(
     settings: ProjectSettings,
@@ -30,6 +26,7 @@ type GraphItem = {
     milestone?: { id?: string; title?: string; dueOn?: string | null } | null;
     parent?: { id?: string } | null;
     issueType?: { name?: string } | null;
+    assignees?: { nodes?: ({ id?: string; login?: string; name?: string | null } | null)[] | null } | null;
     blockedBy?: { nodes?: ({ id?: string } | null)[] | null } | null;
   } | null;
   fieldValues?: { nodes?: FieldValue[] };
@@ -39,13 +36,23 @@ type FieldValue = {
   name?: string;
   number?: number;
   date?: string | null;
+  text?: string | null;
   title?: string;
   startDate?: string | null;
   duration?: number;
+  iterationId?: string;
   field?: { id?: string; name?: string };
 };
 
-type GraphField = { id?: string; name?: string; dataType?: string; options?: { id: string; name: string }[] };
+type GraphIteration = { id?: string; title?: string; startDate?: string; duration?: number };
+
+type GraphField = {
+  id?: string;
+  name?: string;
+  dataType?: string;
+  options?: { id: string; name: string }[];
+  configuration?: { iterations?: GraphIteration[]; completedIterations?: GraphIteration[] };
+};
 
 type ProjectBody = {
   id: string;
@@ -56,7 +63,10 @@ type ProjectBody = {
 type ProjectLookup = {
   repositoryOwner?: {
     projectV2?: ProjectBody | null;
-    repository?: { projectV2?: ProjectBody | null } | null;
+    repository?: {
+      projectV2?: ProjectBody | null;
+      assignableUsers?: { nodes?: ({ id?: string; login?: string; name?: string | null } | null)[] | null } | null;
+    } | null;
   } | null;
 };
 
@@ -75,14 +85,13 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
     configured,
     async reconcile(settings) {
       const token = await installationToken(appId, privateKey, settings.owner, settings.repo);
-      const found = chooseProject(
-        await graphql<ProjectLookup>(token, PROJECT_QUERY, {
-          owner: settings.owner,
-          name: settings.repo,
-          number: settings.projectNumber,
-          cursor: null,
-        }),
-      );
+      const lookup = await graphql<ProjectLookup>(token, PROJECT_QUERY, {
+        owner: settings.owner,
+        name: settings.repo,
+        number: settings.projectNumber,
+        cursor: null,
+      });
+      const found = chooseProject(lookup);
       if (!found) throw new Error("The GitHub Project was not found for that owner and repository.");
       const project = found.project;
       project.items.nodes = project.items.nodes ?? [];
@@ -95,7 +104,7 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
         if (!items.pageInfo.hasNextPage) break;
         cursor = items.pageInfo.endCursor;
       }
-      return readProject(settings, project, found.scope, now().toISOString());
+      return readProject(settings, project, found.scope, now().toISOString(), assignableUsers(lookup));
     },
     async ensureDateFields(settings) {
       const token = await installationToken(appId, privateKey, settings.owner, settings.repo);
@@ -146,6 +155,9 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
       }
       if (change.startDate !== undefined) next.startDate = await writeDate(token, settings, issue, settings.startFieldId, "Start", change.startDate);
       if (change.finishDate !== undefined) next.finishDate = await writeDate(token, settings, issue, settings.finishFieldId, "Finish", change.finishDate);
+      if (change.iterationId !== undefined) Object.assign(next, await writeIteration(token, settings, issue, change.iterationId));
+      if (change.assigneeId !== undefined) next.assignees = await writeAssignee(token, settings, issue, change.assigneeId);
+      if (change.comments !== undefined) next.comments = await writeComments(token, settings, issue, change.comments);
       return next;
     },
     async setDependency(settings, issue, predecessorId, action) {
@@ -228,18 +240,37 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
     startDate: milestoneDue(startValue?.date),
     finishDate: milestoneDue(finishValue?.date),
     ...iterationFields(values),
+    assignees: assigneesOf(item),
+    comments: commentText(values),
     predecessorIds: predecessorIds(item),
     inProject: true,
     updatedAt,
   };
 }
 
-function iterationFields(values: FieldValue[]): { iterationTitle: string | null; iterationStart: string | null; iterationDuration: number | null } {
-  const iteration = values.find((value) => value.field?.name?.toLowerCase() === "iteration" && value.startDate);
+function iterationFields(values: FieldValue[]): { iterationTitle: string | null; iterationStart: string | null; iterationDuration: number | null; iterationId: string | null } {
+  const iteration = values.find((value) => value.field?.name?.toLowerCase() === "iteration" && (value.startDate || value.iterationId));
   const start = milestoneDue(iteration?.startDate);
   const duration = typeof iteration?.duration === "number" && Number.isInteger(iteration.duration) && iteration.duration >= 1 ? iteration.duration : null;
-  if (!iteration || !start || duration == null) return { iterationTitle: null, iterationStart: null, iterationDuration: null };
-  return { iterationTitle: iteration.title?.trim() || null, iterationStart: start, iterationDuration: duration };
+  const iterationId = iteration?.iterationId?.trim() || null;
+  if (!iteration || !start || duration == null) return { iterationTitle: null, iterationStart: null, iterationDuration: null, iterationId };
+  return { iterationTitle: iteration.title?.trim() || null, iterationStart: start, iterationDuration: duration, iterationId };
+}
+
+function assigneesOf(item: GraphItem): GitHubUser[] {
+  return (item.content?.assignees?.nodes ?? []).flatMap((node) => {
+    const id = node?.id?.trim() ?? "";
+    const login = node?.login?.trim() ?? "";
+    if (!id || !login) return [];
+    const name = node?.name?.trim() || null;
+    return [{ id, login, name }];
+  });
+}
+
+function commentText(values: FieldValue[]): string | null {
+  const field = values.find((value) => value.field?.name === "Comments" && typeof value.text === "string");
+  const text = field?.text?.trim();
+  return text || null;
 }
 
 function predecessorIds(item: GraphItem): string[] {
@@ -255,17 +286,19 @@ const PROJECT_FIELDS = `
     nodes{
       id
       isArchived
-      content{... on Issue{id number title body state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} blockedBy(first:20){nodes{id}}}}
-      fieldValues(first:30){nodes{
+      content{... on Issue{id number title body state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} assignees(first:20){nodes{id login name}} blockedBy(first:20){nodes{id}}}}
+      fieldValues(first:40){nodes{
         ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
         ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
         ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2Field{id name}}}
-        ... on ProjectV2ItemFieldIterationValue{title startDate duration field{... on ProjectV2FieldCommon{name}}}
+        ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2FieldCommon{name}}}
+        ... on ProjectV2ItemFieldIterationValue{iterationId title startDate duration field{... on ProjectV2FieldCommon{name}}}
       }}
     }
   }
-  fields(first:30){nodes{
+  fields(first:50){nodes{
     ... on ProjectV2SingleSelectField{id name options{id name}}
+    ... on ProjectV2IterationField{id name configuration{iterations{id title startDate duration} completedIterations{id title startDate duration}}}
     ... on ProjectV2Field{id name dataType}
   }}
 `;
@@ -276,6 +309,7 @@ const PROJECT_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:S
       projectV2(number:$number){${PROJECT_FIELDS}}
     }
     repository(name:$name){
+      assignableUsers(first:100){nodes{id login name}}
       projectV2(number:$number){${PROJECT_FIELDS}}
     }
   }
@@ -289,12 +323,13 @@ const PROJECT_PAGE_QUERY = `query($id:ID!,$cursor:String){
         nodes{
           id
           isArchived
-          content{... on Issue{id number title body state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} blockedBy(first:20){nodes{id}}}}
-          fieldValues(first:30){nodes{
+          content{... on Issue{id number title body state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} assignees(first:20){nodes{id login name}} blockedBy(first:20){nodes{id}}}}
+          fieldValues(first:40){nodes{
             ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
             ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
             ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2Field{id name}}}
-        ... on ProjectV2ItemFieldIterationValue{title startDate duration field{... on ProjectV2FieldCommon{name}}}
+            ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2FieldCommon{name}}}
+            ... on ProjectV2ItemFieldIterationValue{iterationId title startDate duration field{... on ProjectV2FieldCommon{name}}}
           }}
         }
       }
@@ -318,6 +353,7 @@ export function readProject(
   project: ProjectBody,
   scope: ProjectScope,
   now: string,
+  people: GitHubUser[] = [],
 ): { settings: ProjectSettings; issues: PlanIssue[] } {
   const fields = project.fields.nodes ?? [];
   const statusField = fields.find((field) => field.name === settings.statusFieldName && field.options);
@@ -336,6 +372,10 @@ export function readProject(
     finishFieldName: "Finish",
     startFieldId: resolveDateField(fields, "Start")?.id ?? null,
     finishFieldId: resolveDateField(fields, "Finish")?.id ?? null,
+    iterationFieldId: iterationField(fields)?.id ?? null,
+    iterations: iterationChoices(iterationField(fields)),
+    commentsFieldId: fields.find((field) => field.name === "Comments" && field.dataType === "TEXT")?.id ?? null,
+    assignableUsers: people,
     statusOptions: statusField?.options ?? [],
     columns,
     doneStatuses: doneStatuses.length > 0 ? doneStatuses : settings.doneStatuses,
@@ -355,10 +395,88 @@ function resolveDateField(fields: GraphField[], name: string): GraphField | unde
   return fields.find((field) => field.name === name && field.dataType === "DATE");
 }
 
+function iterationField(fields: GraphField[]): GraphField | undefined {
+  return fields.find((field) => field.name?.toLowerCase() === "iteration" && field.configuration);
+}
+
+function iterationChoices(field: GraphField | undefined): IterationChoice[] {
+  const rows = [...(field?.configuration?.iterations ?? []), ...(field?.configuration?.completedIterations ?? [])];
+  const seen = new Set<string>();
+  return rows.flatMap((row) => {
+    const id = row.id?.trim() ?? "";
+    const title = row.title?.trim() ?? "";
+    const startDate = milestoneDue(row.startDate) ?? "";
+    const duration = typeof row.duration === "number" && Number.isInteger(row.duration) && row.duration >= 1 ? row.duration : 0;
+    if (!id || !title || !startDate || !duration || seen.has(id)) return [];
+    seen.add(id);
+    return [{ id, title, startDate, duration }];
+  });
+}
+
+function assignableUsers(lookup: ProjectLookup): GitHubUser[] {
+  return (lookup.repositoryOwner?.repository?.assignableUsers?.nodes ?? []).flatMap((node) => {
+    const id = node?.id?.trim() ?? "";
+    const login = node?.login?.trim() ?? "";
+    if (!id || !login) return [];
+    return [{ id, login, name: node?.name?.trim() || null }];
+  });
+}
+
 /** Date fields named Start and Finish that the project does not already have. */
 export function missingDateFields(fields: { name?: string; dataType?: string }[]): ("Start" | "Finish")[] {
   const names = new Set(fields.filter((field) => field.dataType === "DATE").map((field) => field.name));
   return (["Start", "Finish"] as const).filter((name) => !names.has(name));
+}
+
+async function writeIteration(
+  token: string,
+  settings: ProjectSettings,
+  issue: PlanIssue,
+  iterationId: string | null,
+): Promise<Pick<PlanIssue, "iterationId" | "iterationTitle" | "iterationStart" | "iterationDuration">> {
+  if (!settings.projectNodeId || !issue.itemId || !settings.iterationFieldId) throw new Error("Iteration is not a field on the GitHub project.");
+  if (iterationId === null) {
+    await graphql(token, CLEAR_FIELD, { project: settings.projectNodeId, item: issue.itemId, field: settings.iterationFieldId });
+    return { iterationId: null, iterationTitle: null, iterationStart: null, iterationDuration: null };
+  }
+  const iteration = settings.iterations.find((item) => item.id === iterationId);
+  if (!iteration) throw new Error("That iteration is not on the GitHub project.");
+  await graphql(token, SET_FIELD, {
+    project: settings.projectNodeId,
+    item: issue.itemId,
+    field: settings.iterationFieldId,
+    value: { iterationId },
+  });
+  return { iterationId: iteration.id, iterationTitle: iteration.title, iterationStart: iteration.startDate, iterationDuration: iteration.duration };
+}
+
+async function writeAssignee(token: string, settings: ProjectSettings, issue: PlanIssue, assigneeId: string | null): Promise<GitHubUser[]> {
+  const current = issue.assignees.map((person) => person.id).filter((id) => id !== assigneeId);
+  if (current.length > 0) await graphql(token, REMOVE_ASSIGNEES, { issue: issue.issueId, assigneeIds: current });
+  if (!assigneeId) return [];
+  await graphql(token, ADD_ASSIGNEES, { issue: issue.issueId, assigneeIds: [assigneeId] });
+  return [settings.assignableUsers.find((person) => person.id === assigneeId) ?? { id: assigneeId, login: assigneeId, name: null }];
+}
+
+async function writeComments(token: string, settings: ProjectSettings, issue: PlanIssue, comments: string): Promise<string> {
+  if (!settings.projectNodeId || !issue.itemId) throw new Error("Sync the GitHub project before saving a comment.");
+  let fieldId = settings.commentsFieldId;
+  if (!fieldId) {
+    const created = await graphql<{ createProjectV2Field?: { projectV2Field?: { id?: string } | null } | null }>(token, CREATE_TEXT_FIELD, {
+      project: settings.projectNodeId,
+      name: "Comments",
+    });
+    fieldId = created.createProjectV2Field?.projectV2Field?.id ?? null;
+    if (!fieldId) throw new Error("GitHub did not create the Comments field.");
+    settings.commentsFieldId = fieldId;
+  }
+  await graphql(token, SET_FIELD, {
+    project: settings.projectNodeId,
+    item: issue.itemId,
+    field: fieldId,
+    value: { text: comments },
+  });
+  return comments;
 }
 
 async function writeDate(
@@ -405,6 +523,18 @@ const CLEAR_FIELD = `mutation($project:ID!,$item:ID!,$field:ID!){
 
 const CREATE_DATE_FIELD = `mutation($project:ID!,$name:String!,$dataType:ProjectV2CustomFieldType!){
   createProjectV2Field(input:{projectId:$project,name:$name,dataType:$dataType}){projectV2Field{... on ProjectV2Field{id name}}}
+}`;
+
+const CREATE_TEXT_FIELD = `mutation($project:ID!,$name:String!){
+  createProjectV2Field(input:{projectId:$project,name:$name,dataType:TEXT}){projectV2Field{... on ProjectV2Field{id}}}
+}`;
+
+const ADD_ASSIGNEES = `mutation($issue:ID!,$assigneeIds:[ID!]!){
+  addAssigneesToAssignable(input:{assignableId:$issue,assigneeIds:$assigneeIds}){assignable{... on Issue{id}}}
+}`;
+
+const REMOVE_ASSIGNEES = `mutation($issue:ID!,$assigneeIds:[ID!]!){
+  removeAssigneesFromAssignable(input:{assignableId:$issue,assigneeIds:$assigneeIds}){assignable{... on Issue{id}}}
 }`;
 
 const ADD_BLOCKED_BY = `mutation($issue:ID!,$blocking:ID!){

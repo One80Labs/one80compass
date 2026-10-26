@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
-import { orderedIssues, planBands, planKind, planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
+import { orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import type { ProposedShift } from "../../../packages/domain/src/dependencies";
 import { scheduleConflicts } from "../../../packages/domain/src/dependencies";
-import { addDays, barPlacement, chartRanges, scheduleSpan, scheduleText, type ScheduledRange } from "../../../packages/domain/src/schedule";
+import { addDays, barPlacement, chartRanges, datesAfterIterationPick, iterationFinish, scheduleSpan, scheduleText, type ScheduledRange } from "../../../packages/domain/src/schedule";
 import type { MilestoneView } from "../../../packages/domain/src/milestones";
 import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
-import { GanttChart } from "./gantt";
 import { BaselinesPanel } from "./baselines";
 import { usePortal } from "./shell";
 import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs } from "./ui";
@@ -27,18 +26,35 @@ type PlanIssue = {
   iterationTitle?: string | null;
   iterationStart?: string | null;
   iterationDuration?: number | null;
+  iterationId?: string | null;
+  assignees?: { id: string; login: string; name: string | null }[];
+  comments?: string | null;
   predecessorIds: string[];
   inProject?: boolean;
   archived?: boolean;
   deletedAt?: string | null;
 };
-type IssueEdit = { title: string; description?: string | null; status: string; effort: number | null; startDate?: string | null; finishDate?: string | null };
+type IssueEdit = {
+  title: string;
+  description?: string | null;
+  status: string;
+  effort: number | null;
+  startDate?: string | null;
+  finishDate?: string | null;
+  iterationId?: string | null;
+  assigneeId?: string | null;
+  comment?: string;
+};
+type IterationChoice = { id: string; title: string; startDate: string; duration: number };
+type GitHubUser = { id: string; login: string; name: string | null };
 type PlanResponse = {
   settings: {
     owner: string;
     repo: string;
     projectNumber: number;
     workstreamNumber: number | null;
+    iterations?: IterationChoice[];
+    assignableUsers?: GitHubUser[];
     columns: string[];
     startFieldId: string | null;
     finishFieldId: string | null;
@@ -84,62 +100,16 @@ export function PlanPage({ session }: { session: Session | null }) {
       />
       <PlanStatus plan={plan} session={session} canWrite={canWrite} />
       {plan.data && <MilestonePanel session={session} projectId={projectId} canWrite={canWrite} milestones={plan.data.milestones ?? []} onReload={plan.reload} />}
-      <Tabs label="Plan" tabs={["Timeline view", "Gantt", "List view", "Dependencies", "Baselines"]} value={tab} onChange={setTab} />
+      <Tabs label="Plan" tabs={["Timeline view", "Dependencies", "Baselines"]} value={tab} onChange={setTab} />
       {tab === "Timeline view" && (
         <div>
           {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
           <TimelineChart bands={bands} onEdit={canWrite ? setEditingId : null} />
-          {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, and effort can be edited in List view after the issues load.</p>}
+          {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, effort, and dates can be edited from a row after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
-            The plan is grouped by Epic. The date bars are the same bars as the Gantt and come from each GitHub issue. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
+            The plan is grouped by Epic. Date bars use the Start and Finish fields. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
           </p>
-        </div>
-      )}
-      {tab === "Gantt" && (
-        <div>
-          {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
-          <GanttChart
-            issues={issues}
-            workstreamNumber={workstreamNumber}
-            datesReady={Boolean(plan.data?.settings?.startFieldId && plan.data.settings.finishFieldId)}
-            readOnly={!canWrite}
-            admin={Boolean(session?.adminGroup)}
-            busy={plan.busy}
-            onSchedule={(issueId, startDate, finishDate) => plan.schedule(issueId, startDate, finishDate)}
-            onEnsureFields={() => plan.ensureFields()}
-            conflictIds={overlapIds(issues)}
-          />
-        </div>
-      )}
-      {tab === "List view" && plan.data && (
-        <div className="table-wrap">
-          {canWrite && <AddPlanBar onAdd={setAddKind} />}
-          <table>
-            <thead>
-              <tr>
-                <th>Issue</th>
-                <th>Status</th>
-                <th>Effort</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {planRows(issues.map(planNode), workstreamNumber).map((issue) => (
-                <IssueRow
-                  key={issue.issueId}
-                  issue={issue}
-                  kind={issue.kind}
-                  depth={issue.depth}
-                  columns={columns}
-                  defaulted={plan.data?.progress.defaultedIssueIds.includes(issue.issueId) ?? false}
-                  readOnly={!canWrite}
-                  onSave={plan.saveIssue}
-                />
-              ))}
-            </tbody>
-          </table>
-          {plan.data.issues.length === 0 && <div className="empty">No issues yet. Connect the GitHub project and wait for sync.</div>}
         </div>
       )}
       {tab === "Dependencies" && <DependenciesPanel issues={issues} busy={plan.busy} readOnly={!canWrite} onLink={plan.linkPredecessor} />}
@@ -203,6 +173,8 @@ export function PlanPage({ session }: { session: Session | null }) {
           key={editing.issueId}
           issue={editing}
           columns={columns}
+          iterations={plan.data?.settings?.iterations ?? []}
+          users={plan.data?.settings?.assignableUsers ?? []}
           onClose={() => setEditingId(null)}
           onSave={async (issueId, change) => {
             await plan.saveIssue(issueId, change);
@@ -408,6 +380,8 @@ export function KanbanPage({ session }: { session: Session | null }) {
           key={editing.issueId}
           issue={editing}
           columns={columns}
+          iterations={plan.data?.settings?.iterations ?? []}
+          users={plan.data?.settings?.assignableUsers ?? []}
           onClose={() => setEditing(null)}
           onSave={async (issueId, change) => {
             await plan.saveIssue(issueId, change);
@@ -469,11 +443,15 @@ function PlanStatus({ plan, session, canWrite }: { plan: ReturnType<typeof usePl
 function IssueDrawer({
   issue,
   columns,
+  iterations,
+  users,
   onClose,
   onSave,
 }: {
   issue: PlanIssue;
   columns: string[];
+  iterations: IterationChoice[];
+  users: GitHubUser[];
   onClose: () => void;
   onSave: (issueId: string, change: IssueEdit) => Promise<void>;
 }) {
@@ -482,17 +460,45 @@ function IssueDrawer({
   const [descriptionOpen, setDescriptionOpen] = useState((issue.description ?? "").length <= 200);
   const [status, setStatus] = useState(issue.status);
   const [effort, setEffort] = useState(issue.effort == null ? "" : String(issue.effort));
+  const [iterationId, setIterationId] = useState(issue.iterationId ?? "");
+  const [pickedIteration, setPickedIteration] = useState(false);
   const [startDate, setStartDate] = useState(issue.startDate ?? "");
   const [finishDate, setFinishDate] = useState(issue.finishDate ?? "");
+  const [assigneeId, setAssigneeId] = useState(issue.assignees?.[0]?.id ?? "");
+  const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const choices = columns.includes(status) || !status ? columns : [status, ...columns];
+  const iterationChoices = iterationOptions(iterations, issue);
+  const people = assigneeOptions(users, issue.assignees ?? []);
+
+  function chooseIteration(nextId: string) {
+    setIterationId(nextId);
+    if (!nextId) return;
+    const next = iterationChoices.find((item) => item.id === nextId);
+    const end = next ? iterationFinish(next.startDate, next.duration) : null;
+    if (!next || !end) return;
+    const dates = datesAfterIterationPick({
+      hadIteration: Boolean(issue.iterationId),
+      pickedBefore: pickedIteration,
+      startDate,
+      iterationStart: next.startDate,
+      iterationEnd: end,
+    });
+    setStartDate(dates.startDate);
+    setFinishDate(dates.finishDate);
+    setPickedIteration(true);
+  }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     const parsed = effort.trim() === "" ? null : Number(effort);
     if (parsed != null && (!Number.isFinite(parsed) || parsed < 0)) {
       setError("Effort must be a number that is zero or more.");
+      return;
+    }
+    if (startDate && finishDate && finishDate < startDate) {
+      setError("The finish date cannot be before the start date.");
       return;
     }
     setSaving(true);
@@ -505,6 +511,9 @@ function IssueDrawer({
         effort: parsed,
         ...(startDate !== (issue.startDate ?? "") ? { startDate: startDate || null } : {}),
         ...(finishDate !== (issue.finishDate ?? "") ? { finishDate: finishDate || null } : {}),
+        ...(iterationId !== (issue.iterationId ?? "") ? { iterationId: iterationId || null } : {}),
+        ...(assigneeId !== (issue.assignees?.[0]?.id ?? "") ? { assigneeId: assigneeId || null } : {}),
+        ...(comment.trim() ? { comment: comment.trim() } : {}),
       });
     } catch (caught) {
       setError(message(caught));
@@ -515,7 +524,7 @@ function IssueDrawer({
 
   return (
     <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
-      <p>Title, description, status, effort, and dates are sent to GitHub. Estimate is used when the project has no Effort field. Start and Finish are the date fields. A parent stays open until every task under it is Done.</p>
+      <p>Title, description, status, effort, iteration, assignee, dates, and comments are sent to GitHub. Choosing an iteration fills Start and Finish from that iteration. A later iteration keeps Start and sets Finish to the new end date. You can still change the dates. The timeline bar uses Start and Finish. A comment is stored with your name and the date.</p>
       <label>
         Title
         <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={200} />
@@ -537,6 +546,28 @@ function IssueDrawer({
         <input className="field" value={effort} onChange={(event) => setEffort(event.target.value)} inputMode="decimal" placeholder="Unestimated" />
       </label>
       <label>
+        Iteration
+        <select className="field" value={iterationId} onChange={(event) => chooseIteration(event.target.value)}>
+          <option value="">No iteration</option>
+          {iterationChoices.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Assignee
+        <select className="field" value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}>
+          <option value="">Unassigned</option>
+          {people.map((person) => (
+            <option key={person.id} value={person.id}>
+              {person.name ? `${person.name} (${person.login})` : person.login}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
         Start
         <input className="field" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
       </label>
@@ -544,9 +575,24 @@ function IssueDrawer({
         Finish
         <input className="field" type="date" value={finishDate} onChange={(event) => setFinishDate(event.target.value)} />
       </label>
+      <label>
+        Comments
+        {issue.comments ? <span className="comment-log">{issue.comments}</span> : <span className="muted small">No comments yet.</span>}
+        <textarea className="field" value={comment} onChange={(event) => setComment(event.target.value)} maxLength={2000} placeholder="Add a comment" />
+      </label>
       {error && <p className="error">{error}</p>}
     </EditDrawer>
   );
+}
+
+function iterationOptions(iterations: IterationChoice[], issue: PlanIssue): IterationChoice[] {
+  if (!issue.iterationId || iterations.some((item) => item.id === issue.iterationId)) return iterations;
+  if (!issue.iterationTitle || !issue.iterationStart || !issue.iterationDuration) return iterations;
+  return [{ id: issue.iterationId, title: issue.iterationTitle, startDate: issue.iterationStart, duration: issue.iterationDuration }, ...iterations];
+}
+
+function assigneeOptions(users: GitHubUser[], current: GitHubUser[]): GitHubUser[] {
+  return [...current.filter((person) => !users.some((item) => item.id === person.id)), ...users];
 }
 
 const DESCRIPTION_PREVIEW = 200;
@@ -608,7 +654,7 @@ const kindLabel: Record<PlanKind, string> = {
   workstream: "Workstream",
   epic: "Epic",
   feature: "Feature",
-  issue: "Issue",
+  issue: "Task",
   subissue: "Sub-issue",
 };
 
@@ -626,7 +672,7 @@ function AddPlanBar({ onAdd }: { onAdd: (kind: Exclude<PlanKind, "workstream">) 
         Add Feature
       </button>
       <button className="btn small" type="button" onClick={() => onAdd("issue")}>
-        Add Issue
+        Add Task
       </button>
       <button className="btn small" type="button" onClick={() => onAdd("subissue")}>
         Add Sub-issue
@@ -689,87 +735,6 @@ function AddPlanDrawer({
         </label>
       )}
     </EditDrawer>
-  );
-}
-
-function IssueRow({
-  issue,
-  kind,
-  depth,
-  columns,
-  defaulted,
-  readOnly,
-  onSave,
-}: {
-  issue: PlanIssue;
-  kind: PlanKind;
-  depth: number;
-  columns: string[];
-  defaulted: boolean;
-  readOnly: boolean;
-  onSave: (issueId: string, change: { title: string; status: string; effort: number | null }) => Promise<void>;
-}) {
-  const [title, setTitle] = useState(issue.title);
-  const [status, setStatus] = useState(issue.status);
-  const [effort, setEffort] = useState(issue.effort == null ? "" : String(issue.effort));
-  const choices = columns.includes(status) || !status ? columns : [status, ...columns];
-  if (readOnly) {
-    return (
-      <tr>
-        <td style={{ paddingLeft: 12 + depth * 18 }}>
-          {kindLabel[kind]} {issue.title}
-          {defaulted ? " Estimate defaults to 1." : ""}
-        </td>
-        <td>
-          <Pill tone={status === "Done" ? "good" : status === "In Progress" ? "orange" : "blue"}>{issue.status || "No status"}</Pill>
-        </td>
-        <td>{issue.effort == null ? "Unestimated" : issue.effort}</td>
-        <td />
-      </tr>
-    );
-  }
-  return (
-    <tr>
-      <td style={{ paddingLeft: 12 + depth * 18 }}>
-        <label>
-          {kindLabel[kind]}
-          <input value={title} onChange={(event) => setTitle(event.target.value)} />
-          {defaulted ? " Estimate defaults to 1 until you save a number." : ""}
-        </label>
-      </td>
-      <td>
-        <Pill tone={status === "Done" ? "good" : status === "In Progress" ? "orange" : "blue"}>{status || "No status"}</Pill>
-        <label>
-          Status
-          <select value={status} onChange={(event) => setStatus(event.target.value)}>
-            {!status && <option value="">No status</option>}
-            {choices.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-      </td>
-      <td>
-        <label>
-          Effort
-          <input value={effort} onChange={(event) => setEffort(event.target.value)} inputMode="decimal" />
-        </label>
-      </td>
-      <td>
-        <button
-          className="btn small"
-          type="button"
-          onClick={() => {
-            const parsed = effort.trim() === "" ? null : Number(effort);
-            onSave(issue.issueId, { title, status, effort: parsed }).catch(() => undefined);
-          }}
-        >
-          Save
-        </button>
-      </td>
-    </tr>
   );
 }
 
@@ -874,11 +839,16 @@ function usePlan(session: Session | null) {
       const row = result.issues.find((item) => item.issueId === issueId);
       const startOk = body.startDate === undefined || row?.startDate === body.startDate;
       const finishOk = body.finishDate === undefined || row?.finishDate === body.finishDate;
+      const iterationOk = body.iterationId === undefined || (row?.iterationId ?? null) === body.iterationId;
+      const assigneeOk =
+        body.assigneeId === undefined ||
+        (body.assigneeId === null ? (row?.assignees ?? []).length === 0 : (row?.assignees ?? []).some((person) => person.id === body.assigneeId));
+      const commentOk = typeof body.comment !== "string" || (row?.comments ?? "").includes(body.comment);
       const shifted = proposals.every((proposal) => {
         const later = result.issues.find((item) => item.issueId === proposal.issueId);
         return later?.startDate === proposal.toStart && later.finishDate === proposal.toFinish;
       });
-      return Boolean(startOk && finishOk && shifted);
+      return Boolean(startOk && finishOk && iterationOk && assigneeOk && commentOk && shifted);
     });
   }
 
@@ -910,15 +880,7 @@ function usePlan(session: Session | null) {
         throw new Error(text);
       }
       try {
-        if (change.startDate !== undefined || change.finishDate !== undefined) {
-          await patchIssue(issueId, change, []);
-        } else {
-          await api(`/projects/${projectId}/issues/${issueId}`, session.idToken, {
-            method: "PATCH",
-            body: { ...change, idempotencyKey: crypto.randomUUID() },
-          });
-          await reload();
-        }
+        await patchIssue(issueId, change, []);
       } catch (caught) {
         if (openReview(caught, issueId, change)) return;
         setError(message(caught));
@@ -933,20 +895,6 @@ function usePlan(session: Session | null) {
         body: { status, idempotencyKey: crypto.randomUUID() },
       });
       await reload();
-    },
-    async schedule(issueId: string, startDate: string, finishDate: string) {
-      if (!session) return;
-      setError(null);
-      setBusy(true);
-      try {
-        await patchIssue(issueId, { startDate, finishDate }, []);
-      } catch (caught) {
-        if (openReview(caught, issueId, { startDate, finishDate })) return;
-        setError(message(caught));
-        throw caught;
-      } finally {
-        setBusy(false);
-      }
     },
     async decide(decision: "approve" | "reject") {
       if (!session || !review) return;
@@ -1018,20 +966,6 @@ function usePlan(session: Session | null) {
       try {
         await api(`/projects/${projectId}/plan-items`, session.idToken, { method: "POST", body: { kind, title, parentIssueId } });
         await poll((result) => result.issues.some((issue) => issue.title === title && !before.has(issue.issueId)));
-      } catch (caught) {
-        setError(message(caught));
-        throw caught;
-      } finally {
-        setBusy(false);
-      }
-    },
-    async ensureFields() {
-      if (!session) return;
-      setError(null);
-      setBusy(true);
-      try {
-        await api(`/projects/${projectId}/schedule-fields`, session.idToken, { method: "POST", body: {} });
-        await poll((result) => Boolean(result.settings?.startFieldId && result.settings.finishFieldId));
       } catch (caught) {
         setError(message(caught));
         throw caught;
@@ -1230,12 +1164,6 @@ function dependencyIssues(issues: PlanIssue[]) {
     archived: false,
     deletedAt: null,
   }));
-}
-
-function overlapIds(issues: PlanIssue[]): string[] {
-  return scheduleConflicts(dependencyIssues(issues))
-    .filter((conflict) => conflict.reason === "overlap")
-    .map((conflict) => conflict.issueId);
 }
 
 function TimelineStatus({

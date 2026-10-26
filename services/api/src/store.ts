@@ -625,6 +625,31 @@ function rpt(id: string): string {
   return `RPT#${id}`;
 }
 
+function parseUsers(value: unknown): { id: string; login: string; name: string | null }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const person = entry as Item;
+    const id = typeof person.id === "string" ? person.id.trim() : "";
+    const login = typeof person.login === "string" ? person.login.trim() : "";
+    if (!id || !login) return [];
+    const name = typeof person.name === "string" && person.name.trim() ? person.name.trim() : null;
+    return [{ id, login, name }];
+  });
+}
+
+function parseIterations(value: unknown): { id: string; title: string; startDate: string; duration: number }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const iteration = entry as Item;
+    const id = typeof iteration.id === "string" ? iteration.id.trim() : "";
+    const title = typeof iteration.title === "string" ? iteration.title.trim() : "";
+    const startDate = typeof iteration.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iteration.startDate) ? iteration.startDate : "";
+    const duration = typeof iteration.duration === "number" && Number.isInteger(iteration.duration) && iteration.duration >= 1 ? iteration.duration : 0;
+    if (!id || !title || !startDate || !duration) return [];
+    return [{ id, title, startDate, duration }];
+  });
+}
+
 function asCustomer(item: Item): Customer {
   return { customerId: String(item.customerId), name: String(item.name), createdAt: String(item.createdAt) };
 }
@@ -743,6 +768,10 @@ function asSettings(item: Item): ProjectSettings {
     finishFieldName: String(item.finishFieldName ?? "Finish"),
     startFieldId: item.startFieldId == null || item.startFieldId === "" ? null : String(item.startFieldId),
     finishFieldId: item.finishFieldId == null || item.finishFieldId === "" ? null : String(item.finishFieldId),
+    iterationFieldId: item.iterationFieldId == null || item.iterationFieldId === "" ? null : String(item.iterationFieldId),
+    iterations: parseIterations(item.iterations),
+    commentsFieldId: item.commentsFieldId == null || item.commentsFieldId === "" ? null : String(item.commentsFieldId),
+    assignableUsers: parseUsers(item.assignableUsers),
     statusOptions: options.map((option) => {
       const record = option as Item;
       return { id: String(record.id), name: String(record.name) };
@@ -777,6 +806,9 @@ function asIssue(item: Item): PlanIssue {
     iterationTitle: typeof item.iterationTitle === "string" && item.iterationTitle.trim() ? item.iterationTitle.trim() : null,
     iterationStart: typeof item.iterationStart === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.iterationStart) ? item.iterationStart : null,
     iterationDuration: typeof item.iterationDuration === "number" && Number.isInteger(item.iterationDuration) && item.iterationDuration >= 1 ? item.iterationDuration : null,
+    iterationId: typeof item.iterationId === "string" && item.iterationId.trim() ? item.iterationId.trim() : null,
+    assignees: parseUsers(item.assignees),
+    comments: typeof item.comments === "string" && item.comments.trim() ? item.comments : null,
     predecessorIds: Array.isArray(item.predecessorIds) ? [...new Set(item.predecessorIds.map(String).filter((id) => id && id !== String(item.issueId)))] : [],
     inProject: item.inProject !== false,
     updatedAt: String(item.updatedAt),

@@ -38,6 +38,7 @@ function applyIssueEvent(issues: PlanIssue[], settings: ProjectSettings, body: R
     deletedAt: action === "deleted" ? now : action === "opened" || action === "reopened" ? null : current.deletedAt,
     parentIssueId: parentLink(action, body, issueId, current.parentIssueId),
     issueType: issueTypeName(issue, current.issueType),
+    ...("assignees" in issue ? { assignees: webhookAssignees(issue.assignees) } : {}),
     updatedAt: now,
   };
   let result = upsert(issues, next);
@@ -99,6 +100,7 @@ function applyProjectItem(issues: PlanIssue[], settings: ProjectSettings, body: 
     const parsed = iterationFromWebhook(fieldValue?.to);
     if (parsed.iterationStart || fieldValue?.to == null) Object.assign(next, parsed);
   }
+  if (fieldName.toLowerCase() === "comments") next.comments = typeof fieldValue?.to === "string" && fieldValue.to.trim() ? fieldValue.to : null;
   return upsert(issues, next);
 }
 
@@ -126,6 +128,9 @@ function blankIssue(settings: ProjectSettings, issueId: string, now: string): Pl
     iterationTitle: null,
     iterationStart: null,
     iterationDuration: null,
+    iterationId: null,
+    assignees: [],
+    comments: null,
     predecessorIds: [],
     inProject: false,
     updatedAt: now,
@@ -162,14 +167,28 @@ function fieldText(value: unknown): string | null {
   return typeof item?.name === "string" ? item.name : null;
 }
 
-function iterationFromWebhook(value: unknown): { iterationTitle: string | null; iterationStart: string | null; iterationDuration: number | null } {
+function iterationFromWebhook(value: unknown): { iterationTitle: string | null; iterationStart: string | null; iterationDuration: number | null; iterationId: string | null } {
+  const empty = { iterationTitle: null, iterationStart: null, iterationDuration: null, iterationId: null };
   const iteration = record(value);
-  if (!iteration) return { iterationTitle: null, iterationStart: null, iterationDuration: null };
+  if (!iteration) return empty;
   const rawStart = typeof iteration.start_date === "string" ? iteration.start_date : typeof iteration.startDate === "string" ? iteration.startDate : "";
   const start = /^\d{4}-\d{2}-\d{2}/.test(rawStart) ? rawStart.slice(0, 10) : null;
   const duration = typeof iteration.duration === "number" && Number.isInteger(iteration.duration) && iteration.duration >= 1 ? iteration.duration : null;
-  if (!start || duration == null) return { iterationTitle: null, iterationStart: null, iterationDuration: null };
-  return { iterationTitle: typeof iteration.title === "string" && iteration.title.trim() ? iteration.title.trim() : null, iterationStart: start, iterationDuration: duration };
+  const iterationId = typeof iteration.id === "string" ? iteration.id : typeof iteration.iteration_id === "string" ? iteration.iteration_id : null;
+  if (!start || duration == null) return { ...empty, iterationId };
+  return { iterationTitle: typeof iteration.title === "string" && iteration.title.trim() ? iteration.title.trim() : null, iterationStart: start, iterationDuration: duration, iterationId };
+}
+
+function webhookAssignees(value: unknown): { id: string; login: string; name: string | null }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const person = record(entry);
+    const id = typeof person?.node_id === "string" ? person.node_id.trim() : "";
+    const login = typeof person?.login === "string" ? person.login.trim() : "";
+    if (!id || !login) return [];
+    const name = typeof person?.name === "string" && person.name.trim() ? person.name.trim() : null;
+    return [{ id, login, name }];
+  });
 }
 
 function fieldDate(value: unknown): string | null {

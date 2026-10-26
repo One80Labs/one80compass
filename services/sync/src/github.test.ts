@@ -21,6 +21,10 @@ const settings: ProjectSettings = {
   doneStatuses: ["Done"],
   columns: ["Todo", "In Progress", "Done"],
   workstreamNumber: null,
+  iterationFieldId: null,
+  iterations: [],
+  commentsFieldId: null,
+  assignableUsers: [],
 };
 
 describe("chooseProject", () => {

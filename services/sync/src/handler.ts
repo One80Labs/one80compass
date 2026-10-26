@@ -118,6 +118,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
         if (!issue) continue;
         const updated = await gateway.updateIssue(settings, issue, change);
         await store.putIssue(updated);
+        await store.putSettings(settings);
       }
       await rollUpParents(store, gateway, settings, message.changes[0]?.issueId ?? null, now, message.idempotencyKey);
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
@@ -197,6 +198,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
   try {
     const updated = await gateway.updateIssue(settings, issue, message);
     await store.putIssue(updated);
+    await store.putSettings(settings);
     await rollUpParents(store, gateway, settings, message.issueId, now, message.idempotencyKey);
     await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
   } catch (error) {

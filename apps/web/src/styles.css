@@ -767,19 +767,6 @@ button.tab.active {
   border-color: #c9683e;
 }
 
-.gantt {
-  display: grid;
-  gap: 10px;
-}
-
-.gantt-scale,
-.gantt-row {
-  display: grid;
-  grid-template-columns: minmax(180px, 280px) 1fr;
-  gap: 12px;
-  align-items: center;
-}
-
 .gantt-days {
   position: relative;
   height: 18px;
@@ -807,37 +794,21 @@ button.tab.active {
   min-width: 10px;
   border-radius: 4px;
   background: #c9683e;
-  cursor: grab;
-  display: flex;
-  justify-content: space-between;
-  touch-action: none;
 }
 
 .gantt-bar.rollup {
   background: #e7b5a2;
-  cursor: default;
 }
 
-.gantt-bar:active {
-  cursor: grabbing;
-}
-
-.gantt-handle {
-  width: 8px;
-  height: 100%;
-  cursor: ew-resize;
-}
-
-.gantt-dates {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: end;
-  margin-top: 4px;
-}
-
-.gantt-dates input {
-  width: 9.2rem;
+.comment-log {
+  white-space: pre-wrap;
+  max-height: 8rem;
+  overflow: auto;
+  background: #f6f4ef;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .timeline-chart {

@@ -21,6 +21,10 @@ const settings: ProjectSettings = {
   doneStatuses: ["Done"],
   columns: ["Todo", "In Progress", "Done"],
   workstreamNumber: null,
+  iterationFieldId: null,
+  iterations: [],
+  commentsFieldId: null,
+  assignableUsers: [],
 };
 
 describe("applyGithubDelivery", () => {
@@ -50,6 +54,9 @@ describe("applyGithubDelivery", () => {
         iterationTitle: null,
         iterationStart: null,
         iterationDuration: null,
+        iterationId: null,
+        assignees: [],
+        comments: null,
         inProject: true,
         updatedAt: "2026-10-24T00:00:00.000Z",
       },

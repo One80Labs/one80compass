@@ -53,40 +53,43 @@ export function iterationFinish(start: string, duration: number): string | null 
 
 export type ScheduledRange = { start: string; finish: string; fromIteration: boolean };
 
-/** An Iteration supplies the bar. Start and Finish are used when the task has no Iteration. */
+/** The Timeline bar is the Start and Finish fields. An iteration updates those fields when it is chosen. */
 export function scheduledRange(issue: {
   startDate: string | null;
   finishDate: string | null;
-  iterationStart?: string | null;
-  iterationDuration?: number | null;
 }): ScheduledRange | null {
-  const duration = issue.iterationDuration;
-  if (issue.iterationStart && duration != null) {
-    const finish = iterationFinish(issue.iterationStart, duration);
-    if (finish) return { start: issue.iterationStart, finish, fromIteration: true };
-  }
-  if (issue.startDate && issue.finishDate && isIsoDate(issue.startDate) && isIsoDate(issue.finishDate)) {
+  if (issue.startDate && issue.finishDate && isIsoDate(issue.startDate) && isIsoDate(issue.finishDate) && issue.finishDate >= issue.startDate) {
     return { start: issue.startDate, finish: issue.finishDate, fromIteration: false };
   }
   return null;
 }
 
-export function scheduleText(issue: {
-  startDate: string | null;
-  finishDate: string | null;
-  iterationTitle?: string | null;
-  iterationStart?: string | null;
-  iterationDuration?: number | null;
-}): string {
+/**
+ * The first iteration choice copies that iteration's start and end into Start and Finish.
+ * A later choice keeps Start and sets Finish to the new iteration end.
+ * If that end is before Start, Start moves to the new iteration start so the range stays valid.
+ */
+export function datesAfterIterationPick(input: {
+  hadIteration: boolean;
+  pickedBefore: boolean;
+  startDate: string;
+  iterationStart: string;
+  iterationEnd: string;
+}): { startDate: string; finishDate: string } {
+  const firstPick = !input.hadIteration && !input.pickedBefore;
+  const start = firstPick || !input.startDate || input.startDate > input.iterationEnd ? input.iterationStart : input.startDate;
+  return { startDate: start, finishDate: input.iterationEnd };
+}
+
+export function scheduleText(issue: { startDate: string | null; finishDate: string | null }): string {
   const range = scheduledRange(issue);
   if (!range) return "Not scheduled";
-  const dates = `${range.start} – ${range.finish}`;
-  return range.fromIteration && issue.iterationTitle ? `${issue.iterationTitle} · ${dates}` : dates;
+  return `${range.start} – ${range.finish}`;
 }
 
 type ChartRow = { depth: number; kind?: string } & Parameters<typeof scheduledRange>[0];
 
-/** The same bar the Gantt draws. An Epic or Feature spans its children when it has no schedule of its own. */
+/** The bar the Timeline draws. An Epic or Feature spans its children when it has no schedule of its own. */
 export function chartRanges(rows: ChartRow[]): (ScheduledRange | null)[] {
   return rows.map((_, index) => chartRange(rows, index));
 }

@@ -136,11 +136,36 @@ export type ProjectSettings = {
   /** Null until the project has a date field with that name. */
   startFieldId: string | null;
   finishFieldId: string | null;
+  /** GitHub Project Iteration field. Null until sync finds one. */
+  iterationFieldId: string | null;
+  /** Iterations configured on that field, including completed ones. */
+  iterations: IterationChoice[];
+  /** GitHub Project text field named Comments. Null until the field exists. */
+  commentsFieldId: string | null;
+  /** People who can be assigned to issues in the mapped repository. */
+  assignableUsers: GitHubUser[];
   statusOptions: { id: string; name: string }[];
   doneStatuses: string[];
   columns: string[];
   /** GitHub issue number of the Workstream. Null until an administrator saves one. The Workstream is not a plan row. */
   workstreamNumber: number | null;
+};
+
+export type GitHubUser = { id: string; login: string; name: string | null };
+
+export type IterationChoice = { id: string; title: string; startDate: string; duration: number };
+
+/** Fields the portal can write back to a GitHub issue. `comments` is the full Comments field, already attributed. */
+export type IssueChange = {
+  title?: string;
+  description?: string | null;
+  status?: string;
+  effort?: number | null;
+  startDate?: string | null;
+  finishDate?: string | null;
+  iterationId?: string | null;
+  assigneeId?: string | null;
+  comments?: string;
 };
 
 export type PlanIssue = {
@@ -176,6 +201,12 @@ export type PlanIssue = {
   iterationStart: string | null;
   /** Length of that iteration in days, including the first day. */
   iterationDuration: number | null;
+  /** GitHub iteration id. Null when the task is not in an iteration. */
+  iterationId: string | null;
+  /** GitHub issue assignees. Empty when nobody is assigned. */
+  assignees: GitHubUser[];
+  /** GitHub Project Comments field. Each line is one One80Compass user, date, and comment. */
+  comments: string | null;
   /** GitHub issues that block this one. The task starts the day after the latest of those finishes. */
   predecessorIds: string[];
   inProject: boolean;
@@ -230,31 +261,17 @@ export type ReportVersion = {
 export type SyncMessage =
   | { type: "webhook"; deliveryId: string; eventName: string; payload: unknown }
   | { type: "reconcile"; projectId?: string }
-  | {
+  | ({
       type: "update-issue";
       projectId: string;
       issueId: string;
       idempotencyKey: string;
-      title?: string;
-      description?: string | null;
-      status?: string;
-      effort?: number | null;
-      startDate?: string | null;
-      finishDate?: string | null;
-    }
+    } & IssueChange)
   | {
       type: "update-schedule";
       projectId: string;
       idempotencyKey: string;
-      changes: {
-        issueId: string;
-        title?: string;
-        description?: string | null;
-        status?: string;
-        effort?: number | null;
-        startDate?: string | null;
-        finishDate?: string | null;
-      }[];
+      changes: ({ issueId: string } & IssueChange)[];
     }
   | { type: "set-dependency"; projectId: string; issueId: string; predecessorId: string; action: "add" | "remove"; idempotencyKey: string }
   | { type: "ensure-date-fields"; projectId: string }

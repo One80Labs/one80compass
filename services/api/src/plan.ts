@@ -2,6 +2,7 @@ import { adminAccess, canAccessProject, canWriteProject, type Principal } from "
 import {
   DEFAULT_COLUMNS,
   DEFAULT_DONE_STATUSES,
+  type IssueChange,
   type ProjectSettings,
   type SyncMessage,
   type SyncState,
@@ -9,6 +10,7 @@ import {
 import { parentDoneBlocked, planKind } from "../../../packages/domain/src/hierarchy";
 import { dependencyCycle, dependencyReview } from "../../../packages/domain/src/dependencies";
 import { baselineSnapshot, type BaselineRecord } from "../../../packages/domain/src/baselines";
+import { tracedComment } from "../../../packages/domain/src/comments";
 import { isIsoDate } from "../../../packages/domain/src/schedule";
 import { milestoneViews } from "../../../packages/domain/src/milestones";
 import { projectProgress } from "../../../packages/domain/src/progress";
@@ -101,6 +103,10 @@ async function saveGithub(ctx: PlanCtx, projectId: string): Promise<HttpResult> 
     finishFieldName: existing?.finishFieldName ?? "Finish",
     startFieldId: existing?.startFieldId ?? null,
     finishFieldId: existing?.finishFieldId ?? null,
+    iterationFieldId: existing?.iterationFieldId ?? null,
+    iterations: existing?.iterations ?? [],
+    commentsFieldId: existing?.commentsFieldId ?? null,
+    assignableUsers: existing?.assignableUsers ?? [],
     statusOptions: existing?.statusOptions ?? [],
     doneStatuses: existing?.doneStatuses ?? [...DEFAULT_DONE_STATUSES],
     columns: existing?.columns ?? [...DEFAULT_COLUMNS],
@@ -360,7 +366,7 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
   const issue = await ctx.deps.store.getIssue(projectId, issueId);
   if (!issue || issue.customerId !== project.customerId) return notFound(ctx.correlationId);
   const change = issueChange(ctx.body);
-  if (!change) return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, or dates.", correlationId: ctx.correlationId }, ctx.correlationId);
+  if (!change) return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, dates, iteration, assignee, or comment.", correlationId: ctx.correlationId }, ctx.correlationId);
   const start = change.startDate !== undefined ? change.startDate : issue.startDate;
   const finish = change.finishDate !== undefined ? change.finishDate : issue.finishDate;
   if (start && finish && finish < start) {
@@ -369,8 +375,20 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
   if (change.startDate === issue.startDate) delete change.startDate;
   if (change.finishDate === issue.finishDate) delete change.finishDate;
   if (change.description === issue.description) delete change.description;
+  if (change.iterationId === issue.iterationId) delete change.iterationId;
+  if (change.assigneeId !== undefined && change.assigneeId === (issue.assignees[0]?.id ?? null) && issue.assignees.length <= 1) delete change.assigneeId;
+  if (change.iterationId) {
+    const known = (await ctx.deps.store.getSettings(projectId))?.iterations ?? [];
+    if (known.length > 0 && !known.some((item) => item.id === change.iterationId)) {
+      return json(400, { code: "VALIDATION", message: "That iteration is not on the GitHub project.", correlationId: ctx.correlationId }, ctx.correlationId);
+    }
+  }
+  if (change.comment) {
+    change.comments = tracedComment(issue.comments, await actorLabel(ctx, project.customerId), ctx.deps.now().toISOString().slice(0, 10), change.comment);
+    delete change.comment;
+  }
   if (Object.keys(change).length === 0) {
-    return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, or dates.", correlationId: ctx.correlationId }, ctx.correlationId);
+    return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, dates, iteration, assignee, or comment.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
   if (change.status) {
     const settings = await ctx.deps.store.getSettings(projectId);
@@ -584,8 +602,8 @@ async function auditBaseline(ctx: PlanCtx, customerId: string, projectId: string
   });
 }
 
-function issueChange(body: Record<string, unknown>): { title?: string; description?: string | null; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null } | null {
-  const change: { title?: string; description?: string | null; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null } = {};
+function issueChange(body: Record<string, unknown>): (IssueChange & { comment?: string }) | null {
+  const change: IssueChange & { comment?: string } = {};
   if ("title" in body) {
     if (typeof body.title !== "string" || !body.title.trim() || body.title.trim().length > 200) return null;
     change.title = body.title.trim();
@@ -605,7 +623,33 @@ function issueChange(body: Record<string, unknown>): { title?: string; descripti
     else change.effort = body.effort;
   }
   if (!dateField(body, "startDate", change) || !dateField(body, "finishDate", change)) return null;
+  if (!idField(body, "iterationId", change) || !idField(body, "assigneeId", change)) return null;
+  if ("comment" in body) {
+    if (typeof body.comment !== "string") return null;
+    const text = body.comment.replace(/\s+/g, " ").trim();
+    if (!text || text.length > 2000) return null;
+    change.comment = text;
+  }
   return Object.keys(change).length > 0 ? change : null;
+}
+
+function idField(body: Record<string, unknown>, key: "iterationId" | "assigneeId", change: IssueChange): boolean {
+  if (!(key in body)) return true;
+  if (body[key] === null) {
+    change[key] = null;
+    return true;
+  }
+  if (typeof body[key] !== "string" || !body[key].trim() || body[key].trim().length > 100) return false;
+  change[key] = body[key].trim();
+  return true;
+}
+
+async function actorLabel(ctx: PlanCtx, customerId: string): Promise<string> {
+  const membership = (await ctx.deps.store.listMembershipsForUser(ctx.principal.userId)).find((item) => item.customerId === customerId);
+  const name = membership?.name.trim();
+  if (name) return name;
+  const email = membership?.email.trim() || ctx.principal.email?.trim();
+  return email || ctx.principal.userId;
 }
 
 function dateField(
