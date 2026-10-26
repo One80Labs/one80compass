@@ -157,6 +157,36 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
     }
     return;
   }
+  if (message.type === "create-plan-item") {
+    const settings = await store.getSettings(message.projectId);
+    if (!settings) return;
+    if (!gateway.configured) {
+      await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "failed", detail: "GitHub App is not configured.", updatedAt: now });
+      return;
+    }
+    try {
+      await gateway.createPlanItem(settings, message);
+      const result = await gateway.reconcile(settings);
+      await store.putSettings(result.settings);
+      const previous = await store.listIssues(settings.projectId);
+      const seen = new Set(result.issues.map((issue) => issue.issueId));
+      for (const issue of result.issues) await store.putIssue(issue);
+      for (const issue of previous) {
+        if (!seen.has(issue.issueId) && issue.inProject) await store.putIssue({ ...issue, inProject: false, updatedAt: now });
+      }
+      await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
+    } catch (error) {
+      await store.putSync({
+        projectId: settings.projectId,
+        customerId: settings.customerId,
+        status: "failed",
+        detail: error instanceof Error ? error.message.slice(0, 300) : "Sync failed.",
+        updatedAt: now,
+      });
+      throw error;
+    }
+    return;
+  }
   const settings = await store.getSettings(message.projectId);
   const issue = await store.getIssue(message.projectId, message.issueId);
   if (!settings || !issue) return;

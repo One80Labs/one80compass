@@ -131,6 +131,8 @@ export type ProjectSettings = {
   statusOptions: { id: string; name: string }[];
   doneStatuses: string[];
   columns: string[];
+  /** GitHub issue number of the Workstream. Null until an administrator saves one. The Workstream is not a plan row. */
+  workstreamNumber: number | null;
 };
 
 export type PlanIssue = {
@@ -146,6 +148,8 @@ export type PlanIssue = {
   archived: boolean;
   deletedAt: string | null;
   parentIssueId: string | null;
+  /** GitHub issue type name. Null when the issue has no type, which makes it an Issue or Sub-issue. */
+  issueType: string | null;
   /** GitHub milestone title. Null when the issue has no milestone. */
   milestone: string | null;
   /** GitHub milestone node id. Null when the sync only knew the title. */
@@ -235,4 +239,14 @@ export type SyncMessage =
       }[];
     }
   | { type: "set-dependency"; projectId: string; issueId: string; predecessorId: string; action: "add" | "remove"; idempotencyKey: string }
-  | { type: "ensure-date-fields"; projectId: string };
+  | { type: "ensure-date-fields"; projectId: string }
+  | {
+      type: "create-plan-item";
+      projectId: string;
+      idempotencyKey: string;
+      kind: "epic" | "feature" | "issue" | "subissue";
+      title: string;
+      /** Parent issue node id. Null when the parent is the Workstream issue number. */
+      parentIssueId: string | null;
+      workstreamNumber: number | null;
+    };

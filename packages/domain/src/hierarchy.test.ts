@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderedIssues, parentDoneBlocked, parentStatusChanges, rollupTargets, type HierarchyIssue } from "./hierarchy";
+import { orderedIssues, parentDoneBlocked, parentStatusChanges, planBands, planKind, rollupTargets, type HierarchyIssue } from "./hierarchy";
 
 const done = ["Done"];
 
@@ -115,5 +115,33 @@ describe("orderedIssues", () => {
       ["Parent", 0],
       ["Child", 1],
     ]);
+  });
+});
+
+describe("planBands", () => {
+  const node = (partial: { issueId: string; title: string; parentIssueId: string | null; number: number; issueType: string | null }) => partial;
+
+  it("nests a feature and a direct issue under an epic and keeps a fixed indent", () => {
+    const issues = [
+      node({ issueId: "ws", title: "Work", parentIssueId: null, number: 10, issueType: "Workstream" }),
+      node({ issueId: "epic", title: "Billing", parentIssueId: "ws", number: 11, issueType: "Epic" }),
+      node({ issueId: "issue", title: "Invoice", parentIssueId: "epic", number: 12, issueType: null }),
+      node({ issueId: "feature", title: "Payments", parentIssueId: "epic", number: 13, issueType: "Feature" }),
+      node({ issueId: "child", title: "Charge", parentIssueId: "issue", number: 14, issueType: null }),
+      node({ issueId: "loose", title: "Note", parentIssueId: null, number: 15, issueType: null }),
+    ];
+    const byId = new Map(issues.map((issue) => [issue.issueId, issue]));
+    expect(planKind(issues[3], byId, 10)).toBe("feature");
+    expect(planKind(issues[4], byId, 10)).toBe("subissue");
+    const bands = planBands(issues, 10);
+    expect(bands.map((band) => band.title)).toEqual(["Billing", "Outside an Epic"]);
+    expect(bands[0].rows.map((row) => [row.title, row.depth])).toEqual([
+      ["Billing", 0],
+      ["Payments", 1],
+      ["Invoice", 2],
+      ["Charge", 3],
+    ]);
+    expect(bands[1].rows.map((row) => row.title)).toEqual(["Note"]);
+    expect(bands[0].rows.some((row) => row.issueId === "ws")).toBe(false);
   });
 });

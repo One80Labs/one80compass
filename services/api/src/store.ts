@@ -748,6 +748,7 @@ function asSettings(item: Item): ProjectSettings {
     }),
     doneStatuses: Array.isArray(item.doneStatuses) ? item.doneStatuses.map(String) : ["Done"],
     columns: Array.isArray(item.columns) ? item.columns.map(String) : ["Todo", "In Progress", "Done"],
+    workstreamNumber: typeof item.workstreamNumber === "number" && Number.isInteger(item.workstreamNumber) && item.workstreamNumber > 0 ? item.workstreamNumber : null,
   };
 }
 
@@ -765,6 +766,7 @@ function asIssue(item: Item): PlanIssue {
     archived: Boolean(item.archived),
     deletedAt: item.deletedAt == null ? null : String(item.deletedAt),
     parentIssueId: item.parentIssueId == null ? null : String(item.parentIssueId),
+    issueType: typeof item.issueType === "string" && item.issueType.trim() ? item.issueType.trim() : null,
     milestone: item.milestone == null || item.milestone === "" ? null : String(item.milestone),
     milestoneId: item.milestoneId == null || item.milestoneId === "" ? null : String(item.milestoneId),
     milestoneDueOn: typeof item.milestoneDueOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.milestoneDueOn) ? item.milestoneDueOn : null,

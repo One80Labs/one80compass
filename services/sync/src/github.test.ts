@@ -20,6 +20,7 @@ const settings: ProjectSettings = {
   statusOptions: [],
   doneStatuses: ["Done"],
   columns: ["Todo", "In Progress", "Done"],
+  workstreamNumber: null,
 };
 
 describe("chooseProject", () => {

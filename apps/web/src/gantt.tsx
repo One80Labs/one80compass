@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { orderedIssues } from "../../../packages/domain/src/hierarchy";
+import { planRows } from "../../../packages/domain/src/hierarchy";
 import { addDays, scheduleSpan, shiftSchedule } from "../../../packages/domain/src/schedule";
 
 type GanttIssue = {
@@ -8,6 +8,8 @@ type GanttIssue = {
   parentIssueId: string | null;
   startDate: string | null;
   finishDate: string | null;
+  number: number | null;
+  issueType: string | null;
   depth: number;
 };
 
@@ -16,6 +18,7 @@ const DAY = 86_400_000;
 /** Gantt for GitHub Start and Finish dates. Drag moves or resizes a bar. Empty tasks stay unscheduled. */
 export function GanttChart({
   issues,
+  workstreamNumber,
   datesReady,
   admin,
   busy,
@@ -24,6 +27,7 @@ export function GanttChart({
   conflictIds,
 }: {
   issues: Omit<GanttIssue, "depth">[];
+  workstreamNumber: number | null;
   datesReady: boolean;
   admin: boolean;
   busy: boolean;
@@ -32,7 +36,10 @@ export function GanttChart({
   conflictIds: string[];
 }) {
   const today = localToday();
-  const rows = orderedIssues(issues);
+  const rows = planRows(
+    issues.map((issue) => ({ ...issue, number: issue.number ?? null, issueType: issue.issueType ?? null })),
+    workstreamNumber,
+  );
   const span = scheduleSpan(rows, today);
   const marks = [...new Set([0, Math.floor(span.days / 2), Math.max(span.days - 1, 0)])];
   const [draft, setDraft] = useState<{ issueId: string; startDate: string; finishDate: string } | null>(null);

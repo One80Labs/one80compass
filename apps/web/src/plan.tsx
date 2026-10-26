@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
-import { orderedIssues } from "../../../packages/domain/src/hierarchy";
+import { orderedIssues, planBands, planKind, planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import type { ProposedShift } from "../../../packages/domain/src/dependencies";
 import { scheduleConflicts } from "../../../packages/domain/src/dependencies";
 import type { MilestoneView } from "../../../packages/domain/src/milestones";
@@ -19,6 +19,7 @@ type PlanIssue = {
   effort: number | null;
   number: number | null;
   parentIssueId: string | null;
+  issueType: string | null;
   startDate: string | null;
   finishDate: string | null;
   predecessorIds: string[];
@@ -32,6 +33,7 @@ type PlanResponse = {
     owner: string;
     repo: string;
     projectNumber: number;
+    workstreamNumber: number | null;
     columns: string[];
     startFieldId: string | null;
     finishFieldId: string | null;
@@ -54,6 +56,9 @@ export function PlanPage({ session }: { session: Session | null }) {
   const [notice, setNotice] = useState(false);
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
   const issues = plan.data?.issues ?? [];
+  const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
+  const bands = planBands(issues.map(planNode), workstreamNumber);
+  const [addKind, setAddKind] = useState<Exclude<PlanKind, "workstream"> | null>(null);
   const done = issues.filter((issue) => issue.status === "Done").length;
   return (
     <>
@@ -71,20 +76,25 @@ export function PlanPage({ session }: { session: Session | null }) {
       <Tabs label="Plan" tabs={["Timeline view", "Gantt", "List view", "Dependencies", "Baselines"]} value={tab} onChange={setTab} />
       {tab === "Timeline view" && (
         <div>
-          {columns.map((column) => {
-            const rows = issues.filter((issue) => issue.status === column);
-            const width = issues.length === 0 ? 0 : Math.round((rows.length / issues.length) * 100);
+          {plan.data && <AddPlanBar onAdd={setAddKind} />}
+          {bands.map((band) => {
+            const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subissue");
+            const bandDone = tasks.filter((row) => row.status === "Done").length;
+            const width = tasks.length === 0 ? 0 : Math.round((bandDone / tasks.length) * 100);
+            const rows = band.key === "outside" ? band.rows : band.rows.filter((row) => row.kind !== "epic");
             return (
-              <div className={`phase ${rows.length ? "active" : ""}`} key={column}>
+              <div className="phase active" key={band.key}>
                 <div className="phase-head">
                   <div>
-                    <strong>{column}</strong>
+                    <strong>{band.title}</strong>
                     <br />
-                    <small>Dates are edited on the Gantt tab</small>
+                    <small>
+                      {bandDone} of {tasks.length} tasks Done
+                    </small>
                   </div>
                   <div className="phase-score">
                     <span>
-                      {rows.length} of {issues.length} tasks
+                      {bandDone} of {tasks.length} tasks
                     </span>
                     <div className="progressline">
                       <span style={{ width: `${width}%` }} />
@@ -95,7 +105,7 @@ export function PlanPage({ session }: { session: Session | null }) {
                 {rows.length > 0 && (
                   <div className="phase-tasks">
                     {rows.map((issue) => (
-                      <div className="taskline" key={issue.issueId}>
+                      <div className="taskline" key={issue.issueId} style={{ paddingLeft: issue.depth * 16 }}>
                         <span className={`status-icon ${issue.status === "Done" ? "done" : issue.status === "In Progress" ? "review" : ""}`}>
                           {issue.status === "Done" ? "●" : issue.status === "In Progress" ? "◐" : "○"}
                         </span>
@@ -110,23 +120,28 @@ export function PlanPage({ session }: { session: Session | null }) {
           {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, and effort can be edited in List view after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
-            A parent task comes from a GitHub sub-issue. It is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
+            The plan is grouped by Epic. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
           </p>
         </div>
       )}
       {tab === "Gantt" && (
-        <GanttChart
-          issues={issues}
-          datesReady={Boolean(plan.data?.settings?.startFieldId && plan.data.settings.finishFieldId)}
-          admin={Boolean(session?.adminGroup)}
-          busy={plan.busy}
-          onSchedule={(issueId, startDate, finishDate) => plan.schedule(issueId, startDate, finishDate)}
-          onEnsureFields={() => plan.ensureFields()}
-          conflictIds={overlapIds(issues)}
-        />
+        <div>
+          {plan.data && <AddPlanBar onAdd={setAddKind} />}
+          <GanttChart
+            issues={issues}
+            workstreamNumber={workstreamNumber}
+            datesReady={Boolean(plan.data?.settings?.startFieldId && plan.data.settings.finishFieldId)}
+            admin={Boolean(session?.adminGroup)}
+            busy={plan.busy}
+            onSchedule={(issueId, startDate, finishDate) => plan.schedule(issueId, startDate, finishDate)}
+            onEnsureFields={() => plan.ensureFields()}
+            conflictIds={overlapIds(issues)}
+          />
+        </div>
       )}
       {tab === "List view" && plan.data && (
         <div className="table-wrap">
+          <AddPlanBar onAdd={setAddKind} />
           <table>
             <thead>
               <tr>
@@ -137,10 +152,11 @@ export function PlanPage({ session }: { session: Session | null }) {
               </tr>
             </thead>
             <tbody>
-              {orderedIssues(plan.data.issues).map((issue) => (
+              {planRows(issues.map(planNode), workstreamNumber).map((issue) => (
                 <IssueRow
                   key={issue.issueId}
                   issue={issue}
+                  kind={issue.kind}
                   depth={issue.depth}
                   columns={columns}
                   defaulted={plan.data?.progress.defaultedIssueIds.includes(issue.issueId) ?? false}
@@ -196,6 +212,16 @@ export function PlanPage({ session }: { session: Session | null }) {
             </div>
           </div>
         </div>
+      )}
+      {addKind && (
+        <AddPlanDrawer
+          kind={addKind}
+          issues={issues}
+          workstreamNumber={workstreamNumber}
+          busy={plan.busy}
+          onClose={() => setAddKind(null)}
+          onCreate={(kind, title, parentIssueId) => plan.createPlanItem(kind, title, parentIssueId)}
+        />
       )}
       {notice && (
         <Notice
@@ -525,14 +551,104 @@ function IssueDrawer({
   );
 }
 
+const kindLabel: Record<PlanKind, string> = {
+  workstream: "Workstream",
+  epic: "Epic",
+  feature: "Feature",
+  issue: "Issue",
+  subissue: "Sub-issue",
+};
+
+function planNode(issue: PlanIssue): PlanIssue & { issueType: string | null; number: number | null } {
+  return { ...issue, issueType: issue.issueType ?? null, number: issue.number ?? null };
+}
+
+function AddPlanBar({ onAdd }: { onAdd: (kind: Exclude<PlanKind, "workstream">) => void }) {
+  return (
+    <div className="row">
+      <button className="btn small" type="button" onClick={() => onAdd("epic")}>
+        Add Epic
+      </button>
+      <button className="btn small" type="button" onClick={() => onAdd("feature")}>
+        Add Feature
+      </button>
+      <button className="btn small" type="button" onClick={() => onAdd("issue")}>
+        Add Issue
+      </button>
+      <button className="btn small" type="button" onClick={() => onAdd("subissue")}>
+        Add Sub-issue
+      </button>
+    </div>
+  );
+}
+
+function AddPlanDrawer({
+  kind,
+  issues,
+  workstreamNumber,
+  busy,
+  onClose,
+  onCreate,
+}: {
+  kind: Exclude<PlanKind, "workstream">;
+  issues: PlanIssue[];
+  workstreamNumber: number | null;
+  busy: boolean;
+  onClose: () => void;
+  onCreate: (kind: Exclude<PlanKind, "workstream">, title: string, parentIssueId: string | null) => Promise<void>;
+}) {
+  const [title, setTitle] = useState("");
+  const [parentIssueId, setParentIssueId] = useState("");
+  const nodes = issues.map(planNode);
+  const byId = new Map(nodes.map((issue) => [issue.issueId, issue]));
+  const parents = nodes.filter((issue) => {
+    const rowKind = planKind(issue, byId, workstreamNumber);
+    if (kind === "feature") return rowKind === "epic";
+    if (kind === "issue") return rowKind === "epic" || rowKind === "feature";
+    return rowKind === "issue";
+  });
+  return (
+    <EditDrawer
+      title={`Add ${kindLabel[kind]}`}
+      onClose={onClose}
+      saving={busy}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onCreate(kind, title, kind === "epic" ? null : parentIssueId || null).then(onClose, () => undefined);
+      }}
+    >
+      <label>
+        Title
+        <input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={256} />
+      </label>
+      {kind === "epic" && <p className="copy">This Epic nests under the Workstream issue.</p>}
+      {kind !== "epic" && (
+        <label>
+          Parent
+          <select value={parentIssueId} onChange={(event) => setParentIssueId(event.target.value)} required={kind !== "issue"}>
+            {kind === "issue" && <option value="">Workstream</option>}
+            {parents.map((issue) => (
+              <option key={issue.issueId} value={issue.issueId}>
+                {issue.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </EditDrawer>
+  );
+}
+
 function IssueRow({
   issue,
+  kind,
   depth,
   columns,
   defaulted,
   onSave,
 }: {
   issue: PlanIssue;
+  kind: PlanKind;
   depth: number;
   columns: string[];
   defaulted: boolean;
@@ -546,7 +662,7 @@ function IssueRow({
     <tr>
       <td style={{ paddingLeft: 12 + depth * 18 }}>
         <label>
-          {depth > 0 ? "Subtask" : issue.number ? `#${issue.number}` : "Title"}
+          {kindLabel[kind]}
           <input value={title} onChange={(event) => setTitle(event.target.value)} />
           {defaulted ? " Estimate defaults to 1 until you save a number." : ""}
         </label>
@@ -603,6 +719,7 @@ function GithubForm({
   const [owner, setOwner] = useState(settings?.owner ?? "");
   const [repo, setRepo] = useState(settings?.repo ?? "");
   const [projectNumber, setProjectNumber] = useState(settings ? String(settings.projectNumber) : "");
+  const [workstreamNumber, setWorkstreamNumber] = useState(settings?.workstreamNumber ? String(settings.workstreamNumber) : "");
   return (
     <form
       onSubmit={async (event) => {
@@ -611,7 +728,7 @@ function GithubForm({
         try {
           await api(`/projects/${projectId}/github`, session.idToken, {
             method: "PUT",
-            body: { owner, repo, projectNumber: Number(projectNumber) },
+            body: { owner, repo, projectNumber: Number(projectNumber), workstreamNumber: workstreamNumber.trim() ? Number(workstreamNumber) : null },
           });
           await onSaved();
         } catch (caught) {
@@ -621,7 +738,7 @@ function GithubForm({
     >
       <h2>GitHub project</h2>
       <p className="muted small">
-        For the current test board use owner One80Labs, repository one80compass, and project number 1. That board is an organization project. Issues are read from the repository named here. Columns follow the GitHub Status field, and Estimate is used when Effort is absent.
+        For the current test board use owner One80Labs, repository one80compass, and project number 1. That board is an organization project. Issues are read from the repository named here. The Workstream issue number is the plan root. It is not a row. Columns follow the GitHub Status field, and Estimate is used when Effort is absent.
       </p>
       <label>
         Owner
@@ -634,6 +751,10 @@ function GithubForm({
       <label>
         Project number
         <input value={projectNumber} onChange={(event) => setProjectNumber(event.target.value)} inputMode="numeric" required />
+      </label>
+      <label>
+        Workstream issue number
+        <input value={workstreamNumber} onChange={(event) => setWorkstreamNumber(event.target.value)} inputMode="numeric" />
       </label>
       <button className="btn" type="submit">Save GitHub mapping</button>
     </form>
@@ -812,6 +933,21 @@ function usePlan(session: Session | null) {
           body: { explanation },
         });
         await reload();
+      } catch (caught) {
+        setError(message(caught));
+        throw caught;
+      } finally {
+        setBusy(false);
+      }
+    },
+    async createPlanItem(kind: Exclude<PlanKind, "workstream">, title: string, parentIssueId: string | null) {
+      if (!session) return;
+      const before = new Set((data?.issues ?? []).map((issue) => issue.issueId));
+      setError(null);
+      setBusy(true);
+      try {
+        await api(`/projects/${projectId}/plan-items`, session.idToken, { method: "POST", body: { kind, title, parentIssueId } });
+        await poll((result) => result.issues.some((issue) => issue.title === title && !before.has(issue.issueId)));
       } catch (caught) {
         setError(message(caught));
         throw caught;

@@ -36,6 +36,7 @@ function applyIssueEvent(issues: PlanIssue[], settings: ProjectSettings, body: R
       : { milestone: current.milestone, milestoneId: current.milestoneId, milestoneDueOn: current.milestoneDueOn }),
     deletedAt: action === "deleted" ? now : action === "opened" || action === "reopened" ? null : current.deletedAt,
     parentIssueId: parentLink(action, body, issueId, current.parentIssueId),
+    issueType: issueTypeName(issue, current.issueType),
     updatedAt: now,
   };
   let result = upsert(issues, next);
@@ -61,6 +62,13 @@ function parentLink(action: string, body: Record<string, unknown>, issueId: stri
   const parent = record(body.parent_issue);
   const parentId = typeof parent?.node_id === "string" ? parent.node_id : null;
   return parentId && parentId !== issueId ? parentId : current;
+}
+
+function issueTypeName(issue: Record<string, unknown>, current: string | null): string | null {
+  if (!("type" in issue)) return current;
+  const type = record(issue.type);
+  const name = typeof type?.name === "string" ? type.name.trim() : "";
+  return name || null;
 }
 
 function applyProjectItem(issues: PlanIssue[], settings: ProjectSettings, body: Record<string, unknown>, now: string): PlanIssue[] | null {
@@ -103,6 +111,7 @@ function blankIssue(settings: ProjectSettings, issueId: string, now: string): Pl
     archived: false,
     deletedAt: null,
     parentIssueId: null,
+    issueType: null,
     milestone: null,
     milestoneId: null,
     milestoneDueOn: null,

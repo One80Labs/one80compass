@@ -12,4 +12,6 @@ A missing estimate still counts as 1 point in progress and is not written back t
 
 Date fields named Start and Finish are copied on reconcile and written back when a task is scheduled. An administrator can ask the worker to create those fields when they are missing. Clearing a date clears the GitHub field. Issue dependencies are GitHub blocked-by links. An approved schedule writes each moved task before the sync is marked ok.
 
-GitHub sub-issues are the parent link. When every active task under a parent is Done, this worker sets that parent to the project's Done status. When one of those tasks leaves Done, the parent moves to the first column that is not Done. Each of those writes is audited as `issue.parent_status`.
+GitHub sub-issues are the parent link. Reconciliation also reads the GitHub issue type. Workstream, Epic, and Feature are those type names. Issue and Sub-issue have no type. When every active task under a parent is Done, this worker sets that parent to the project's Done status. When one of those tasks leaves Done, the parent moves to the first column that is not Done. Each of those writes is audited as `issue.parent_status`.
+
+A new Epic, Feature, Issue, or Sub-issue is created in the mapped repository, linked to its parent, and added to the mapped project. Epic and Feature use the organization issue type of that name. If that type is missing, the sync error names it and no type is guessed.

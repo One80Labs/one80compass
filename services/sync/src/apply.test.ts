@@ -20,6 +20,7 @@ const settings: ProjectSettings = {
   statusOptions: [],
   doneStatuses: ["Done"],
   columns: ["Todo", "In Progress", "Done"],
+  workstreamNumber: null,
 };
 
 describe("applyGithubDelivery", () => {
@@ -44,6 +45,7 @@ describe("applyGithubDelivery", () => {
         startDate: null,
         finishDate: null,
         predecessorIds: [],
+        issueType: null,
         inProject: true,
         updatedAt: "2026-10-24T00:00:00.000Z",
       },

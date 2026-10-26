@@ -11,6 +11,10 @@ export type GitHubGateway = {
     change: { title?: string; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null },
   ): Promise<PlanIssue>;
   setDependency(settings: ProjectSettings, issue: PlanIssue, predecessorId: string, action: "add" | "remove"): Promise<PlanIssue>;
+  createPlanItem(
+    settings: ProjectSettings,
+    input: { kind: "epic" | "feature" | "issue" | "subissue"; title: string; parentIssueId: string | null; workstreamNumber: number | null },
+  ): Promise<void>;
 };
 
 type GraphItem = {
@@ -24,6 +28,7 @@ type GraphItem = {
     repository?: { nameWithOwner?: string } | null;
     milestone?: { id?: string; title?: string; dueOn?: string | null } | null;
     parent?: { id?: string } | null;
+    issueType?: { name?: string } | null;
     blockedBy?: { nodes?: ({ id?: string } | null)[] | null } | null;
   } | null;
   fieldValues?: { nodes?: FieldValue[] };
@@ -143,6 +148,48 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
       else ids.delete(predecessorId);
       return { ...issue, predecessorIds: [...ids], updatedAt: now().toISOString() };
     },
+    async createPlanItem(settings, input) {
+      const token = await installationToken(appId, privateKey, settings.owner, settings.repo);
+      if (!settings.projectNodeId) throw new Error("Sync the GitHub project before adding a row.");
+      const repo = await graphql<{ repository?: { id?: string } | null }>(token, REPO_ID, {
+        owner: settings.owner,
+        name: settings.repo,
+      });
+      const repositoryId = repo.repository?.id;
+      if (!repositoryId) throw new Error("The GitHub repository was not found.");
+      let issueTypeId: string | null = null;
+      if (input.kind === "epic" || input.kind === "feature") {
+        const name = input.kind === "epic" ? "Epic" : "Feature";
+        const types = await graphql<{ organization?: { issueTypes?: { nodes?: ({ id?: string; name?: string } | null)[] | null } | null } | null }>(
+          token,
+          ORG_ISSUE_TYPES,
+          { owner: settings.owner },
+        );
+        issueTypeId = types.organization?.issueTypes?.nodes?.find((item) => item?.name === name)?.id ?? null;
+        if (!issueTypeId) throw new Error(`GitHub has no issue type named ${name}.`);
+      }
+      const needsWorkstream = input.kind === "epic" || (input.kind === "issue" && !input.parentIssueId);
+      let workstreamId: string | null = null;
+      if (needsWorkstream) {
+        const found = await graphql<{ repository?: { issue?: { id?: string } | null } | null }>(token, REPO_ISSUE, {
+          owner: settings.owner,
+          name: settings.repo,
+          number: input.workstreamNumber,
+        });
+        workstreamId = found.repository?.issue?.id ?? null;
+        if (!workstreamId) throw new Error(`Workstream issue #${input.workstreamNumber} was not found.`);
+      }
+      const parentIssueId = needsWorkstream ? workstreamId : input.parentIssueId;
+      const created = await graphql<{ createIssue?: { issue?: { id?: string } | null } | null }>(
+        token,
+        issueTypeId ? CREATE_TYPED_ISSUE : CREATE_ISSUE,
+        issueTypeId ? { repo: repositoryId, title: input.title, type: issueTypeId } : { repo: repositoryId, title: input.title },
+      );
+      const issueId = created.createIssue?.issue?.id;
+      if (!issueId) throw new Error("GitHub did not create the issue.");
+      if (parentIssueId) await graphql(token, ADD_SUB_ISSUE, { parent: parentIssueId, child: issueId });
+      await graphql(token, ADD_PROJECT_ITEM, { project: settings.projectNodeId, content: issueId });
+    },
   };
 }
 
@@ -165,6 +212,7 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
     archived: Boolean(item.isArchived),
     deletedAt: null,
     parentIssueId: item.content?.parent?.id && item.content.parent.id !== item.content.id ? item.content.parent.id : null,
+    issueType: item.content?.issueType?.name?.trim() || null,
     milestone: item.content?.milestone?.title?.trim() || null,
     milestoneId: item.content?.milestone?.id?.trim() || null,
     milestoneDueOn: milestoneDue(item.content?.milestone?.dueOn),
@@ -189,7 +237,7 @@ const PROJECT_FIELDS = `
     nodes{
       id
       isArchived
-      content{... on Issue{id number title state repository{nameWithOwner} milestone{id title dueOn} parent{id} blockedBy(first:20){nodes{id}}}}
+      content{... on Issue{id number title state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} blockedBy(first:20){nodes{id}}}}
       fieldValues(first:30){nodes{
         ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
         ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
@@ -222,7 +270,7 @@ const PROJECT_PAGE_QUERY = `query($id:ID!,$cursor:String){
         nodes{
           id
           isArchived
-          content{... on Issue{id number title state repository{nameWithOwner} milestone{id title dueOn} parent{id} blockedBy(first:20){nodes{id}}}}
+          content{... on Issue{id number title state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} blockedBy(first:20){nodes{id}}}}
           fieldValues(first:30){nodes{
             ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
             ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
@@ -345,6 +393,34 @@ const ADD_BLOCKED_BY = `mutation($issue:ID!,$blocking:ID!){
 
 const REMOVE_BLOCKED_BY = `mutation($issue:ID!,$blocking:ID!){
   removeBlockedBy(input:{issueId:$issue,blockingIssueId:$blocking}){issue{id}}
+}`;
+
+const REPO_ID = `query($owner:String!,$name:String!){
+  repository(owner:$owner,name:$name){id}
+}`;
+
+const REPO_ISSUE = `query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){issue(number:$number){id}}
+}`;
+
+const ORG_ISSUE_TYPES = `query($owner:String!){
+  organization(login:$owner){issueTypes(first:30){nodes{id name}}}
+}`;
+
+const CREATE_ISSUE = `mutation($repo:ID!,$title:String!){
+  createIssue(input:{repositoryId:$repo,title:$title}){issue{id number}}
+}`;
+
+const CREATE_TYPED_ISSUE = `mutation($repo:ID!,$title:String!,$type:ID!){
+  createIssue(input:{repositoryId:$repo,title:$title,issueTypeId:$type}){issue{id number}}
+}`;
+
+const ADD_SUB_ISSUE = `mutation($parent:ID!,$child:ID!){
+  addSubIssue(input:{issueId:$parent,subIssueId:$child}){issue{id}}
+}`;
+
+const ADD_PROJECT_ITEM = `mutation($project:ID!,$content:ID!){
+  addProjectV2ItemById(input:{projectId:$project,contentId:$content}){item{id}}
 }`;
 
 async function installationToken(appId: string, privateKey: string, owner: string, repo: string): Promise<string> {

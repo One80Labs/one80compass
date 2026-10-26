@@ -6,7 +6,7 @@ import {
   type SyncMessage,
   type SyncState,
 } from "../../../packages/domain/src/index";
-import { parentDoneBlocked } from "../../../packages/domain/src/hierarchy";
+import { parentDoneBlocked, planKind } from "../../../packages/domain/src/hierarchy";
 import { dependencyCycle, dependencyReview } from "../../../packages/domain/src/dependencies";
 import { baselineSnapshot, type BaselineRecord } from "../../../packages/domain/src/baselines";
 import { isIsoDate } from "../../../packages/domain/src/schedule";
@@ -35,6 +35,8 @@ export async function handlePlan(ctx: PlanCtx): Promise<HttpResult | null> {
   if (override && ctx.method === "POST") return saveOverride(ctx, decodeURIComponent(override[1]));
   const scheduleFields = ctx.path.match(/^\/projects\/([^/]+)\/schedule-fields$/);
   if (scheduleFields && ctx.method === "POST") return ensureScheduleFields(ctx, decodeURIComponent(scheduleFields[1]));
+  const planItems = ctx.path.match(/^\/projects\/([^/]+)\/plan-items$/);
+  if (planItems && ctx.method === "POST") return createPlanItem(ctx, decodeURIComponent(planItems[1]));
   const removePredecessor = ctx.path.match(/^\/projects\/([^/]+)\/issues\/([^/]+)\/predecessors\/remove$/);
   if (removePredecessor && ctx.method === "POST") return setPredecessor(ctx, decodeURIComponent(removePredecessor[1]), decodeURIComponent(removePredecessor[2]), "remove");
   const addPredecessor = ctx.path.match(/^\/projects\/([^/]+)\/issues\/([^/]+)\/predecessors$/);
@@ -80,6 +82,10 @@ async function saveGithub(ctx: PlanCtx, projectId: string): Promise<HttpResult> 
     return json(400, { code: "VALIDATION", message: "owner, repo, and projectNumber are required.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
   const existing = await ctx.deps.store.getSettings(projectId);
+  const workstream = parseWorkstreamNumber(ctx.body, existing?.workstreamNumber ?? null);
+  if (workstream === "invalid") {
+    return json(400, { code: "VALIDATION", message: "Workstream issue number must be a positive integer.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
   const settings: ProjectSettings = {
     projectId,
     customerId: project.customerId,
@@ -98,6 +104,7 @@ async function saveGithub(ctx: PlanCtx, projectId: string): Promise<HttpResult> 
     statusOptions: existing?.statusOptions ?? [],
     doneStatuses: existing?.doneStatuses ?? [...DEFAULT_DONE_STATUSES],
     columns: existing?.columns ?? [...DEFAULT_COLUMNS],
+    workstreamNumber: workstream,
   };
   await ctx.deps.store.putSettings(settings);
   await ctx.deps.store.putAudit({
@@ -259,6 +266,66 @@ async function milestoneView(ctx: PlanCtx, projectId: string, milestoneKey: stri
 async function findMilestone(ctx: PlanCtx, projectId: string, view: { key: string; title: string }) {
   const records = await ctx.deps.store.listMilestones(projectId);
   return records.find((item) => item.milestoneKey === view.key || item.title === view.title) ?? null;
+}
+
+async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
+  const project = await readable(ctx, projectId);
+  if (!project) return notFound(ctx.correlationId);
+  const kind = ctx.body.kind;
+  const title = typeof ctx.body.title === "string" ? ctx.body.title.trim() : "";
+  if (kind !== "epic" && kind !== "feature" && kind !== "issue" && kind !== "subissue") {
+    return json(400, { code: "VALIDATION", message: "kind must be epic, feature, issue, or subissue.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (!title || title.length > 256) return json(400, { code: "VALIDATION", message: "A title is required.", correlationId: ctx.correlationId }, ctx.correlationId);
+  const settings = await ctx.deps.store.getSettings(projectId);
+  if (!settings) return json(400, { code: "VALIDATION", message: "Save the GitHub repository before adding a row.", correlationId: ctx.correlationId }, ctx.correlationId);
+  const issues = await ctx.deps.store.listIssues(projectId);
+  const byId = new Map(issues.map((issue) => [issue.issueId, issue]));
+  const parentId = typeof ctx.body.parentIssueId === "string" && ctx.body.parentIssueId ? ctx.body.parentIssueId : null;
+  const parent = parentId ? byId.get(parentId) : undefined;
+  if (parentId && !parent) return json(404, { code: "NOT_FOUND", message: "That parent is not on this plan.", correlationId: ctx.correlationId }, ctx.correlationId);
+  const parentKind = parent ? planKind(parent, byId, settings.workstreamNumber) : null;
+  if (kind === "epic" && !settings.workstreamNumber) {
+    return json(409, { code: "WORKSTREAM_NOT_SET", message: "Save the Workstream issue number before adding an Epic.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (kind === "feature" && (parentKind !== "epic" || parent?.number == null)) {
+    return json(409, { code: "PARENT_REQUIRED", message: "A Feature nests under an Epic that already has a GitHub number.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (kind === "issue" && parent && (parentKind !== "epic" && parentKind !== "feature" || parent.number == null)) {
+    return json(409, { code: "PARENT_REQUIRED", message: "An Issue nests under an Epic or a Feature.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (kind === "issue" && !parent && !settings.workstreamNumber) {
+    return json(409, { code: "WORKSTREAM_NOT_SET", message: "Save the Workstream issue number, or choose an Epic or Feature.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (kind === "subissue" && (parentKind !== "issue" || parent?.number == null)) {
+    return json(409, { code: "PARENT_REQUIRED", message: "A Sub-issue nests under an Issue.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
+  const idempotencyKey = ctx.deps.newId();
+  await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Adding the plan row.", ctx.deps.now().toISOString()));
+  await ctx.deps.enqueue({
+    type: "create-plan-item",
+    projectId,
+    idempotencyKey,
+    kind,
+    title,
+    parentIssueId: parent?.issueId ?? null,
+    workstreamNumber: settings.workstreamNumber,
+  });
+  await ctx.deps.store.putAudit({
+    eventId: ctx.deps.newId(),
+    customerId: project.customerId,
+    projectId,
+    actorUserId: ctx.principal.userId,
+    action: "plan.item_requested",
+    targetType: "issue",
+    targetId: idempotencyKey,
+    before: null,
+    after: { kind, title, parentIssueId: parent?.issueId ?? null },
+    at: ctx.deps.now().toISOString(),
+    correlationId: ctx.correlationId,
+  });
+  return json(202, { accepted: true, idempotencyKey }, ctx.correlationId);
 }
 
 async function ensureScheduleFields(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
@@ -467,6 +534,14 @@ function baselineRecord(
 function baselineOrder(left: BaselineRecord, right: BaselineRecord): number {
   const rank = { approved: 0, proposed: 1, rejected: 2 };
   return rank[left.state] - rank[right.state] || (left.number ?? 999) - (right.number ?? 999) || left.createdAt.localeCompare(right.createdAt);
+}
+
+function parseWorkstreamNumber(body: Record<string, unknown>, current: number | null): number | null | "invalid" {
+  if (!("workstreamNumber" in body)) return current;
+  const value = body.workstreamNumber;
+  if (value == null || value === "") return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) return "invalid";
+  return value;
 }
 
 function note(value: unknown): string | null {

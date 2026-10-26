@@ -24,7 +24,8 @@ Routes for the first slice:
 - `POST /projects/{projectId}/documents/{documentId}/delete` and `.../restore`
 - `GET /customers/{customerId}/audit`
 - `GET /projects/{projectId}/plan`
-- `PUT /projects/{projectId}/github`
+- `PUT /projects/{projectId}/github` saves the owner, repository, project number, and the Workstream issue number. An empty Workstream number clears it.
+- `POST /projects/{projectId}/plan-items` creates an Epic, Feature, Issue, or Sub-issue in GitHub. An Epic nests under the Workstream. A Feature nests under an Epic. An Issue nests under an Epic, a Feature, or the Workstream. A Sub-issue nests under an Issue. The Workstream number and the parent kind are checked before the request is queued.
 - `POST /projects/{projectId}/sync`
 - `POST /projects/{projectId}/progress-override`
 - `PATCH /projects/{projectId}/issues/{issueId}` sends title, status, effort, or Start and Finish dates to GitHub. A parent cannot be marked Done while a task under it is still open. Dates are refused until the GitHub project has date fields named Start and Finish. A date that would make a later task start too soon returns `DEPENDENCY_REVIEW` until the request approves those moves or keeps the later dates.

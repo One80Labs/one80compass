@@ -450,6 +450,7 @@ describe("api router", () => {
       startDate: null,
       finishDate: null,
       predecessorIds: [],
+      issueType: null,
       inProject: true,
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
@@ -704,6 +705,7 @@ describe("plan and webhooks", () => {
       startDate: null,
       finishDate: null,
       predecessorIds: [],
+      issueType: null,
       inProject: true,
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
@@ -743,6 +745,7 @@ describe("plan and webhooks", () => {
       startDate: null,
       finishDate: null,
       predecessorIds: [],
+      issueType: null,
       inProject: true,
       updatedAt: "2026-10-26T12:00:00.000Z",
     };
@@ -785,6 +788,7 @@ describe("plan and webhooks", () => {
       startDate: null,
       finishDate: null,
       predecessorIds: [],
+      issueType: null,
       inProject: true,
       updatedAt: "2026-10-26T12:00:00.000Z",
     });
@@ -807,6 +811,78 @@ describe("plan and webhooks", () => {
     );
     expect(missing.statusCode).toBe(409);
     expect(JSON.parse(missing.body).code).toBe("DATES_NOT_CONFIGURED");
+  });
+
+  it("refuses an Epic without a Workstream and a Feature whose parent is not an Epic", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    await handler(
+      event({
+        method: "PUT",
+        path: `/projects/${projectId}/github`,
+        claims: adminClaims,
+        body: { owner: "One80Labs", repo: "one80compass", projectNumber: 1 },
+      }),
+    );
+    const missing = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/plan-items`, claims: employeeClaims, body: { kind: "epic", title: "Billing" } }),
+    );
+    expect(JSON.parse(missing.body).code).toBe("WORKSTREAM_NOT_SET");
+    await handler(
+      event({
+        method: "PUT",
+        path: `/projects/${projectId}/github`,
+        claims: adminClaims,
+        body: { owner: "One80Labs", repo: "one80compass", projectNumber: 1, workstreamNumber: 10 },
+      }),
+    );
+    const queued = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/plan-items`, claims: employeeClaims, body: { kind: "epic", title: "Billing" } }),
+    );
+    expect(JSON.parse(queued.body).code).toBe("SYNC_NOT_CONFIGURED");
+    const customerId = store.projects[0].customerId;
+    store.issues.push({
+      issueId: "I_epic",
+      itemId: null,
+      projectId,
+      customerId,
+      number: 11,
+      title: "Billing",
+      status: "Ready",
+      effort: null,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      issueType: "Epic",
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
+      inProject: true,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    });
+    const feature = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/plan-items`,
+        claims: employeeClaims,
+        body: { kind: "feature", title: "Payments", parentIssueId: "I_missing" },
+      }),
+    );
+    expect(feature.statusCode).toBe(404);
+    const wrong = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/plan-items`,
+        claims: employeeClaims,
+        body: { kind: "subissue", title: "Charge", parentIssueId: "I_epic" },
+      }),
+    );
+    expect(JSON.parse(wrong.body).code).toBe("PARENT_REQUIRED");
   });
 
   it("asks for approval before a date change moves a later task and refuses a dependency loop", async () => {
@@ -832,6 +908,7 @@ describe("plan and webhooks", () => {
       statusOptions: [],
       doneStatuses: ["Done"],
       columns: ["Ready", "Done"],
+      workstreamNumber: null,
     });
     const base = {
       itemId: null,
@@ -842,6 +919,7 @@ describe("plan and webhooks", () => {
       archived: false,
       deletedAt: null,
       parentIssueId: null,
+      issueType: null,
       milestone: null,
       milestoneId: null,
       milestoneDueOn: null,
@@ -904,6 +982,7 @@ describe("plan and webhooks", () => {
       startDate: null,
       finishDate: null,
       predecessorIds: [],
+      issueType: null,
       inProject: true,
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
@@ -954,6 +1033,7 @@ describe("plan and webhooks", () => {
       startDate: null,
       finishDate: null,
       predecessorIds: [],
+      issueType: null,
       inProject: true,
       updatedAt: "2026-10-26T12:00:00.000Z",
     });
