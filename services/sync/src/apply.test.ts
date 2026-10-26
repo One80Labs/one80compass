@@ -46,6 +46,7 @@ describe("applyGithubDelivery", () => {
         finishDate: null,
         predecessorIds: [],
         issueType: null,
+        description: null,
         iterationTitle: null,
         iterationStart: null,
         iterationDuration: null,

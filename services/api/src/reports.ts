@@ -1,4 +1,4 @@
-import { canAccessProject, type Principal } from "../../../packages/authz/src/index";
+import { canAccessProject, canWriteProject, type Principal } from "../../../packages/authz/src/index";
 import type { ReportVersion, StatusReport } from "../../../packages/domain/src/index";
 import type { HandlerDeps, HttpResult } from "./router";
 
@@ -34,7 +34,8 @@ async function listReports(ctx: ReportCtx, projectId: string): Promise<HttpResul
 }
 
 async function createReport(ctx: ReportCtx, projectId: string): Promise<HttpResult> {
-  const project = await readable(ctx, projectId);
+  const project = await writable(ctx, projectId);
+  if (project === "view") return viewOnly(ctx.correlationId);
   if (!project) return notFound(ctx.correlationId);
   const title = text(ctx.body.title, 200);
   if (!title) return validation(ctx.correlationId, "title is required.");
@@ -66,6 +67,8 @@ async function getReport(ctx: ReportCtx, projectId: string, reportId: string): P
 async function updateReport(ctx: ReportCtx, projectId: string, reportId: string): Promise<HttpResult> {
   const report = await visible(ctx, projectId, reportId);
   if (!report) return notFound(ctx.correlationId);
+  const allowed = await writable(ctx, projectId);
+  if (allowed === "view") return viewOnly(ctx.correlationId);
   if (report.status !== "draft") return conflict(ctx.correlationId, "Only a draft can be edited. Start a revision to change a published report.");
   if (typeof ctx.body.body === "string" && ctx.body.body.length > 20000) return validation(ctx.correlationId, "body is too long.");
   const title = "title" in ctx.body ? text(ctx.body.title, 200) : report.title;
@@ -80,6 +83,8 @@ async function updateReport(ctx: ReportCtx, projectId: string, reportId: string)
 async function transition(ctx: ReportCtx, projectId: string, reportId: string, action: string): Promise<HttpResult> {
   const report = await visible(ctx, projectId, reportId);
   if (!report) return notFound(ctx.correlationId);
+  const allowed = await writable(ctx, projectId);
+  if (allowed === "view") return viewOnly(ctx.correlationId);
   const now = ctx.deps.now().toISOString();
   if (action === "submit" && report.status === "draft") return saveStatus(ctx, report, "in_review", "report.submitted", now);
   if (action === "approve" && report.status === "in_review") return saveStatus(ctx, report, "approved", "report.approved", now);
@@ -141,6 +146,18 @@ async function readable(ctx: ReportCtx, projectId: string) {
   const memberships = await ctx.deps.store.listMembershipsForUser(ctx.principal.userId);
   if (!canAccessProject(ctx.principal, project, memberships)) return null;
   return project;
+}
+
+async function writable(ctx: ReportCtx, projectId: string) {
+  const project = await readable(ctx, projectId);
+  if (!project) return null;
+  const memberships = await ctx.deps.store.listMembershipsForUser(ctx.principal.userId);
+  if (!canWriteProject(ctx.principal, project, memberships)) return "view" as const;
+  return project;
+}
+
+function viewOnly(correlationId: string): HttpResult {
+  return json(403, { code: "VIEW_ONLY", message: "View access can open this project and cannot change it.", correlationId }, correlationId);
 }
 
 function text(value: unknown, max: number): string | null {

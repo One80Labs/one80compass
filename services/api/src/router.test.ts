@@ -378,7 +378,7 @@ describe("api router", () => {
         name: "",
         customerId,
         customerName: "Acme",
-        access: "Employee",
+        access: "Contributor",
         allProjects: true,
         projects: [{ projectId: project.projectId, name: "Bridge" }],
         customerProjects: [{ projectId: project.projectId, name: "Bridge" }],
@@ -404,7 +404,7 @@ describe("api router", () => {
       userId: "user-a",
       email: "ada@example.com",
       name: "",
-      role: "employee",
+      role: "contributor",
       createdAt: "2026-10-24T12:00:00.000Z",
       projectIds: null,
     });
@@ -451,6 +451,7 @@ describe("api router", () => {
       finishDate: null,
       predecessorIds: [],
       issueType: null,
+      description: null,
       iterationTitle: null,
       iterationStart: null,
       iterationDuration: null,
@@ -652,7 +653,7 @@ describe("api router", () => {
       userId: "admin-1",
       email: "nick@one80labs.com",
       name: "Nick",
-      role: "employee",
+      role: "contributor",
       createdAt: "2026-10-24T12:00:00.000Z",
       projectIds: null,
     });
@@ -666,6 +667,51 @@ describe("api router", () => {
     );
     expect(adminEmail.statusCode).toBe(400);
   });
+
+  it("sets view access and keeps reading open", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const saved = await handler(
+      event({
+        method: "PATCH",
+        path: `/admin/customers/${store.projects[0].customerId}/members/user-a`,
+        claims: adminClaims,
+        body: { name: "Ada", email: "ada@example.com", projectIds: null, access: "View" },
+      }),
+    );
+    expect(saved.statusCode).toBe(200);
+    expect(JSON.parse(saved.body).access).toBe("View");
+    expect(store.memberships[0].role).toBe("view");
+
+    const open = await handler(event({ method: "GET", path: `/projects/${projectId}/plan`, claims: employeeClaims }));
+    expect(open.statusCode).toBe(200);
+    const upload = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents`,
+        claims: employeeClaims,
+        body: { name: "Notes", fileName: "notes.txt", contentType: "text/plain", sizeBytes: 12 },
+      }),
+    );
+    expect(upload.statusCode).toBe(403);
+    expect(JSON.parse(upload.body).code).toBe("VIEW_ONLY");
+    const issue = await handler(event({ method: "PATCH", path: `/projects/${projectId}/issues/missing`, claims: employeeClaims, body: { title: "Changed" } }));
+    expect(issue.statusCode).toBe(403);
+    const report = await handler(event({ method: "POST", path: `/projects/${projectId}/reports`, claims: employeeClaims, body: { title: "Week", body: "Notes" } }));
+    expect(report.statusCode).toBe(403);
+    const overview = await handler(event({ method: "PUT", path: `/projects/${projectId}/overview`, claims: employeeClaims, body: { notes: "No" } }));
+    expect(overview.statusCode).toBe(403);
+    const invalid = await handler(
+      event({
+        method: "PATCH",
+        path: `/admin/customers/${store.projects[0].customerId}/members/user-a`,
+        claims: adminClaims,
+        body: { name: "Ada", email: "ada@example.com", projectIds: null, access: "Owner" },
+      }),
+    );
+    expect(invalid.statusCode).toBe(400);
+  });
 });
 
 async function seedProject(handler: (event: HttpEvent) => Promise<{ statusCode: number; body: string }>, store: ReturnType<typeof memoryStore>) {
@@ -677,7 +723,7 @@ async function seedProject(handler: (event: HttpEvent) => Promise<{ statusCode: 
     userId: "user-a",
     email: "ada@example.com",
     name: "",
-    role: "employee",
+    role: "contributor",
     createdAt: "2026-10-24T12:00:00.000Z",
     projectIds: null,
   });
@@ -709,6 +755,7 @@ describe("plan and webhooks", () => {
       finishDate: null,
       predecessorIds: [],
       issueType: null,
+      description: null,
       iterationTitle: null,
       iterationStart: null,
       iterationDuration: null,
@@ -752,6 +799,7 @@ describe("plan and webhooks", () => {
       finishDate: null,
       predecessorIds: [],
       issueType: null,
+      description: null,
       iterationTitle: null,
       iterationStart: null,
       iterationDuration: null,
@@ -798,6 +846,7 @@ describe("plan and webhooks", () => {
       finishDate: null,
       predecessorIds: [],
       issueType: null,
+      description: null,
       iterationTitle: null,
       iterationStart: null,
       iterationDuration: null,
@@ -868,6 +917,7 @@ describe("plan and webhooks", () => {
       deletedAt: null,
       parentIssueId: null,
       issueType: "Epic",
+      description: null,
       iterationTitle: null,
       iterationStart: null,
       iterationDuration: null,
@@ -935,6 +985,7 @@ describe("plan and webhooks", () => {
       deletedAt: null,
       parentIssueId: null,
       issueType: null,
+      description: null,
       iterationTitle: null,
       iterationStart: null,
       iterationDuration: null,
@@ -1001,6 +1052,7 @@ describe("plan and webhooks", () => {
       finishDate: null,
       predecessorIds: [],
       issueType: null,
+      description: null,
       iterationTitle: null,
       iterationStart: null,
       iterationDuration: null,
@@ -1055,6 +1107,7 @@ describe("plan and webhooks", () => {
       finishDate: null,
       predecessorIds: [],
       issueType: null,
+      description: null,
       iterationTitle: null,
       iterationStart: null,
       iterationDuration: null,

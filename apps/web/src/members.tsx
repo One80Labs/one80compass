@@ -13,7 +13,7 @@ type Member = {
   name: string;
   customerId: string;
   customerName: string;
-  access: "Administrator" | "Employee";
+  access: "Administrator" | "Contributor" | "View";
   allProjects: boolean;
   projects: ProjectRef[];
   customerProjects: ProjectRef[];
@@ -46,7 +46,7 @@ export function MembersPage({ session }: { session: Session | null }) {
       {error && <p className="error">{error}</p>}
       <section className="panel">
         <p className="small muted">
-          Edit sets the name, sign-in email, and projects. All projects includes ones added later. An administrator can open every project. Owner, Contributor, and Viewer are a later release.
+          Edit sets the name, sign-in email, projects, and access. A Contributor can edit, add, and upload. View can open the same screens and cannot change data. An administrator can open every project. All projects includes ones added later.
         </p>
         <div className="table-wrap">
           <table>
@@ -77,7 +77,7 @@ export function MembersPage({ session }: { session: Session | null }) {
                     <td>{member.customerName}</td>
                     <td>{member.allProjects ? "All projects" : member.projects.length ? member.projects.map((project) => project.name).join(", ") : "No projects"}</td>
                     <td>
-                      <span className={member.access === "Administrator" ? "pill good" : "pill"}>{member.access}</span>
+                      <span className={member.access === "Administrator" ? "pill good" : member.access === "View" ? "pill" : "pill blue"}>{member.access}</span>
                     </td>
                     <td className="row-action">
                       <EditRowButton label={`Edit ${label}`} onClick={() => setEditing(member)} />
@@ -128,6 +128,7 @@ function MemberDrawer({
   const [email, setEmail] = useState(member.email);
   const [allProjects, setAllProjects] = useState(member.allProjects);
   const [projectIds, setProjectIds] = useState(member.projects.map((project) => project.projectId));
+  const [access, setAccess] = useState<"Contributor" | "View">(member.access === "View" ? "View" : "Contributor");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -150,6 +151,7 @@ function MemberDrawer({
           name,
           email: administrator ? member.email : email,
           projectIds: administrator || allProjects ? null : projectIds,
+          access: administrator ? "Contributor" : access,
         },
       });
       onSaved(saved);
@@ -191,6 +193,14 @@ function MemberDrawer({
               </label>
             ))}
             <p>All projects includes ones added later.</p>
+            <label>
+              Access
+              <select className="field" value={access} onChange={(event) => setAccess(event.target.value as "Contributor" | "View")}>
+                <option value="Contributor">Contributor</option>
+                <option value="View">View</option>
+              </select>
+            </label>
+            <p>Contributor can edit, add, and upload. View can see the screens and data and cannot change them.</p>
           </>
         )}
         {error && <p className="error">{error}</p>}

@@ -16,6 +16,7 @@ import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs } from "./ui";
 type PlanIssue = {
   issueId: string;
   title: string;
+  description?: string | null;
   status: string;
   effort: number | null;
   number: number | null;
@@ -31,7 +32,7 @@ type PlanIssue = {
   archived?: boolean;
   deletedAt?: string | null;
 };
-type IssueEdit = { title: string; status: string; effort: number | null; startDate?: string | null; finishDate?: string | null };
+type IssueEdit = { title: string; description?: string | null; status: string; effort: number | null; startDate?: string | null; finishDate?: string | null };
 type PlanResponse = {
   settings: {
     owner: string;
@@ -55,7 +56,9 @@ const defaultColumns = ["Todo", "In Progress", "Done"];
 export function PlanPage({ session }: { session: Session | null }) {
   const plan = usePlan(session);
   const { projectId = "" } = useParams();
-  const name = usePortal().projects.find((item) => item.projectId === projectId)?.name ?? "this project";
+  const portal = usePortal();
+  const canWrite = portal.canWrite;
+  const name = portal.projects.find((item) => item.projectId === projectId)?.name ?? "this project";
   const [tab, setTab] = useState("Timeline view");
   const [notice, setNotice] = useState(false);
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
@@ -63,6 +66,8 @@ export function PlanPage({ session }: { session: Session | null }) {
   const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
   const bands = planBands(issues.map(planNode), workstreamNumber);
   const [addKind, setAddKind] = useState<Exclude<PlanKind, "workstream"> | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editing = issues.find((issue) => issue.issueId === editingId) ?? null;
   const done = issues.filter((issue) => issue.status === "Done").length;
   return (
     <>
@@ -70,18 +75,20 @@ export function PlanPage({ session }: { session: Session | null }) {
         title="Project plan."
         subtitle={`Milestones, phases, and tasks for ${name}.`}
         action={
-          <button className="btn primary" type="button" onClick={() => setNotice(true)}>
-            Add milestone
-          </button>
+          canWrite ? (
+            <button className="btn primary" type="button" onClick={() => setNotice(true)}>
+              Add milestone
+            </button>
+          ) : undefined
         }
       />
-      <PlanStatus plan={plan} session={session} />
-      {plan.data && <MilestonePanel session={session} projectId={projectId} milestones={plan.data.milestones ?? []} onReload={plan.reload} />}
+      <PlanStatus plan={plan} session={session} canWrite={canWrite} />
+      {plan.data && <MilestonePanel session={session} projectId={projectId} canWrite={canWrite} milestones={plan.data.milestones ?? []} onReload={plan.reload} />}
       <Tabs label="Plan" tabs={["Timeline view", "Gantt", "List view", "Dependencies", "Baselines"]} value={tab} onChange={setTab} />
       {tab === "Timeline view" && (
         <div>
-          {plan.data && <AddPlanBar onAdd={setAddKind} />}
-          <TimelineChart bands={bands} />
+          {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
+          <TimelineChart bands={bands} onEdit={canWrite ? setEditingId : null} />
           {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, and effort can be edited in List view after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
@@ -91,11 +98,12 @@ export function PlanPage({ session }: { session: Session | null }) {
       )}
       {tab === "Gantt" && (
         <div>
-          {plan.data && <AddPlanBar onAdd={setAddKind} />}
+          {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
           <GanttChart
             issues={issues}
             workstreamNumber={workstreamNumber}
             datesReady={Boolean(plan.data?.settings?.startFieldId && plan.data.settings.finishFieldId)}
+            readOnly={!canWrite}
             admin={Boolean(session?.adminGroup)}
             busy={plan.busy}
             onSchedule={(issueId, startDate, finishDate) => plan.schedule(issueId, startDate, finishDate)}
@@ -106,7 +114,7 @@ export function PlanPage({ session }: { session: Session | null }) {
       )}
       {tab === "List view" && plan.data && (
         <div className="table-wrap">
-          <AddPlanBar onAdd={setAddKind} />
+          {canWrite && <AddPlanBar onAdd={setAddKind} />}
           <table>
             <thead>
               <tr>
@@ -125,6 +133,7 @@ export function PlanPage({ session }: { session: Session | null }) {
                   depth={issue.depth}
                   columns={columns}
                   defaulted={plan.data?.progress.defaultedIssueIds.includes(issue.issueId) ?? false}
+                  readOnly={!canWrite}
                   onSave={plan.saveIssue}
                 />
               ))}
@@ -133,10 +142,11 @@ export function PlanPage({ session }: { session: Session | null }) {
           {plan.data.issues.length === 0 && <div className="empty">No issues yet. Connect the GitHub project and wait for sync.</div>}
         </div>
       )}
-      {tab === "Dependencies" && <DependenciesPanel issues={issues} busy={plan.busy} onLink={plan.linkPredecessor} />}
+      {tab === "Dependencies" && <DependenciesPanel issues={issues} busy={plan.busy} readOnly={!canWrite} onLink={plan.linkPredecessor} />}
       {tab === "Baselines" && (
         <BaselinesPanel
           admin={Boolean(session?.adminGroup)}
+          canWrite={canWrite}
           issues={issues.map((issue) => ({
             issueId: issue.issueId,
             title: issue.title,
@@ -188,6 +198,18 @@ export function PlanPage({ session }: { session: Session | null }) {
           onCreate={(kind, title, parentIssueId) => plan.createPlanItem(kind, title, parentIssueId)}
         />
       )}
+      {editing && canWrite && (
+        <IssueDrawer
+          key={editing.issueId}
+          issue={editing}
+          columns={columns}
+          onClose={() => setEditingId(null)}
+          onSave={async (issueId, change) => {
+            await plan.saveIssue(issueId, change);
+            setEditingId(null);
+          }}
+        />
+      )}
       {notice && (
         <Notice
           title="Add milestone"
@@ -202,7 +224,9 @@ export function PlanPage({ session }: { session: Session | null }) {
 export function KanbanPage({ session }: { session: Session | null }) {
   const plan = usePlan(session);
   const { projectId = "" } = useParams();
-  const name = usePortal().projects.find((item) => item.projectId === projectId)?.name ?? "this project";
+  const portal = usePortal();
+  const canWrite = portal.canWrite;
+  const name = portal.projects.find((item) => item.projectId === projectId)?.name ?? "this project";
   const [filter, setFilter] = useState("All tasks");
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState(false);
@@ -305,12 +329,14 @@ export function KanbanPage({ session }: { session: Session | null }) {
         title="Kanban board."
         subtitle={`Track and manage project work for ${name}.`}
         action={
-          <button className="btn primary" type="button" onClick={() => setNotice(true)}>
-            Add task
-          </button>
+          canWrite ? (
+            <button className="btn primary" type="button" onClick={() => setNotice(true)}>
+              Add task
+            </button>
+          ) : undefined
         }
       />
-      <PlanStatus plan={plan} session={session} />
+      <PlanStatus plan={plan} session={session} canWrite={canWrite} />
       <div className="toolbar">
         {["All tasks", "My tasks", "Due this week"].map((item) => (
           <button key={item} className={filter === item ? "btn small primary" : "btn small"} type="button" onClick={() => setFilter(item)}>
@@ -330,11 +356,14 @@ export function KanbanPage({ session }: { session: Session | null }) {
               key={column}
               aria-label={column}
               onDragOver={(event) => {
+                if (!canWrite) return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "move";
                 if (overColumn !== column) setOverColumn(column);
               }}
-              onDrop={(event) => dropOn(event, column)}
+              onDrop={(event) => {
+                if (canWrite) dropOn(event, column);
+              }}
             >
               <div className="kanban-header">
                 <span>{column}</span>
@@ -344,9 +373,9 @@ export function KanbanPage({ session }: { session: Session | null }) {
                 <article
                   className={draggingId === issue.issueId ? "kanban-card dragging" : "kanban-card"}
                   key={issue.issueId}
-                  draggable
-                  aria-roledescription="draggable"
-                  aria-label={`${issue.title}, ${shownStatus(issue)}. Drag to another column to change status.`}
+                  draggable={canWrite}
+                  aria-roledescription={canWrite ? "draggable" : undefined}
+                  aria-label={canWrite ? `${issue.title}, ${shownStatus(issue)}. Drag to another column to change status.` : `${issue.title}, ${shownStatus(issue)}.`}
                   onDragStart={(event) => startDrag(event, issue)}
                   onDragEnd={() => {
                     setDraggingId(null);
@@ -355,7 +384,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
                 >
                   <div className="kanban-card-head">
                     <strong>{issue.title}</strong>
-                    <EditRowButton label={`Edit ${issue.title}`} onClick={() => setEditing(issue)} />
+                    {canWrite && <EditRowButton label={`Edit ${issue.title}`} onClick={() => setEditing(issue)} />}
                   </div>
                   <Pill tone="blue">{issue.effort == null ? "Unestimated" : `${issue.effort} pts`}</Pill>
                   <div className="kanban-foot">
@@ -374,7 +403,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
           onClose={() => setNotice(false)}
         />
       )}
-      {editing && (
+      {editing && canWrite && (
         <IssueDrawer
           key={editing.issueId}
           issue={editing}
@@ -390,7 +419,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
   );
 }
 
-function PlanStatus({ plan, session }: { plan: ReturnType<typeof usePlan>; session: Session | null }) {
+function PlanStatus({ plan, session, canWrite }: { plan: ReturnType<typeof usePlan>; session: Session | null; canWrite: boolean }) {
   const { projectId = "" } = useParams();
   return (
     <>
@@ -403,7 +432,7 @@ function PlanStatus({ plan, session }: { plan: ReturnType<typeof usePlan>; sessi
             {plan.data.sync.detail ? ` — ${plan.data.sync.detail}` : ""}
             {plan.data.override ? ` Override: ${plan.data.override.percent}% (${plan.data.override.explanation}).` : ""}
           </p>
-          {session && plan.data.settings && (
+          {canWrite && session && plan.data.settings && (
             <button className="btn small" type="button" onClick={() => plan.sync().catch((caught) => plan.setError(message(caught)))}>
               Sync from GitHub
             </button>
@@ -413,7 +442,7 @@ function PlanStatus({ plan, session }: { plan: ReturnType<typeof usePlan>; sessi
       {plan.data && session?.adminGroup && (
         <GithubForm projectId={projectId} session={session} settings={plan.data.settings} onSaved={plan.reload} onError={plan.setError} />
       )}
-      {session && plan.data && (
+      {canWrite && session && plan.data && (
         <form
           className="toolbar"
           onSubmit={(event) => {
@@ -449,6 +478,8 @@ function IssueDrawer({
   onSave: (issueId: string, change: IssueEdit) => Promise<void>;
 }) {
   const [title, setTitle] = useState(issue.title);
+  const [description, setDescription] = useState(issue.description ?? "");
+  const [descriptionOpen, setDescriptionOpen] = useState((issue.description ?? "").length <= 200);
   const [status, setStatus] = useState(issue.status);
   const [effort, setEffort] = useState(issue.effort == null ? "" : String(issue.effort));
   const [startDate, setStartDate] = useState(issue.startDate ?? "");
@@ -469,6 +500,7 @@ function IssueDrawer({
     try {
       await onSave(issue.issueId, {
         title,
+        description: description.trim() ? description : null,
         status,
         effort: parsed,
         ...(startDate !== (issue.startDate ?? "") ? { startDate: startDate || null } : {}),
@@ -482,12 +514,13 @@ function IssueDrawer({
   }
 
   return (
-    <EditDrawer title={issue.number ? `Issue #${issue.number}` : "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
-      <p>Title, status, effort, and dates are sent to GitHub. Estimate is used when the project has no Effort field. Start and Finish are the date fields. A parent stays open until every task under it is Done.</p>
+    <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
+      <p>Title, description, status, effort, and dates are sent to GitHub. Estimate is used when the project has no Effort field. Start and Finish are the date fields. A parent stays open until every task under it is Done.</p>
       <label>
         Title
         <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={200} />
       </label>
+      <DescriptionField value={description} expanded={descriptionOpen} onExpanded={setDescriptionOpen} onChange={setDescription} />
       <label>
         Status
         <select className="field" value={status} onChange={(event) => setStatus(event.target.value)} required>
@@ -513,6 +546,61 @@ function IssueDrawer({
       </label>
       {error && <p className="error">{error}</p>}
     </EditDrawer>
+  );
+}
+
+const DESCRIPTION_PREVIEW = 200;
+
+function DescriptionField({
+  value,
+  expanded,
+  onExpanded,
+  onChange,
+}: {
+  value: string;
+  expanded: boolean;
+  onExpanded: (expanded: boolean) => void;
+  onChange: (value: string) => void;
+}) {
+  const long = value.length > DESCRIPTION_PREVIEW;
+  const collapsed = long && !expanded;
+  return (
+    <label className="description-field">
+      <span className="description-heading">
+        Description
+        {long && (
+          <button
+            className="icon-button"
+            type="button"
+            aria-expanded={expanded}
+            aria-label={expanded ? "Show the first 200 characters" : "Show the rest of the description"}
+            onClick={() => onExpanded(!expanded)}
+          >
+            <ExpandIcon expanded={expanded} />
+          </button>
+        )}
+      </span>
+      <textarea
+        className="field"
+        value={collapsed ? value.slice(0, DESCRIPTION_PREVIEW) : value}
+        readOnly={collapsed}
+        rows={collapsed ? 4 : Math.min(16, Math.max(6, Math.ceil(value.length / 70)))}
+        maxLength={65000}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function ExpandIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      {expanded ? (
+        <path fill="currentColor" d="M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
+      ) : (
+        <path fill="currentColor" d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
+      )}
+    </svg>
   );
 }
 
@@ -610,6 +698,7 @@ function IssueRow({
   depth,
   columns,
   defaulted,
+  readOnly,
   onSave,
 }: {
   issue: PlanIssue;
@@ -617,12 +706,28 @@ function IssueRow({
   depth: number;
   columns: string[];
   defaulted: boolean;
+  readOnly: boolean;
   onSave: (issueId: string, change: { title: string; status: string; effort: number | null }) => Promise<void>;
 }) {
   const [title, setTitle] = useState(issue.title);
   const [status, setStatus] = useState(issue.status);
   const [effort, setEffort] = useState(issue.effort == null ? "" : String(issue.effort));
   const choices = columns.includes(status) || !status ? columns : [status, ...columns];
+  if (readOnly) {
+    return (
+      <tr>
+        <td style={{ paddingLeft: 12 + depth * 18 }}>
+          {kindLabel[kind]} {issue.title}
+          {defaulted ? " Estimate defaults to 1." : ""}
+        </td>
+        <td>
+          <Pill tone={status === "Done" ? "good" : status === "In Progress" ? "orange" : "blue"}>{issue.status || "No status"}</Pill>
+        </td>
+        <td>{issue.effort == null ? "Unestimated" : issue.effort}</td>
+        <td />
+      </tr>
+    );
+  }
   return (
     <tr>
       <td style={{ paddingLeft: 12 + depth * 18 }}>
@@ -970,6 +1075,7 @@ function scheduleLabel(issue: Parameters<typeof scheduleText>[0]): string {
 
 function TimelineChart({
   bands,
+  onEdit,
 }: {
   bands: {
     key: string;
@@ -987,6 +1093,7 @@ function TimelineChart({
       iterationDuration?: number | null;
     }[];
   }[];
+  onEdit: ((issueId: string) => void) | null;
 }) {
   const rangesByBand = bands.map((band) => chartRanges(band.rows));
   const span = scheduleSpan(
@@ -1000,6 +1107,7 @@ function TimelineChart({
     <div className="timeline-chart">
       <div className="timeline-scale">
         <span className="muted small">Schedule</span>
+        <span />
         <div className="gantt-days timeline-days">
           {marks.map((offset) => (
             <span key={offset} style={{ left: `${(offset / span.days) * 100}%` }}>
@@ -1013,7 +1121,8 @@ function TimelineChart({
         const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subissue");
         const bandDone = tasks.filter((row) => row.status === "Done").length;
         const width = tasks.length === 0 ? 0 : Math.round((bandDone / tasks.length) * 100);
-        const header = band.rows[0]?.kind === "epic" ? ranges[0] : unionRange(ranges);
+        const epic = band.rows[0]?.kind === "epic" ? band.rows[0] : null;
+        const header = epic ? ranges[0] : unionRange(ranges);
         const rows =
           band.key === "outside"
             ? band.rows.map((row, index) => ({ row, range: ranges[index] }))
@@ -1022,7 +1131,9 @@ function TimelineChart({
           <div className="phase active" key={band.key}>
             <div className="timeline-row">
               <div>
-                <strong>{band.title}</strong>
+                <div className="taskline">
+                  <strong>{band.title}</strong>
+                </div>
                 <div className="phase-score">
                   <span>
                     {bandDone} of {tasks.length} tasks Done
@@ -1032,6 +1143,9 @@ function TimelineChart({
                   </div>
                   <strong>{width}%</strong>
                 </div>
+              </div>
+              <div className="timeline-status">
+                {epic && <TimelineStatus title={epic.title} status={epic.status} issueId={epic.issueId} onEdit={onEdit} />}
               </div>
               <ScheduleBar range={header} span={span} summary />
             </div>
@@ -1043,10 +1157,10 @@ function TimelineChart({
                       <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
                         {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
                       </span>
-                      <span>
-                        {row.title}
-                        {scheduleText(row) !== "Not scheduled" && <span className="muted small"> {scheduleText(row)}</span>}
-                      </span>
+                      <span>{row.title}</span>
+                    </div>
+                    <div className="timeline-status">
+                      <TimelineStatus title={row.title} status={row.status} issueId={row.issueId} onEdit={onEdit} />
                     </div>
                     <ScheduleBar range={range} span={span} summary={row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration)} />
                   </div>
@@ -1087,6 +1201,13 @@ function unionRange(ranges: (ScheduledRange | null)[]): ScheduledRange | null {
   };
 }
 
+function statusTone(status: string): "" | "good" | "orange" | "blue" {
+  const name = status.trim().toLowerCase();
+  if (name === "done") return "good";
+  if (name === "in progress" || name === "in review") return "orange";
+  return "blue";
+}
+
 function shortDate(iso: string): string {
   const [, month, day] = iso.split("-");
   return `${Number(month)}/${Number(day)}`;
@@ -1117,13 +1238,35 @@ function overlapIds(issues: PlanIssue[]): string[] {
     .map((conflict) => conflict.issueId);
 }
 
+function TimelineStatus({
+  title,
+  status,
+  issueId,
+  onEdit,
+}: {
+  title: string;
+  status: string;
+  issueId: string;
+  onEdit: ((issueId: string) => void) | null;
+}) {
+  const pill = <Pill tone={statusTone(status)}>{status || "No status"}</Pill>;
+  if (!onEdit) return pill;
+  return (
+    <button className="timeline-status-btn" type="button" aria-label={`Edit ${title}`} onClick={() => onEdit(issueId)}>
+      {pill}
+    </button>
+  );
+}
+
 function DependenciesPanel({
   issues,
   busy,
+  readOnly,
   onLink,
 }: {
   issues: PlanIssue[];
   busy: boolean;
+  readOnly: boolean;
   onLink: (issueId: string, predecessorId: string, action: "add" | "remove") => Promise<void>;
 }) {
   const rows = orderedIssues(issues).map((issue) => ({ ...issue, predecessorIds: issue.predecessorIds ?? [] }));
@@ -1145,10 +1288,12 @@ function DependenciesPanel({
             {predecessors.length === 0 && <p className="small muted">No predecessor.</p>}
             {predecessors.map((predecessor) => (
               <p className="small" key={predecessor.issueId}>
-                After {predecessor.title}.{" "}
-                <button className="btn small" type="button" disabled={busy} onClick={() => void onLink(issue.issueId, predecessor.issueId, "remove")}>
-                  Remove
-                </button>
+                After {predecessor.title}.
+                {!readOnly && (
+                  <button className="btn small" type="button" disabled={busy} onClick={() => void onLink(issue.issueId, predecessor.issueId, "remove")}>
+                    Remove
+                  </button>
+                )}
               </p>
             ))}
             {notes.map((note) => (
@@ -1156,7 +1301,7 @@ function DependenciesPanel({
                 {note.reason === "overlap" ? `Starts before ${note.predecessorTitle} finishes.` : `Not scheduled after ${note.predecessorTitle}.`}
               </p>
             ))}
-            <PredecessorForm choices={choices} busy={busy} onAdd={(predecessorId) => onLink(issue.issueId, predecessorId, "add")} />
+            {!readOnly && <PredecessorForm choices={choices} busy={busy} onAdd={(predecessorId) => onLink(issue.issueId, predecessorId, "add")} />}
           </article>
         );
       })}
@@ -1208,11 +1353,13 @@ const milestoneLabel = { open: "Open", ready: "Ready for confirmation", confirme
 export function MilestonePanel({
   session,
   projectId,
+  canWrite,
   milestones,
   onReload,
 }: {
   session: Session | null;
   projectId: string;
+  canWrite: boolean;
   milestones: MilestoneView[];
   onReload: () => Promise<void>;
 }) {
@@ -1273,12 +1420,12 @@ export function MilestonePanel({
           {milestone.state === "confirmed" && milestone.workOpen && (
             <p className="copy">A task on this milestone is open again. Reopen the confirmation and include the reason.</p>
           )}
-          {session && milestone.state === "ready" && (
+          {canWrite && session && milestone.state === "ready" && (
             <button className="btn small" type="button" disabled={pending === milestone.key} onClick={() => confirm(milestone.key)}>
               Confirm milestone
             </button>
           )}
-          {session && milestone.state === "confirmed" && (
+          {canWrite && session && milestone.state === "confirmed" && (
             <form
               className="row"
               onSubmit={(event) => {

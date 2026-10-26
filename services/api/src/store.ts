@@ -1,6 +1,7 @@
 import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import {
   isModuleKey,
+  memberRole,
   type ApplicationLink,
   type AuditEvent,
   type Customer,
@@ -642,7 +643,7 @@ function asMembership(item: Item): Membership {
     userId: String(item.userId),
     email: String(item.email),
     name: typeof item.name === "string" ? item.name : "",
-    role: "employee",
+    role: memberRole(item.role),
     createdAt: String(item.createdAt),
     projectIds: Array.isArray(savedProjects) ? savedProjects.map(String) : null,
   };
@@ -760,6 +761,7 @@ function asIssue(item: Item): PlanIssue {
     customerId: String(item.customerId),
     number: item.number == null ? null : Number(item.number),
     title: String(item.title),
+    description: typeof item.description === "string" && item.description.trim() ? item.description : null,
     status: String(item.status ?? ""),
     effort: item.effort == null ? null : Number(item.effort),
     issueState: item.issueState === "closed" ? "closed" : "open",

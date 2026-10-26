@@ -8,7 +8,7 @@ export type GitHubGateway = {
   updateIssue(
     settings: ProjectSettings,
     issue: PlanIssue,
-    change: { title?: string; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null },
+    change: { title?: string; description?: string | null; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null },
   ): Promise<PlanIssue>;
   setDependency(settings: ProjectSettings, issue: PlanIssue, predecessorId: string, action: "add" | "remove"): Promise<PlanIssue>;
   createPlanItem(
@@ -24,6 +24,7 @@ type GraphItem = {
     id?: string;
     number?: number;
     title?: string;
+    body?: string | null;
     state?: string;
     repository?: { nameWithOwner?: string } | null;
     milestone?: { id?: string; title?: string; dueOn?: string | null } | null;
@@ -115,9 +116,13 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
     async updateIssue(settings, issue, change) {
       const token = await installationToken(appId, privateKey, settings.owner, settings.repo);
       const next = { ...issue, updatedAt: now().toISOString() };
-      if (change.title && issue.number != null) {
-        await github(token, `/repos/${settings.owner}/${settings.repo}/issues/${issue.number}`, { title: change.title });
-        next.title = change.title;
+      const issuePatch: { title?: string; body?: string } = {};
+      if (change.title) issuePatch.title = change.title;
+      if (change.description !== undefined) issuePatch.body = change.description ?? "";
+      if (issue.number != null && Object.keys(issuePatch).length > 0) {
+        await github(token, `/repos/${settings.owner}/${settings.repo}/issues/${issue.number}`, issuePatch, "PATCH");
+        if (issuePatch.title) next.title = issuePatch.title;
+        if (change.description !== undefined) next.description = change.description?.trim() ? change.description : null;
       }
       if (change.status && settings.projectNodeId && settings.statusFieldId && issue.itemId) {
         const option = settings.statusOptions.find((item) => item.name === change.status);
@@ -209,6 +214,7 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
     customerId: settings.customerId,
     number: item.content?.number ?? null,
     title: item.content?.title ?? "Untitled",
+    description: item.content?.body?.trim() ? item.content.body : null,
     status,
     effort: effortValue?.number ?? null,
     issueState: item.content?.state === "CLOSED" ? "closed" : "open",
@@ -249,7 +255,7 @@ const PROJECT_FIELDS = `
     nodes{
       id
       isArchived
-      content{... on Issue{id number title state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} blockedBy(first:20){nodes{id}}}}
+      content{... on Issue{id number title body state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} blockedBy(first:20){nodes{id}}}}
       fieldValues(first:30){nodes{
         ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
         ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
@@ -283,7 +289,7 @@ const PROJECT_PAGE_QUERY = `query($id:ID!,$cursor:String){
         nodes{
           id
           isArchived
-          content{... on Issue{id number title state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} blockedBy(first:20){nodes{id}}}}
+          content{... on Issue{id number title body state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} blockedBy(first:20){nodes{id}}}}
           fieldValues(first:30){nodes{
             ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
             ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
@@ -457,9 +463,9 @@ function appJwt(appId: string, privateKey: string): string {
   return `${data}.${signer.sign(privateKey).toString("base64url")}`;
 }
 
-async function github(token: string, path: string, body?: unknown): Promise<Record<string, unknown>> {
+async function github(token: string, path: string, body?: unknown, method?: "POST" | "PATCH"): Promise<Record<string, unknown>> {
   const response = await fetch(`https://api.github.com${path}`, {
-    method: body === undefined ? "GET" : "POST",
+    method: body === undefined ? "GET" : method ?? "POST",
     headers: {
       authorization: `Bearer ${token}`,
       accept: "application/vnd.github+json",

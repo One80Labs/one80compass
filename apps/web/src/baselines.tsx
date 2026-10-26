@@ -20,6 +20,7 @@ type LiveIssue = {
 /** Baseline 1 is set by an administrator. Later baselines are proposed, then approved or rejected. */
 export function BaselinesPanel({
   admin,
+  canWrite,
   issues,
   baselines,
   busy,
@@ -27,6 +28,7 @@ export function BaselinesPanel({
   onDecide,
 }: {
   admin: boolean;
+  canWrite: boolean;
   issues: LiveIssue[];
   baselines: BaselineRecord[];
   busy: boolean;
@@ -47,7 +49,7 @@ export function BaselinesPanel({
       <p className="copy">
         A baseline keeps the tasks and dates as they are now. An unscheduled task stays unscheduled in the snapshot. An administrator sets Baseline 1. Later baselines are proposed with an explanation and approved or rejected. Removed tasks stay out of the progress calculation.
       </p>
-      {approved.length === 0 && <CreateBaseline admin={admin} busy={busy} label="Set Baseline 1" onCreate={onCreate} />}
+      {canWrite && approved.length === 0 && <CreateBaseline admin={admin} busy={busy} label="Set Baseline 1" onCreate={onCreate} />}
       {approved.map((baseline) => (
         <article className="milestone" key={baseline.baselineId}>
           <div className="milestone-head">
@@ -75,7 +77,7 @@ export function BaselinesPanel({
           )}
         </article>
       )}
-      {approved.length > 0 && !proposed && <CreateBaseline admin={admin} busy={busy} label="Propose a baseline" onCreate={onCreate} />}
+      {canWrite && approved.length > 0 && !proposed && <CreateBaseline admin={admin} busy={busy} label="Propose a baseline" onCreate={onCreate} />}
       {selected && (
         <div>
           <h3>Comparison</h3>

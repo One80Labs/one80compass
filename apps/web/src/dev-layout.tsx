@@ -258,7 +258,7 @@ function SettingsPreview() {
         </section>
         <section className="panel">
           <h3>Project access</h3>
-          <p className="small muted">Owner, Contributor, and Viewer roles are a later release.</p>
+          <p className="small muted">A Contributor can edit, add, and upload. View can open the screens and cannot change data.</p>
           <div className="table-wrap">
             <table>
               <thead>
@@ -273,7 +273,7 @@ function SettingsPreview() {
                 <tr>
                   <td>Alex Chen</td>
                   <td>alex.chen@example.com</td>
-                  <td>Employee</td>
+                  <td>Contributor</td>
                   <td>
                     <Pill tone="good">Active</Pill>
                   </td>

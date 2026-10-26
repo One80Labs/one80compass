@@ -320,7 +320,7 @@ function activityTitle(action: string): string {
     "overview.updated": "Overview updated",
     "report.published": "Status report published",
     "report.drafted": "Status report drafted",
-    "member.invited": "Employee invited",
+    "member.invited": "Person invited",
     "project.created": "Project created",
     "progress.overridden": "Progress overridden",
   };
@@ -429,7 +429,7 @@ function SettingsPage({ session }: { session: Session | null }) {
                   <tr>
                     <td>{person.name}</td>
                     <td>{session.email}</td>
-                    <td>{session.adminGroup ? "Administrator" : "Employee"}</td>
+                    <td>{portal.accessLabel}</td>
                     <td>
                       <span className="pill good">Active</span>
                     </td>
@@ -532,11 +532,9 @@ function AdminHome({ session }: { session: Session }) {
               portal.setProjectId(created.projectId);
             }}
           />
-          <NamedForm
-            label="Employee email"
-            submit="Invite employee"
-            onSubmit={async (email) => {
-              await api(`/admin/customers/${portal.customerId}/invitations`, session.idToken, { method: "POST", body: { email } });
+          <InviteForm
+            onSubmit={async (email, access) => {
+              await api(`/admin/customers/${portal.customerId}/invitations`, session.idToken, { method: "POST", body: { email, access } });
             }}
           />
           {portal.projectId && <EnableModule session={session} projectId={portal.projectId} onError={setError} />}
@@ -576,6 +574,41 @@ function EnableModule({ session, projectId, onError }: { session: Session; proje
         </select>
       </label>
       <button type="submit">Enable module</button>
+    </form>
+  );
+}
+
+function InviteForm({ onSubmit }: { onSubmit: (email: string, access: "Contributor" | "View") => Promise<void> }) {
+  const [email, setEmail] = useState("");
+  const [access, setAccess] = useState<"Contributor" | "View">("Contributor");
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <form
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setError(null);
+        try {
+          await onSubmit(email, access);
+          setEmail("");
+          setAccess("Contributor");
+        } catch (caught) {
+          setError(caught instanceof ApiError ? caught.message : "Request failed.");
+        }
+      }}
+    >
+      <label>
+        Email
+        <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
+      </label>
+      <label>
+        Access
+        <select value={access} onChange={(event) => setAccess(event.target.value as "Contributor" | "View")}>
+          <option value="Contributor">Contributor</option>
+          <option value="View">View</option>
+        </select>
+      </label>
+      <button type="submit">Invite</button>
+      {error && <p className="error">{error}</p>}
     </form>
   );
 }

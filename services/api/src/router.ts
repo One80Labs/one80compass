@@ -1,11 +1,13 @@
-import { adminAccess, canAccessCustomer, canAccessProject, principalFromClaims, type Principal } from "../../../packages/authz/src/index";
+import { adminAccess, canAccessCustomer, canAccessProject, canWriteProject, principalFromClaims, type Principal } from "../../../packages/authz/src/index";
 import {
   isModuleKey,
   isProjectHealth,
+  memberRole,
   MAX_UPLOAD_BYTES,
   type AuditEvent,
   type DocumentFolder,
   type DocumentVersion,
+  type MemberRole,
   type Membership,
   type PortalDocument,
   type Project,
@@ -109,7 +111,7 @@ export function createHandler(deps: HandlerDeps) {
       if (customerList && method === "GET") return listCustomers(deps, ctx);
 
       const invite = path.match(/^\/admin\/customers\/([^/]+)\/invitations$/);
-      if (invite && method === "POST") return inviteEmployee(deps, ctx, decodeURIComponent(invite[1]));
+      if (invite && method === "POST") return inviteMember(deps, ctx, decodeURIComponent(invite[1]));
 
       const member = path.match(/^\/admin\/customers\/([^/]+)\/members\/([^/]+)$/);
       if (member && method === "PATCH") {
@@ -214,17 +216,31 @@ async function createCustomer(deps: HandlerDeps, ctx: Ctx): Promise<HttpResult> 
   return json(201, customer, ctx.correlationId);
 }
 
+type MemberAccess = "Administrator" | "Contributor" | "View";
+
 type MemberRow = {
   userId: string;
   email: string;
   name: string;
   customerId: string;
   customerName: string;
-  access: "Administrator" | "Employee";
+  access: MemberAccess;
   allProjects: boolean;
   projects: { projectId: string; name: string }[];
   customerProjects: { projectId: string; name: string }[];
 };
+
+function accessLabel(role: MemberRole): "Contributor" | "View" {
+  return role === "view" ? "View" : "Contributor";
+}
+
+/** Absent keeps the current role. Owner is not a portal role. */
+function requestedRole(value: unknown): MemberRole | "keep" | "invalid" {
+  if (value === undefined) return "keep";
+  if (value === "Contributor") return "contributor";
+  if (value === "View") return "view";
+  return "invalid";
+}
 
 function memberRow(membership: Membership, customerName: string, projects: Project[], admin: boolean): MemberRow {
   const customerProjects = projects.map((project) => ({ projectId: project.projectId, name: project.name }));
@@ -238,7 +254,7 @@ function memberRow(membership: Membership, customerName: string, projects: Proje
     name: membership.name,
     customerId: membership.customerId,
     customerName,
-    access: admin ? "Administrator" : "Employee",
+    access: admin ? "Administrator" : accessLabel(membership.role),
     allProjects,
     projects: visible,
     customerProjects,
@@ -293,6 +309,9 @@ async function updateMember(deps: HandlerDeps, ctx: Ctx, customerId: string, use
     if (selected === "invalid") return validation(ctx, "Choose projects that belong to this customer, or allow every project.");
     projectIds = selected;
   }
+  const chosen = requestedRole(ctx.body.access);
+  if (chosen === "invalid") return validation(ctx, "Access must be Contributor or View.");
+  const role = administrator || chosen === "keep" ? memberRole(current.role) : chosen;
 
   let nextUserId = current.userId;
   if (email !== current.email) {
@@ -306,7 +325,7 @@ async function updateMember(deps: HandlerDeps, ctx: Ctx, customerId: string, use
     nextUserId = invited.userId;
   }
 
-  const next: Membership = { ...current, userId: nextUserId, email, name, projectIds };
+  const next: Membership = { ...current, userId: nextUserId, email, name, projectIds, role };
   await deps.store.putMembership(next);
   if (nextUserId !== current.userId) {
     await deps.store.deleteMembership(customerId, current.userId);
@@ -320,8 +339,8 @@ async function updateMember(deps: HandlerDeps, ctx: Ctx, customerId: string, use
     targetType: "membership",
     projectId: null,
     targetId: nextUserId,
-    before: { email: current.email, name: current.name, projectIds: current.projectIds },
-    after: { email, name, projectIds },
+    before: { email: current.email, name: current.name, projectIds: current.projectIds, role: memberRole(current.role) },
+    after: { email, name, projectIds, role },
   });
   return json(200, memberRow(next, customer.name, projects, administrator), ctx.correlationId);
 }
@@ -343,11 +362,14 @@ async function listCustomers(deps: HandlerDeps, ctx: Ctx): Promise<HttpResult> {
   return json(200, { customers: await deps.store.listCustomers() }, ctx.correlationId);
 }
 
-async function inviteEmployee(deps: HandlerDeps, ctx: Ctx, customerId: string): Promise<HttpResult> {
+async function inviteMember(deps: HandlerDeps, ctx: Ctx, customerId: string): Promise<HttpResult> {
   const gate = requireAdmin(ctx);
   if (gate) return gate;
   const email = stringField(ctx.body, "email")?.toLowerCase();
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return validation(ctx, "A valid email is required.");
+  const chosen = requestedRole(ctx.body.access);
+  if (chosen === "invalid") return validation(ctx, "Access must be Contributor or View.");
+  const role = chosen === "keep" ? "contributor" : chosen;
   const customer = await deps.store.getCustomer(customerId);
   if (!customer) return notFound(ctx);
   const invited = await deps.inviteUser(email);
@@ -356,7 +378,7 @@ async function inviteEmployee(deps: HandlerDeps, ctx: Ctx, customerId: string): 
     userId: invited.userId,
     email,
     name: "",
-    role: "employee" as const,
+    role,
     createdAt: deps.now().toISOString(),
     projectIds: null,
   };
@@ -368,9 +390,9 @@ async function inviteEmployee(deps: HandlerDeps, ctx: Ctx, customerId: string): 
     projectId: null,
     targetId: invited.userId,
     before: null,
-    after: { email, role: "employee" },
+    after: { email, role },
   });
-  return json(201, { customerId, userId: invited.userId, email }, ctx.correlationId);
+  return json(201, { customerId, userId: invited.userId, email, access: accessLabel(role) }, ctx.correlationId);
 }
 
 async function createProject(deps: HandlerDeps, ctx: Ctx, customerId: string): Promise<HttpResult> {
@@ -604,6 +626,8 @@ async function projectOverview(deps: HandlerDeps, ctx: Ctx, projectId: string, m
   if (!("health" in ctx.body) && !("healthExplanation" in ctx.body) && !("notes" in ctx.body)) {
     return validation(ctx, "Send health, healthExplanation, or notes.");
   }
+  const blocked = await rejectView(deps, ctx, project);
+  if (blocked) return blocked;
   await deps.store.putOverview(next);
   await audit(deps, ctx, {
     customerId: project.customerId,
@@ -635,6 +659,8 @@ async function listProjectDocuments(deps: HandlerDeps, ctx: Ctx, projectId: stri
 async function createFolder(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
   const project = await readableProject(deps, ctx, projectId);
   if (!project) return notFound(ctx);
+  const blocked = await rejectView(deps, ctx, project);
+  if (blocked) return blocked;
   const name = folderName(ctx.body.name);
   if (!name) return validation(ctx, "A folder name can use letters, numbers, spaces, and . _ -.");
   const parent = folderField(ctx.body.parent);
@@ -671,6 +697,8 @@ async function createFolder(deps: HandlerDeps, ctx: Ctx, projectId: string): Pro
 async function deleteFolder(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
   const project = await readableProject(deps, ctx, projectId);
   if (!project) return notFound(ctx);
+  const blocked = await rejectView(deps, ctx, project);
+  if (blocked) return blocked;
   const path = folderField(ctx.body.path);
   if (!path) return validation(ctx, "Choose a folder to remove.");
   const documents = await deps.store.listDocuments(projectId);
@@ -700,6 +728,8 @@ async function deleteFolder(deps: HandlerDeps, ctx: Ctx, projectId: string): Pro
 async function moveDocumentToFolder(deps: HandlerDeps, ctx: Ctx, projectId: string, documentId: string): Promise<HttpResult> {
   const document = await activeDocument(deps, ctx, projectId, documentId);
   if (!document) return notFound(ctx);
+  const blocked = await rejectView(deps, ctx, { customerId: document.customerId, projectId });
+  if (blocked) return blocked;
   const folder = folderField(ctx.body.folder);
   if (folder === null) return validation(ctx, "Choose an existing folder.");
   const documents = await deps.store.listDocuments(projectId);
@@ -754,6 +784,8 @@ function folderName(value: unknown): string | null {
 async function createDocument(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
   const project = await readableProject(deps, ctx, projectId);
   if (!project) return notFound(ctx);
+  const blocked = await rejectView(deps, ctx, project);
+  if (blocked) return blocked;
   const name = stringField(ctx.body, "name");
   const file = fileFields(ctx, deps);
   if (!name || name.length > 200) return validation(ctx, "name is required.");
@@ -780,6 +812,8 @@ async function createDocument(deps: HandlerDeps, ctx: Ctx, projectId: string): P
 async function addDocumentVersion(deps: HandlerDeps, ctx: Ctx, projectId: string, documentId: string): Promise<HttpResult> {
   const document = await activeDocument(deps, ctx, projectId, documentId);
   if (!document) return notFound(ctx);
+  const blocked = await rejectView(deps, ctx, { customerId: document.customerId, projectId });
+  if (blocked) return blocked;
   const file = fileFields(ctx, deps);
   if (!file) return validation(ctx, "fileName, contentType, and sizeBytes are required.");
   const versionId = deps.newId();
@@ -792,6 +826,8 @@ async function addDocumentVersion(deps: HandlerDeps, ctx: Ctx, projectId: string
 async function completeDocumentVersion(deps: HandlerDeps, ctx: Ctx, projectId: string, documentId: string, versionId: string): Promise<HttpResult> {
   const document = await activeDocument(deps, ctx, projectId, documentId);
   if (!document) return notFound(ctx);
+  const blocked = await rejectView(deps, ctx, { customerId: document.customerId, projectId });
+  if (blocked) return blocked;
   const version = await deps.store.getVersion(documentId, versionId);
   if (!version || version.projectId !== projectId) return notFound(ctx);
   const previousVersionId = document.currentVersionId;
@@ -832,6 +868,8 @@ async function downloadDocument(deps: HandlerDeps, ctx: Ctx, projectId: string, 
 async function deleteDocument(deps: HandlerDeps, ctx: Ctx, projectId: string, documentId: string): Promise<HttpResult> {
   const document = await activeDocument(deps, ctx, projectId, documentId);
   if (!document) return notFound(ctx);
+  const blocked = await rejectView(deps, ctx, { customerId: document.customerId, projectId });
+  if (blocked) return blocked;
   const explanation = optionalText(ctx.body.explanation, 500);
   if (explanation === undefined) return validation(ctx, "explanation must be text up to 500 characters.");
   const deleted = { ...document, deletedAt: deps.now().toISOString() };
@@ -851,6 +889,8 @@ async function deleteDocument(deps: HandlerDeps, ctx: Ctx, projectId: string, do
 async function restoreDocument(deps: HandlerDeps, ctx: Ctx, projectId: string, documentId: string): Promise<HttpResult> {
   const document = await visibleDocument(deps, ctx, projectId, documentId);
   if (!document?.deletedAt) return notFound(ctx);
+  const blocked = await rejectView(deps, ctx, { customerId: document.customerId, projectId });
+  if (blocked) return blocked;
   const explanation = optionalText(ctx.body.explanation, 500);
   if (explanation === undefined) return validation(ctx, "explanation must be text up to 500 characters.");
   const restored = { ...document, deletedAt: null };
@@ -869,6 +909,16 @@ async function restoreDocument(deps: HandlerDeps, ctx: Ctx, projectId: string, d
 
 function emptyOverview(projectId: string, customerId: string): ProjectOverview {
   return { projectId, customerId, health: null, healthExplanation: null, notes: "", updatedAt: null };
+}
+
+async function rejectView(
+  deps: HandlerDeps,
+  ctx: Ctx,
+  project: { customerId: string; projectId: string },
+): Promise<HttpResult | null> {
+  const memberships = await deps.store.listMembershipsForUser(ctx.principal.userId);
+  if (canWriteProject(ctx.principal, project, memberships)) return null;
+  return json(403, { code: "VIEW_ONLY", message: "View access can open this project and cannot change it.", correlationId: ctx.correlationId }, ctx.correlationId);
 }
 
 async function readableProject(deps: HandlerDeps, ctx: Ctx, projectId: string) {

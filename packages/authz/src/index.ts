@@ -14,6 +14,8 @@ export type MembershipRef = {
   userId: string;
   /** Absent or null means every project of the customer. */
   projectIds?: string[] | null;
+  /** Absent means Contributor. View can read and cannot change the project. */
+  role?: "contributor" | "view" | "employee";
 };
 
 export function parseClaimList(value: string | undefined): string[] {
@@ -80,7 +82,7 @@ export function canAccessCustomer(
   return memberships.some((membership) => membership.customerId === customerId && membership.userId === principal.userId);
 }
 
-/** Administrators can open every project. An employee opens the projects saved on the membership. */
+/** Administrators can open every project. A member opens the projects saved on the membership. */
 export function canAccessProject(
   principal: Principal,
   project: { customerId: string; projectId: string },
@@ -89,6 +91,22 @@ export function canAccessProject(
   if (isPlatformAdmin(principal)) return true;
   return memberships.some((membership) => {
     if (membership.customerId !== project.customerId || membership.userId !== principal.userId) return false;
+    if (membership.projectIds == null) return true;
+    return membership.projectIds.includes(project.projectId);
+  });
+}
+
+/** Administrators and Contributors can change a project they can open. View cannot. */
+export function canWriteProject(
+  principal: Principal,
+  project: { customerId: string; projectId: string },
+  memberships: MembershipRef[],
+): boolean {
+  if (!canAccessProject(principal, project, memberships)) return false;
+  if (isPlatformAdmin(principal)) return true;
+  return memberships.some((membership) => {
+    if (membership.customerId !== project.customerId || membership.userId !== principal.userId) return false;
+    if (membership.role === "view") return false;
     if (membership.projectIds == null) return true;
     return membership.projectIds.includes(project.projectId);
   });

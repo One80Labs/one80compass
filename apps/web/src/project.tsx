@@ -47,6 +47,7 @@ export function modulePath(moduleKey: string, projectId: string): string {
 export function OverviewPage({ session }: { session: Session | null }) {
   const { projectId = "" } = useParams();
   const portal = usePortal();
+  const canWrite = portal.canWrite;
   const project = portal.projects.find((item) => item.projectId === projectId);
   const customer = portal.customers.find((item) => item.customerId === portal.customerId);
   const [data, setData] = useState<OverviewResponse | null>(null);
@@ -99,9 +100,11 @@ export function OverviewPage({ session }: { session: Session | null }) {
         title="Project overview."
         subtitle={`Key information and status for ${name}.`}
         action={
-          <button className="btn primary" type="button" onClick={() => setEditing(true)}>
-            Edit overview
-          </button>
+          canWrite ? (
+            <button className="btn primary" type="button" onClick={() => setEditing(true)}>
+              Edit overview
+            </button>
+          ) : undefined
         }
       />
       {!session && <p>Sign in to open this project.</p>}
@@ -133,13 +136,14 @@ export function OverviewPage({ session }: { session: Session | null }) {
           <div className="grid two">
             <div>
               <h3 className="section-title">Project description</h3>
-              <p className="copy">{data.overview.notes || "No description yet. Use Edit overview to add notes."}</p>
+              <p className="copy">{data.overview.notes || (canWrite ? "No description yet. Use Edit overview to add notes." : "No description yet.")}</p>
               {data.overview.healthExplanation && <p className="copy">Health note: {data.overview.healthExplanation}</p>}
             </div>
             <div>
               <MilestonePanel
                 session={session}
                 projectId={projectId}
+                canWrite={canWrite}
                 milestones={data.milestones}
                 onReload={async () => {
                   const result = await api<OverviewResponse>(`/projects/${projectId}/overview`, session?.idToken ?? "");
@@ -167,7 +171,7 @@ export function OverviewPage({ session }: { session: Session | null }) {
           {tab === "Key stakeholders" && (
             <section className="panel">
               <h3>Key stakeholders</h3>
-              <p className="copy">Owner, Contributor, and Viewer roles are a later release. Invitations are managed in Settings.</p>
+              <p className="copy">A Contributor can edit, add, and upload. View can open this project and cannot change it. Invitations are managed in Settings.</p>
             </section>
           )}
           {tab === "Links" && (
@@ -198,7 +202,7 @@ export function OverviewPage({ session }: { session: Session | null }) {
           )}
         </>
       )}
-      {editing && (
+      {editing && canWrite && (
         <div className="dialog-layer" onClick={() => setEditing(false)}>
           <form className="dialog" role="dialog" aria-modal="true" aria-label="Edit overview" onClick={(event) => event.stopPropagation()} onSubmit={save}>
             <h2>Edit overview</h2>
@@ -238,7 +242,9 @@ export function OverviewPage({ session }: { session: Session | null }) {
 export function DocumentsPage({ session }: { session: Session | null }) {
   const { projectId = "" } = useParams();
   const navigate = useNavigate();
-  const projectName = usePortal().projects.find((item) => item.projectId === projectId)?.name ?? "this project";
+  const portal = usePortal();
+  const canWrite = portal.canWrite;
+  const projectName = portal.projects.find((item) => item.projectId === projectId)?.name ?? "this project";
   const [documents, setDocuments] = useState<ListedDocument[]>([]);
   const [deleted, setDeleted] = useState<ListedDocument[]>([]);
   const [tab, setTab] = useState("All documents");
@@ -293,16 +299,18 @@ export function DocumentsPage({ session }: { session: Session | null }) {
         title="Documents."
         subtitle={`Manage project documents and versions for ${projectName}.`}
         action={
-          <div className="row">
-            {browsing && (
-              <button className="btn" type="button" onClick={() => setCreatingFolder(true)}>
-                New folder
+          canWrite ? (
+            <div className="row">
+              {browsing && (
+                <button className="btn" type="button" onClick={() => setCreatingFolder(true)}>
+                  New folder
+                </button>
+              )}
+              <button className="btn primary" type="button" onClick={() => setUploading(true)}>
+                Upload document
               </button>
-            )}
-            <button className="btn primary" type="button" onClick={() => setUploading(true)}>
-              Upload document
-            </button>
-          </div>
+            </div>
+          ) : undefined
         }
       />
       {!session && <p>Sign in to open documents.</p>}
@@ -362,6 +370,7 @@ export function DocumentsPage({ session }: { session: Session | null }) {
                     <td />
                     <td />
                     <td>
+                      {canWrite && (
                       <button
                         className="btn small"
                         type="button"
@@ -377,6 +386,7 @@ export function DocumentsPage({ session }: { session: Session | null }) {
                       >
                         Remove
                       </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -396,33 +406,37 @@ export function DocumentsPage({ session }: { session: Session | null }) {
                     <td>{formatWhen(document.createdAt)}</td>
                     <td>
                       {tab === "Recycle bin" ? (
-                        <button
-                          className="btn small"
-                          type="button"
-                          onClick={() => {
-                            if (!session) return;
-                            api(`/projects/${projectId}/documents/${document.documentId}/restore`, session.idToken, { method: "POST", body: {} })
-                              .then(reload)
-                              .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not restore the document."));
-                          }}
-                        >
-                          Restore
-                        </button>
+                        canWrite && (
+                          <button
+                            className="btn small"
+                            type="button"
+                            onClick={() => {
+                              if (!session) return;
+                              api(`/projects/${projectId}/documents/${document.documentId}/restore`, session.idToken, { method: "POST", body: {} })
+                                .then(reload)
+                                .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not restore the document."));
+                            }}
+                          >
+                            Restore
+                          </button>
+                        )
                       ) : (
                         <span className="row">
                           <button className="btn small" type="button" onClick={() => navigate(`/projects/${projectId}/documents/${document.documentId}`)}>
                             Open
                           </button>
-                          <MoveFolder
-                            folders={folders}
-                            value={document.folder}
-                            onMove={(folder) => {
-                              if (!session) return;
-                              api(`/projects/${projectId}/documents/${document.documentId}`, session.idToken, { method: "PATCH", body: { folder } })
-                                .then(reload)
-                                .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not move the document."));
-                            }}
-                          />
+                          {canWrite && (
+                            <MoveFolder
+                              folders={folders}
+                              value={document.folder}
+                              onMove={(folder) => {
+                                if (!session) return;
+                                api(`/projects/${projectId}/documents/${document.documentId}`, session.idToken, { method: "PATCH", body: { folder } })
+                                  .then(reload)
+                                  .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not move the document."));
+                              }}
+                            />
+                          )}
                         </span>
                       )}
                     </td>
@@ -477,6 +491,7 @@ export function DocumentsPage({ session }: { session: Session | null }) {
 
 export function DocumentDetailPage({ session }: { session: Session | null }) {
   const { projectId = "", documentId = "" } = useParams();
+  const canWrite = usePortal().canWrite;
   const navigate = useNavigate();
   const [document, setDocument] = useState<ListedDocument | null>(null);
   const [folders, setFolders] = useState<ListedFolder[]>([]);
@@ -574,7 +589,7 @@ export function DocumentDetailPage({ session }: { session: Session | null }) {
                   <dd>{kind}</dd>
                   <dt>Folder</dt>
                   <dd>
-                    {document.deletedAt ? (
+                    {document.deletedAt || !canWrite ? (
                       document.folder || "All documents"
                     ) : (
                       <MoveFolder
@@ -591,7 +606,7 @@ export function DocumentDetailPage({ session }: { session: Session | null }) {
                   </dd>
                 </dl>
                 <p className="copy">This preview is a placeholder. The stored file downloads from the project bucket.</p>
-                {session && <VersionForm onUpload={(file) => addVersion(session, projectId, document, file).then(reload)} />}
+                {session && canWrite && <VersionForm onUpload={(file) => addVersion(session, projectId, document, file).then(reload)} />}
               </section>
             </div>
           )}

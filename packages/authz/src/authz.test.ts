@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminAccess, canAccessCustomer, canAccessProject, parseClaimList, principalFromClaims, type Principal } from "./index";
+import { adminAccess, canAccessCustomer, canAccessProject, canWriteProject, parseClaimList, principalFromClaims, type Principal } from "./index";
 
 const admin: Principal = { userId: "admin-1", groups: ["one80-admin"], mfa: true };
 const adminNoMfa: Principal = { userId: "admin-1", groups: ["one80-admin"], mfa: false };
@@ -68,5 +68,25 @@ describe("canAccessProject", () => {
 
   it("lets an administrator open a project without a membership", () => {
     expect(canAccessProject(admin, project, [])).toBe(true);
+  });
+});
+
+describe("canWriteProject", () => {
+  const project = { customerId: "cust-a", projectId: "proj-1" };
+  const open = [{ customerId: "cust-a", userId: "user-a", projectIds: null as string[] | null }];
+
+  it("lets a contributor change a project they can open", () => {
+    expect(canWriteProject(employee, project, [{ ...open[0], role: "contributor" }])).toBe(true);
+    expect(canWriteProject(employee, project, open)).toBe(true);
+  });
+
+  it("lets a view member open the project and blocks changes", () => {
+    const memberships = [{ ...open[0], role: "view" as const }];
+    expect(canAccessProject(employee, project, memberships)).toBe(true);
+    expect(canWriteProject(employee, project, memberships)).toBe(false);
+  });
+
+  it("lets an administrator change any project", () => {
+    expect(canWriteProject(admin, project, [])).toBe(true);
   });
 });

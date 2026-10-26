@@ -848,9 +848,27 @@ button.tab.active {
 .timeline-scale,
 .timeline-row {
   display: grid;
-  grid-template-columns: minmax(180px, 280px) minmax(220px, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(140px, 220px) 7.25rem minmax(180px, 1fr);
+  gap: 8px 10px;
   align-items: center;
+}
+
+.timeline-status {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.timeline-status-btn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.timeline-status-btn:focus-visible {
+  outline: 2px solid #c9683e;
+  outline-offset: 2px;
+  border-radius: 5px;
 }
 
 .timeline-scale {
@@ -1369,6 +1387,7 @@ form.drawer {
 .drawer-head h2 {
   min-width: 0;
   padding-top: 2px;
+  overflow-wrap: anywhere;
 }
 
 button.drawer-close {
@@ -1380,6 +1399,26 @@ button.drawer-close {
   min-height: 0;
   overflow: auto;
   padding: 16px 25px 25px;
+}
+
+.drawer-body label + label {
+  margin-top: 16px;
+}
+
+.description-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.drawer-body textarea.field {
+  min-height: 5.5rem;
+  resize: vertical;
+}
+
+.drawer-body textarea.field[readonly] {
+  resize: none;
 }
 
 .drawer-footer {

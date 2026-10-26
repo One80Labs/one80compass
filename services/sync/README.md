@@ -2,7 +2,7 @@
 
 This Lambda is separate from the request API. It reads the sync queue, applies GitHub webhooks, and reconciles a customer repository on a schedule.
 
-GitHub is the source of truth for issue title, status, effort, and the Start and Finish date fields. The worker does not overwrite health, a progress override, or a milestone confirmation.
+GitHub is the source of truth for issue title, description, status, effort, and the Start and Finish date fields. The worker does not overwrite health, a progress override, or a milestone confirmation.
 
 The dev API accepts webhooks at `POST /webhooks/github`. Create a GitHub App with Issues read/write, Metadata read, and organization Projects read/write. In the event list, check **Issues** and **Projects v2 item**. Do not use **Projects v2 status update**; that event is a project health note, not a change to an item's Status field. Install the App on the customer repository. Set these Lambda environment values when the App exists: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. Leave them empty until then. The browser never sees those values.
 

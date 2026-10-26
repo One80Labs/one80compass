@@ -25,7 +25,9 @@ function statusTone(status: ReportStatus): "" | "good" | "orange" | "blue" {
 export function ReportsPage({ session }: { session: Session | null }) {
   const { projectId = "" } = useParams();
   const navigate = useNavigate();
-  const name = usePortal().projects.find((item) => item.projectId === projectId)?.name ?? "this project";
+  const portal = usePortal();
+  const canWrite = portal.canWrite;
+  const name = portal.projects.find((item) => item.projectId === projectId)?.name ?? "this project";
   const [reports, setReports] = useState<Report[]>([]);
   const [tab, setTab] = useState("All reports");
   const [creating, setCreating] = useState(false);
@@ -59,9 +61,11 @@ export function ReportsPage({ session }: { session: Session | null }) {
         title="Status reports."
         subtitle={`Published updates on progress for ${name}.`}
         action={
-          <button className="btn primary" type="button" onClick={() => setCreating(true)}>
-            Create report
-          </button>
+          canWrite ? (
+            <button className="btn primary" type="button" onClick={() => setCreating(true)}>
+              Create report
+            </button>
+          ) : undefined
         }
       />
       {!session && <p>Sign in to open reports.</p>}
@@ -100,7 +104,7 @@ export function ReportsPage({ session }: { session: Session | null }) {
           {reports.length === 0 && <div className="empty">No reports yet.</div>}
         </div>
       )}
-      {creating && (
+      {creating && canWrite && (
         <div className="dialog-layer" onClick={() => setCreating(false)}>
           <form
             className="dialog"
@@ -139,6 +143,7 @@ export function ReportsPage({ session }: { session: Session | null }) {
 
 export function ReportDetailPage({ session }: { session: Session | null }) {
   const { projectId = "", reportId = "" } = useParams();
+  const canWrite = usePortal().canWrite;
   const navigate = useNavigate();
   const [report, setReport] = useState<Report | null>(null);
   const [title, setTitle] = useState("");
@@ -185,6 +190,7 @@ export function ReportDetailPage({ session }: { session: Session | null }) {
             title="Status report."
             subtitle={report.title}
             action={
+              canWrite ? (
               <div className="row">
                 {report.status === "draft" && (
                   <button
@@ -216,6 +222,7 @@ export function ReportDetailPage({ session }: { session: Session | null }) {
                   </button>
                 )}
               </div>
+              ) : undefined
             }
           />
           <div className="report-grid">
@@ -233,7 +240,7 @@ export function ReportDetailPage({ session }: { session: Session | null }) {
           <div className="grid two">
             <div>
               <h3 className="section-title">Key updates</h3>
-              {report.status === "draft" ? (
+              {canWrite && report.status === "draft" ? (
                 <form
                   onSubmit={(event) => {
                     event.preventDefault();

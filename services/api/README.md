@@ -6,9 +6,9 @@ Routes for the first slice:
 
 - `POST /admin/customers` and `GET /admin/customers`
 - `POST /admin/customers/{customerId}/projects`
-- `POST /admin/customers/{customerId}/invitations`
-- `GET /admin/members` lists each membership with the customer name, the projects that person can open, and Administrator or Employee.
-- `PATCH /admin/customers/{customerId}/members/{userId}` sets the display name, sign-in email, and project list. A null project list means every current and future project. Changing an employee email creates the new Cognito user, emails a temporary password when the address is new, and disables the old address when it has no membership left. An administrator email cannot be changed. Administrators can still open every project.
+- `POST /admin/customers/{customerId}/invitations` invites a Contributor unless the body sets access to View.
+- `GET /admin/members` lists each membership with the customer name, the projects that person can open, and Administrator, Contributor, or View.
+- `PATCH /admin/customers/{customerId}/members/{userId}` sets the display name, sign-in email, project list, and access. Access is Contributor or View. A null project list means every current and future project. Changing a member email creates the new Cognito user, emails a temporary password when the address is new, and disables the old address when it has no membership left. An administrator email cannot be changed. Administrators can still open and change every project. A person saved before this change as an employee is read as a Contributor.
 - `GET /admin/customers/{customerId}/audit`
 - `POST /admin/projects/{projectId}/applications`
 - `GET /me`
@@ -40,4 +40,4 @@ Routes for the first slice:
 
 Publishing stores an immutable copy. A later revision edits the working draft and leaves that copy unchanged.
 
-A missing or foreign project returns 404. Administrator routes require the `one80-admin` group on a token API Gateway has already verified. The dev pool does not require MFA before that token exists. A customer id in the JSON body is ignored. Uploads are limited to 25 MiB. Restoring a document does not replace its current version.
+A missing or foreign project returns 404. A View member who can open the project receives 403 `VIEW_ONLY` on any change. Administrator routes require the `one80-admin` group on a token API Gateway has already verified. The dev pool does not require MFA before that token exists. A customer id in the JSON body is ignored. Uploads are limited to 25 MiB. Restoring a document does not replace its current version.

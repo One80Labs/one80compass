@@ -8,7 +8,7 @@ import { modulePath } from "./project";
 type Customer = { customerId: string; name: string };
 type Project = { projectId: string; customerId: string; name: string; createdAt?: string };
 type Application = { applicationId: string; projectId: string; displayName: string; moduleKey: string };
-type Me = { memberships: { customerId: string }[] };
+type Me = { memberships: { customerId: string; role?: string }[] };
 
 export type PortalActivity = { eventId: string; action: string; at: string };
 
@@ -27,6 +27,9 @@ type PortalState = {
   tiles: Application[];
   customerId: string;
   projectId: string;
+  /** False for View. Administrators and Contributors can edit, add, and upload. */
+  canWrite: boolean;
+  accessLabel: "Administrator" | "Contributor" | "View";
   setCustomerId: (customerId: string) => void;
   setProjectId: (projectId: string) => void;
   reload: () => void;
@@ -84,7 +87,21 @@ export function Shell({
   const [tiles, setTiles] = useState<Application[]>([]);
   const [customerId, setCustomerIdState] = useState(sample ? "sample" : "");
   const [projectId, setProjectIdState] = useState(sample ? "sample" : routeProjectId);
+  const [roles, setRoles] = useState<Record<string, "contributor" | "view">>({});
+  const [rolesReady, setRolesReady] = useState(Boolean(sample) || session.adminGroup);
   const [generation, setGeneration] = useState(0);
+
+  useEffect(() => {
+    if (sample) return;
+    api<Me>("/me", session.idToken)
+      .then((me) => {
+        const next: Record<string, "contributor" | "view"> = {};
+        for (const membership of me.memberships) next[membership.customerId] = membership.role === "view" ? "view" : "contributor";
+        setRoles(next);
+        setRolesReady(true);
+      })
+      .catch(() => setRolesReady(true));
+  }, [generation, sample, session.idToken]);
 
   useEffect(() => {
     if (sample) return;
@@ -151,12 +168,16 @@ export function Shell({
     if (next && MODULES.includes(moduleKey)) navigate(modulePath(moduleKey, next));
   }
 
+  const canWrite = Boolean(sample) || session.adminGroup || (rolesReady && customerId !== "" && roles[customerId] !== "view");
+  const accessLabel = session.adminGroup ? "Administrator" : roles[customerId] === "view" ? "View" : "Contributor";
   const portal: PortalState = {
     customers,
     projects,
     tiles,
     customerId,
     projectId,
+    canWrite,
+    accessLabel,
     setCustomerId,
     setProjectId,
     reload: () => setGeneration((current) => current + 1),

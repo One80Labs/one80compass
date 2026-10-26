@@ -1,4 +1,4 @@
-import { adminAccess, canAccessProject, type Principal } from "../../../packages/authz/src/index";
+import { adminAccess, canAccessProject, canWriteProject, type Principal } from "../../../packages/authz/src/index";
 import {
   DEFAULT_COLUMNS,
   DEFAULT_DONE_STATUSES,
@@ -124,7 +124,9 @@ async function saveGithub(ctx: PlanCtx, projectId: string): Promise<HttpResult> 
 }
 
 async function requestSync(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
-  const project = await readable(ctx, projectId);
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
   if (!project) return notFound(ctx.correlationId);
   const settings = await ctx.deps.store.getSettings(projectId);
   if (!settings) return json(400, { code: "VALIDATION", message: "Save the GitHub repository before syncing.", correlationId: ctx.correlationId }, ctx.correlationId);
@@ -135,7 +137,9 @@ async function requestSync(ctx: PlanCtx, projectId: string): Promise<HttpResult>
 }
 
 async function saveOverride(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
-  const project = await readable(ctx, projectId);
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
   if (!project) return notFound(ctx.correlationId);
   const explanation = typeof ctx.body.explanation === "string" ? ctx.body.explanation.trim() : "";
   const percent = ctx.body.percent;
@@ -175,7 +179,9 @@ async function saveOverride(ctx: PlanCtx, projectId: string): Promise<HttpResult
 }
 
 async function confirmMilestone(ctx: PlanCtx, projectId: string, milestoneKey: string): Promise<HttpResult> {
-  const project = await readable(ctx, projectId);
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
   if (!project) return notFound(ctx.correlationId);
   const view = await milestoneView(ctx, projectId, milestoneKey);
   if (!view) return notFound(ctx.correlationId);
@@ -213,7 +219,9 @@ async function confirmMilestone(ctx: PlanCtx, projectId: string, milestoneKey: s
 }
 
 async function reopenMilestone(ctx: PlanCtx, projectId: string, milestoneKey: string): Promise<HttpResult> {
-  const project = await readable(ctx, projectId);
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
   if (!project) return notFound(ctx.correlationId);
   const explanation = typeof ctx.body.explanation === "string" ? ctx.body.explanation.trim() : "";
   if (!explanation || explanation.length > 500) {
@@ -269,7 +277,9 @@ async function findMilestone(ctx: PlanCtx, projectId: string, view: { key: strin
 }
 
 async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
-  const project = await readable(ctx, projectId);
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
   if (!project) return notFound(ctx.correlationId);
   const kind = ctx.body.kind;
   const title = typeof ctx.body.title === "string" ? ctx.body.title.trim() : "";
@@ -343,12 +353,14 @@ async function ensureScheduleFields(ctx: PlanCtx, projectId: string): Promise<Ht
 }
 
 async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Promise<HttpResult> {
-  const project = await readable(ctx, projectId);
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
   if (!project) return notFound(ctx.correlationId);
   const issue = await ctx.deps.store.getIssue(projectId, issueId);
   if (!issue || issue.customerId !== project.customerId) return notFound(ctx.correlationId);
   const change = issueChange(ctx.body);
-  if (!change) return json(400, { code: "VALIDATION", message: "Send a title, status, effort, or dates.", correlationId: ctx.correlationId }, ctx.correlationId);
+  if (!change) return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, or dates.", correlationId: ctx.correlationId }, ctx.correlationId);
   const start = change.startDate !== undefined ? change.startDate : issue.startDate;
   const finish = change.finishDate !== undefined ? change.finishDate : issue.finishDate;
   if (start && finish && finish < start) {
@@ -356,8 +368,9 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
   }
   if (change.startDate === issue.startDate) delete change.startDate;
   if (change.finishDate === issue.finishDate) delete change.finishDate;
+  if (change.description === issue.description) delete change.description;
   if (Object.keys(change).length === 0) {
-    return json(400, { code: "VALIDATION", message: "Send a title, status, effort, or dates.", correlationId: ctx.correlationId }, ctx.correlationId);
+    return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, or dates.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
   if (change.status) {
     const settings = await ctx.deps.store.getSettings(projectId);
@@ -421,7 +434,9 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
 }
 
 async function setPredecessor(ctx: PlanCtx, projectId: string, issueId: string, action: "add" | "remove"): Promise<HttpResult> {
-  const project = await readable(ctx, projectId);
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
   if (!project) return notFound(ctx.correlationId);
   const predecessorId = typeof ctx.body.predecessorId === "string" ? ctx.body.predecessorId.trim() : "";
   if (!predecessorId) return json(400, { code: "VALIDATION", message: "Choose the task that has to finish first.", correlationId: ctx.correlationId }, ctx.correlationId);
@@ -442,7 +457,9 @@ async function setPredecessor(ctx: PlanCtx, projectId: string, issueId: string, 
 }
 
 async function createBaseline(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
-  const project = await readable(ctx, projectId);
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
   if (!project) return notFound(ctx.correlationId);
   const explanation = note(ctx.body.explanation);
   if (!explanation) return json(400, { code: "VALIDATION", message: "An explanation is required.", correlationId: ctx.correlationId }, ctx.correlationId);
@@ -567,11 +584,16 @@ async function auditBaseline(ctx: PlanCtx, customerId: string, projectId: string
   });
 }
 
-function issueChange(body: Record<string, unknown>): { title?: string; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null } | null {
-  const change: { title?: string; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null } = {};
+function issueChange(body: Record<string, unknown>): { title?: string; description?: string | null; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null } | null {
+  const change: { title?: string; description?: string | null; status?: string; effort?: number | null; startDate?: string | null; finishDate?: string | null } = {};
   if ("title" in body) {
     if (typeof body.title !== "string" || !body.title.trim() || body.title.trim().length > 200) return null;
     change.title = body.title.trim();
+  }
+  if ("description" in body) {
+    if (body.description === null) change.description = null;
+    else if (typeof body.description !== "string" || body.description.length > 65000) return null;
+    else change.description = body.description.trim() ? body.description : null;
   }
   if ("status" in body) {
     if (typeof body.status !== "string" || !body.status.trim() || body.status.trim().length > 80) return null;
@@ -618,6 +640,18 @@ async function readable(ctx: PlanCtx, projectId: string) {
   const memberships = await ctx.deps.store.listMembershipsForUser(ctx.principal.userId);
   if (!canAccessProject(ctx.principal, project, memberships)) return null;
   return project;
+}
+
+async function openForWrite(ctx: PlanCtx, projectId: string) {
+  const project = await readable(ctx, projectId);
+  if (!project) return null;
+  const memberships = await ctx.deps.store.listMembershipsForUser(ctx.principal.userId);
+  if (!canWriteProject(ctx.principal, project, memberships)) return "view" as const;
+  return project;
+}
+
+function viewOnly(correlationId: string): HttpResult {
+  return json(403, { code: "VIEW_ONLY", message: "View access can open this project and cannot change it.", correlationId }, correlationId);
 }
 
 function nameField(value: unknown): string | null {

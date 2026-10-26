@@ -9,13 +9,21 @@ export type Customer = {
   createdAt: string;
 };
 
+/** Contributor can edit, add, and upload. View can open the same screens and cannot change data. */
+export type MemberRole = "contributor" | "view";
+
+/** Rows saved before this role used the name employee. Those people remain Contributors. */
+export function memberRole(value: unknown): MemberRole {
+  return value === "view" ? "view" : "contributor";
+}
+
 export type Membership = {
   customerId: string;
   userId: string;
   email: string;
   /** Shown in the members list. Empty until an administrator sets one. */
   name: string;
-  role: "employee";
+  role: MemberRole;
   createdAt: string;
   /** Null means every current and future project for the customer. */
   projectIds: string[] | null;
@@ -142,6 +150,8 @@ export type PlanIssue = {
   customerId: string;
   number: number | null;
   title: string;
+  /** GitHub issue description. Null when the issue body is empty. */
+  description: string | null;
   status: string;
   effort: number | null;
   issueState: "open" | "closed";
@@ -226,6 +236,7 @@ export type SyncMessage =
       issueId: string;
       idempotencyKey: string;
       title?: string;
+      description?: string | null;
       status?: string;
       effort?: number | null;
       startDate?: string | null;
@@ -238,6 +249,7 @@ export type SyncMessage =
       changes: {
         issueId: string;
         title?: string;
+        description?: string | null;
         status?: string;
         effort?: number | null;
         startDate?: string | null;

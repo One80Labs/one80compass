@@ -24,6 +24,7 @@ export function GanttChart({
   issues,
   workstreamNumber,
   datesReady,
+  readOnly,
   admin,
   busy,
   onSchedule,
@@ -33,6 +34,7 @@ export function GanttChart({
   issues: Omit<GanttIssue, "depth">[];
   workstreamNumber: number | null;
   datesReady: boolean;
+  readOnly: boolean;
   admin: boolean;
   busy: boolean;
   onSchedule: (issueId: string, startDate: string, finishDate: string) => Promise<void>;
@@ -93,7 +95,7 @@ export function GanttChart({
             : "An administrator needs to add Start and Finish date fields on the GitHub project."}
         </p>
       )}
-      {!datesReady && admin && (
+      {!datesReady && admin && !readOnly && (
         <button className="btn small" type="button" disabled={busy} onClick={() => void onEnsureFields()}>
           Add Start and Finish fields
         </button>
@@ -112,14 +114,14 @@ export function GanttChart({
       {rows.map((issue, index) => {
         const range = draft?.issueId === issue.issueId ? { start: draft.startDate, finish: draft.finishDate, fromIteration: false } : ranges[index];
         const summary = issue.kind === "epic" || issue.kind === "feature";
-        const draggable = Boolean(range && !range.fromIteration && !summary);
+        const draggable = !readOnly && Boolean(range && !range.fromIteration && !summary);
         return (
           <div className="gantt-row" key={issue.issueId}>
             <div style={{ paddingLeft: issue.depth * 16 }}>
               <strong>{issue.title}</strong>
               {conflictIds.includes(issue.issueId) && <span className="pill orange">Overlap</span>}
               <div className="muted small">{range ? rangeLabel(issue, range) : "Not scheduled"}</div>
-              <DateFields key={`${issue.startDate ?? ""}:${issue.finishDate ?? ""}`} issue={issue} datesReady={datesReady} busy={busy} onSchedule={onSchedule} />
+              {!readOnly && <DateFields key={`${issue.startDate ?? ""}:${issue.finishDate ?? ""}`} issue={issue} datesReady={datesReady} busy={busy} onSchedule={onSchedule} />}
             </div>
             <div className="gantt-track">
               {range && (

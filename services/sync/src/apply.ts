@@ -30,6 +30,7 @@ function applyIssueEvent(issues: PlanIssue[], settings: ProjectSettings, body: R
     ...current,
     number: typeof issue.number === "number" ? issue.number : current.number,
     title: typeof issue.title === "string" ? issue.title : current.title,
+    description: "body" in issue ? (typeof issue.body === "string" && issue.body.trim() ? issue.body : null) : current.description,
     issueState: issue.state === "closed" ? "closed" : "open",
     ...("milestone" in issue
       ? milestoneFields(issue.milestone)
@@ -109,6 +110,7 @@ function blankIssue(settings: ProjectSettings, issueId: string, now: string): Pl
     customerId: settings.customerId,
     number: null,
     title: "Untitled",
+    description: null,
     status: "",
     effort: null,
     issueState: "open",
