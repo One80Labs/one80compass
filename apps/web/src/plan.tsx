@@ -501,7 +501,7 @@ function PlanStatus({ plan, session, canWrite }: { plan: ReturnType<typeof usePl
           )}
         </div>
       )}
-      {plan.data && session?.adminGroup && (
+      {plan.data && session?.adminGroup && plan.data.settings?.recordSource !== "compass" && (
         <GithubForm projectId={projectId} session={session} settings={plan.data.settings} onSaved={plan.reload} onError={plan.setError} />
       )}
       {plan.data?.settings?.recordSource === "compass" && session?.adminGroup && session && (

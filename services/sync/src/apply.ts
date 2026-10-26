@@ -1,5 +1,10 @@
 import type { PlanIssue, ProjectSettings } from "../../../packages/domain/src/index";
 
+/** GitHub webhooks and reconciliation apply only while GitHub still owns the project. */
+export function acceptsGithubSync(settings: { recordSource?: string | null }): boolean {
+  return settings.recordSource !== "compass";
+}
+
 /**
  * GitHub project items have no Compass priority, labels, or relationships.
  * A full replace from reconcile keeps the values already stored for that issue.

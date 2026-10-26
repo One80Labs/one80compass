@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlanIssue, ProjectSettings } from "../../../packages/domain/src/index";
-import { applyGithubDelivery, keepStoredPlanFields } from "./apply";
+import { acceptsGithubSync, applyGithubDelivery, keepStoredPlanFields } from "./apply";
 
 const settings: ProjectSettings = {
   projectId: "proj-1",
@@ -33,6 +33,11 @@ const settings: ProjectSettings = {
 };
 
 describe("applyGithubDelivery", () => {
+  it("keeps GitHub sync off a Compass project", () => {
+    expect(acceptsGithubSync(settings)).toBe(true);
+    expect(acceptsGithubSync({ recordSource: "compass" })).toBe(false);
+  });
+
   it("updates the title GitHub owns and leaves effort alone", () => {
     const current: PlanIssue[] = [
       {

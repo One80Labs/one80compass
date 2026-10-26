@@ -5,7 +5,7 @@ import type { PlanIssue, ProjectSettings, SyncMessage } from "../../../packages/
 import { parentStatusChanges, rollupTargets } from "../../../packages/domain/src/hierarchy";
 import { scheduleRollups } from "../../../packages/domain/src/schedule";
 import { DynamoStore } from "../../api/src/store";
-import { applyGithubDelivery, keepStoredPlanFields } from "./apply";
+import { acceptsGithubSync, applyGithubDelivery, keepStoredPlanFields } from "./apply";
 import { githubFromEnv, type GitHubGateway } from "./github";
 
 const tableName = process.env.TABLE_NAME;
@@ -30,6 +30,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
   if (message.type === "webhook") {
     const settingsList = await store.listSettings();
     for (const settings of settingsList) {
+      if (!acceptsGithubSync(settings)) continue;
       const issues = await store.listIssues(settings.projectId);
       const next = applyGithubDelivery(issues, settings, message.eventName, message.payload, now);
       if (!next) continue;
@@ -44,6 +45,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
   if (message.type === "reconcile") {
     const settingsList = (await store.listSettings()).filter((settings) => !message.projectId || settings.projectId === message.projectId);
     for (const settings of settingsList) {
+      if (!acceptsGithubSync(settings)) continue;
       if (!gateway.configured) {
         await store.putSync({
           projectId: settings.projectId,
@@ -76,7 +78,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
   }
   if (message.type === "ensure-date-fields") {
     const settings = await store.getSettings(message.projectId);
-    if (!settings) return;
+    if (!settings || !acceptsGithubSync(settings)) return;
     if (!gateway.configured) {
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "failed", detail: "GitHub App is not configured.", updatedAt: now });
       return;
@@ -100,7 +102,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
   }
   if (message.type === "update-schedule") {
     const settings = await store.getSettings(message.projectId);
-    if (!settings) return;
+    if (!settings || !acceptsGithubSync(settings)) return;
     if (!gateway.configured) {
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "failed", detail: "GitHub App is not configured.", updatedAt: now });
       return;
@@ -131,7 +133,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
   if (message.type === "set-dependency") {
     const settings = await store.getSettings(message.projectId);
     const issue = await store.getIssue(message.projectId, message.issueId);
-    if (!settings || !issue) return;
+    if (!settings || !issue || !acceptsGithubSync(settings)) return;
     if (!gateway.configured) {
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "failed", detail: "GitHub App is not configured.", updatedAt: now });
       return;
@@ -154,7 +156,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
   }
   if (message.type === "create-plan-item") {
     const settings = await store.getSettings(message.projectId);
-    if (!settings) return;
+    if (!settings || !acceptsGithubSync(settings)) return;
     if (!gateway.configured) {
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "failed", detail: "GitHub App is not configured.", updatedAt: now });
       return;
@@ -180,7 +182,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
   }
   const settings = await store.getSettings(message.projectId);
   const issue = await store.getIssue(message.projectId, message.issueId);
-  if (!settings || !issue) return;
+  if (!settings || !issue || !acceptsGithubSync(settings)) return;
   if (!gateway.configured) {
     await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "failed", detail: "GitHub App is not configured.", updatedAt: now });
     return;
