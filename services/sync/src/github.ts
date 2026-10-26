@@ -250,6 +250,9 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
           assignees: [],
           comments: null,
           predecessorIds: [],
+          priority: null,
+          labels: [],
+          relationships: [],
           inProject: true,
           updatedAt: now().toISOString(),
         },
@@ -289,6 +292,10 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
     assignees: assigneesOf(item),
     comments: commentText(values),
     predecessorIds: predecessorIds(item),
+    // GitHub has no priority, label, or relationship field. The reconcile save path restores stored values.
+    priority: null,
+    labels: [],
+    relationships: [],
     inProject: true,
     updatedAt,
   };
@@ -408,6 +415,7 @@ export function readProject(
   const columns = optionNames.length > 0 ? optionNames : settings.columns;
   const matchingDone = settings.doneStatuses.filter((name) => optionNames.length === 0 || optionNames.includes(name));
   const doneStatuses = matchingDone.length > 0 ? matchingDone : optionNames.filter((name) => name.toLowerCase() === "done");
+  // `settings` already carries recordSource and the catalogs. Reconcile must not replace those with empty lists.
   const nextSettings: ProjectSettings = {
     ...settings,
     projectNodeId: project.id,

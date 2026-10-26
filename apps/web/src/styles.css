@@ -1376,6 +1376,32 @@ button.drawer-close {
   margin-top: 16px;
 }
 
+.choice-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.choice-list label,
+.drawer-body .choice-list label + label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 0;
+}
+
+.link-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 8px;
+  align-items: end;
+  margin-top: 8px;
+}
+
+.link-row.pair {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .description-heading {
   display: flex;
   align-items: center;

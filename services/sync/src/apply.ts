@@ -1,5 +1,20 @@
 import type { PlanIssue, ProjectSettings } from "../../../packages/domain/src/index";
 
+/**
+ * GitHub project items have no Compass priority, labels, or relationships.
+ * A full replace from reconcile keeps the values already stored for that issue.
+ * A new issue, with nothing stored, keeps the incoming empty defaults.
+ */
+export function keepStoredPlanFields(incoming: PlanIssue, stored: PlanIssue | undefined): PlanIssue {
+  if (!stored) return incoming;
+  return {
+    ...incoming,
+    priority: stored.priority,
+    labels: [...stored.labels],
+    relationships: stored.relationships.map((link) => ({ ...link })),
+  };
+}
+
 /** Applies one GitHub webhook to the project projection. Portal-owned override and health are untouched. */
 export function applyGithubDelivery(
   issues: PlanIssue[],
@@ -26,6 +41,7 @@ function applyIssueEvent(issues: PlanIssue[], settings: ProjectSettings, body: R
   if (!issueId) return null;
   const action = typeof body.action === "string" ? body.action : "";
   const current = issues.find((item) => item.issueId === issueId) ?? blankIssue(settings, issueId, now);
+  // Spread keeps Compass priority, labels, and relationships. This GitHub payload does not include them.
   const next: PlanIssue = {
     ...current,
     number: typeof issue.number === "number" ? issue.number : current.number,
@@ -82,6 +98,7 @@ function applyProjectItem(issues: PlanIssue[], settings: ProjectSettings, body: 
   if (!issueId) return null;
   const action = typeof body.action === "string" ? body.action : "";
   const current = issues.find((entry) => entry.issueId === issueId) ?? blankIssue(settings, issueId, now);
+  // Spread keeps Compass priority, labels, and relationships. This GitHub payload does not include them.
   const next: PlanIssue = {
     ...current,
     itemId: typeof item.node_id === "string" ? item.node_id : current.itemId,
@@ -132,6 +149,9 @@ function blankIssue(settings: ProjectSettings, issueId: string, now: string): Pl
     assignees: [],
     comments: null,
     predecessorIds: [],
+    priority: null,
+    labels: [],
+    relationships: [],
     inProject: false,
     updatedAt: now,
   };

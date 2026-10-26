@@ -25,6 +25,9 @@ Routes for the first slice:
 - `GET /customers/{customerId}/audit`
 - `GET /projects/{projectId}/plan`
 - `PUT /projects/{projectId}/github` saves the owner, repository, project number, and the Workstream issue number. An empty Workstream number clears it.
+- `POST /projects/{projectId}/import-compass` copies the stored GitHub projection into Compass-owned issues and catalogs. Administrator only. The request reads DynamoDB and does not call GitHub. A project whose `recordSource` is already `compass` returns 409.
+- `PUT /projects/{projectId}/catalogs` replaces status, iterations, labels, issue types, priorities, and milestones. Administrator only. A project whose record source is not Compass returns 409.
+- Compass issue edits stay in DynamoDB. The editor can change issue type, parent, milestone, priority, labels, assignees, predecessors, and other relationships. `POST /projects/{projectId}/sync` returns 409 `COMPASS_OWNED` so a GitHub sync cannot replace those fields. `GET /projects/{projectId}/plan` includes `members` for a Compass project.
 - `POST /projects/{projectId}/plan-items` creates an Epic, Feature, Issue, or Sub-issue in GitHub. An Epic nests under the Workstream. A Feature nests under an Epic. An Issue nests under an Epic, a Feature, or the Workstream. A Sub-issue nests under an Issue. The Workstream number and the parent kind are checked before the request is queued.
 - `POST /projects/{projectId}/sync`
 - `POST /projects/{projectId}/progress-override`

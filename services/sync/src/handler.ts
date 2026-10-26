@@ -5,7 +5,7 @@ import type { PlanIssue, ProjectSettings, SyncMessage } from "../../../packages/
 import { parentStatusChanges, rollupTargets } from "../../../packages/domain/src/hierarchy";
 import { scheduleRollups } from "../../../packages/domain/src/schedule";
 import { DynamoStore } from "../../api/src/store";
-import { applyGithubDelivery } from "./apply";
+import { applyGithubDelivery, keepStoredPlanFields } from "./apply";
 import { githubFromEnv, type GitHubGateway } from "./github";
 
 const tableName = process.env.TABLE_NAME;
@@ -57,12 +57,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
       try {
         const result = await gateway.reconcile(settings);
         await store.putSettings(result.settings);
-        const previous = await store.listIssues(settings.projectId);
-        const seen = new Set(result.issues.map((issue) => issue.issueId));
-        for (const issue of result.issues) await store.putIssue(issue);
-        for (const issue of previous) {
-          if (!seen.has(issue.issueId) && issue.inProject) await store.putIssue({ ...issue, inProject: false, updatedAt: now });
-        }
+        await saveReconciledIssues(store, settings.projectId, result.issues, now);
         await rollUpParents(store, gateway, result.settings, null, now, "reconcile");
         await rollUpSchedules(store, gateway, result.settings, now);
         await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
@@ -89,12 +84,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
     try {
       const result = await gateway.ensureDateFields(settings);
       await store.putSettings(result.settings);
-      const previous = await store.listIssues(settings.projectId);
-      const seen = new Set(result.issues.map((issue) => issue.issueId));
-      for (const issue of result.issues) await store.putIssue(issue);
-      for (const issue of previous) {
-        if (!seen.has(issue.issueId) && issue.inProject) await store.putIssue({ ...issue, inProject: false, updatedAt: now });
-      }
+      await saveReconciledIssues(store, settings.projectId, result.issues, now);
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
     } catch (error) {
       await store.putSync({
@@ -173,12 +163,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
       await gateway.createPlanItem(settings, message);
       const result = await gateway.reconcile(settings);
       await store.putSettings(result.settings);
-      const previous = await store.listIssues(settings.projectId);
-      const seen = new Set(result.issues.map((issue) => issue.issueId));
-      for (const issue of result.issues) await store.putIssue(issue);
-      for (const issue of previous) {
-        if (!seen.has(issue.issueId) && issue.inProject) await store.putIssue({ ...issue, inProject: false, updatedAt: now });
-      }
+      await saveReconciledIssues(store, settings.projectId, result.issues, now);
       await rollUpSchedules(store, gateway, result.settings, now);
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
     } catch (error) {
@@ -264,6 +249,20 @@ async function rollUpParents(
       at: now,
       correlationId,
     });
+  }
+}
+
+/** Writes a GitHub project read back without clearing Compass priority, labels, or relationships. */
+async function saveReconciledIssues(store: DynamoStore, projectId: string, incoming: PlanIssue[], now: string): Promise<void> {
+  const previous = await store.listIssues(projectId);
+  const stored = new Map(previous.map((issue) => [issue.issueId, issue]));
+  const seen = new Set<string>();
+  for (const issue of incoming) {
+    seen.add(issue.issueId);
+    await store.putIssue(keepStoredPlanFields(issue, stored.get(issue.issueId)));
+  }
+  for (const issue of previous) {
+    if (!seen.has(issue.issueId) && issue.inProject) await store.putIssue({ ...issue, inProject: false, updatedAt: now });
   }
 }
 

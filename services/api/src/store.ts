@@ -1,7 +1,15 @@
 import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import {
+  catalogIssueTypesFromStore,
+  catalogLabelsFromStore,
+  catalogMilestonesFromStore,
   isModuleKey,
+  labelIdsFromStore,
   memberRole,
+  priorityFromStore,
+  priorityOptionsFromStore,
+  recordSourceFromStore,
+  relationshipsFromStore,
   type ApplicationLink,
   type AuditEvent,
   type Customer,
@@ -779,6 +787,11 @@ function asSettings(item: Item): ProjectSettings {
     doneStatuses: Array.isArray(item.doneStatuses) ? item.doneStatuses.map(String) : ["Done"],
     columns: Array.isArray(item.columns) ? item.columns.map(String) : ["Todo", "In Progress", "Done"],
     workstreamNumber: typeof item.workstreamNumber === "number" && Number.isInteger(item.workstreamNumber) && item.workstreamNumber > 0 ? item.workstreamNumber : null,
+    recordSource: recordSourceFromStore(item.recordSource),
+    labels: catalogLabelsFromStore(item.labels),
+    issueTypes: catalogIssueTypesFromStore(item.issueTypes),
+    priorityOptions: priorityOptionsFromStore(item.priorityOptions),
+    milestones: catalogMilestonesFromStore(item.milestones),
   };
 }
 
@@ -810,6 +823,9 @@ function asIssue(item: Item): PlanIssue {
     assignees: parseUsers(item.assignees),
     comments: typeof item.comments === "string" && item.comments.trim() ? item.comments : null,
     predecessorIds: Array.isArray(item.predecessorIds) ? [...new Set(item.predecessorIds.map(String).filter((id) => id && id !== String(item.issueId)))] : [],
+    priority: priorityFromStore(item.priority),
+    labels: labelIdsFromStore(item.labels),
+    relationships: relationshipsFromStore(item.relationships),
     inProject: item.inProject !== false,
     updatedAt: String(item.updatedAt),
   };

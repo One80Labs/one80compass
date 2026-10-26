@@ -9,6 +9,8 @@ import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import { BaselinesPanel } from "./baselines";
+import { Catalogs } from "./catalogs";
+import { CompassIssueDrawer } from "./compass-drawer";
 import { usePortal } from "./shell";
 import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs } from "./ui";
 
@@ -30,6 +32,11 @@ type PlanIssue = {
   assignees?: { id: string; login: string; name: string | null }[];
   comments?: string | null;
   predecessorIds: string[];
+  milestone?: string | null;
+  milestoneId?: string | null;
+  priority?: string | null;
+  labels?: string[];
+  relationships?: { id: string; kind: string; otherIssueId: string }[];
   inProject?: boolean;
   archived?: boolean;
   deletedAt?: string | null;
@@ -43,7 +50,15 @@ type IssueEdit = {
   finishDate?: string | null;
   iterationId?: string | null;
   assigneeId?: string | null;
+  assigneeIds?: string[];
   comment?: string;
+  issueType?: string | null;
+  parentIssueId?: string | null;
+  milestone?: string | null;
+  priority?: string | null;
+  labels?: string[];
+  predecessorIds?: string[];
+  relationships?: { id: string; kind: string; otherIssueId: string }[];
 };
 type IterationChoice = { id: string; title: string; startDate: string; duration: number };
 type GitHubUser = { id: string; login: string; name: string | null };
@@ -58,6 +73,13 @@ type PlanResponse = {
     columns: string[];
     startFieldId: string | null;
     finishFieldId: string | null;
+    recordSource?: "github" | "compass";
+    statusOptions?: { id: string; name: string }[];
+    doneStatuses?: string[];
+    labels?: { id: string; name: string }[];
+    issueTypes?: { id: string; name: string }[];
+    priorityOptions?: { id: string; name: string }[];
+    milestones?: { id: string; title: string; dueOn: string | null }[];
   } | null;
   sync: { status: string; detail: string | null };
   issues: PlanIssue[];
@@ -65,6 +87,7 @@ type PlanResponse = {
   override: { percent: number; explanation: string; calculatedPercent: number | null } | null;
   milestones: MilestoneView[];
   baselines: BaselineRecord[];
+  members?: { id: string; login: string; name: string | null }[];
 };
 
 const defaultColumns = ["Todo", "In Progress", "Done"];
@@ -171,7 +194,34 @@ export function PlanPage({ session }: { session: Session | null }) {
           onCreate={(kind, title, parentIssueId, draft) => plan.createPlanItem(kind, title, parentIssueId, draft)}
         />
       )}
-      {editing && canWrite && (
+      {editing && canWrite && plan.data?.settings?.recordSource === "compass" && (
+        <CompassIssueDrawer
+          key={editing.issueId}
+          issue={editing}
+          issues={issues}
+          catalogs={{
+            statusOptions: plan.data.settings.statusOptions ?? [],
+            labels: plan.data.settings.labels ?? [],
+            issueTypes: plan.data.settings.issueTypes ?? [],
+            priorityOptions: plan.data.settings.priorityOptions ?? [],
+            milestones: plan.data.settings.milestones ?? [],
+          }}
+          members={plan.data.members ?? []}
+          columns={columns}
+          iterations={plan.data.settings.iterations ?? []}
+          users={plan.data.settings.assignableUsers ?? []}
+          datesDerived={derivedDates(editing, issues, workstreamNumber)}
+          summary={summaryIssue(editing, issues, workstreamNumber)}
+          derivedStart={rolledDates(editing, issues, workstreamNumber)?.startDate ?? null}
+          derivedFinish={rolledDates(editing, issues, workstreamNumber)?.finishDate ?? null}
+          onClose={() => setEditingId(null)}
+          onSave={async (issueId, change) => {
+            await plan.saveIssue(issueId, change);
+            setEditingId(null);
+          }}
+        />
+      )}
+      {editing && canWrite && plan.data?.settings?.recordSource !== "compass" && (
         <IssueDrawer
           key={editing.issueId}
           issue={editing}
@@ -382,7 +432,34 @@ export function KanbanPage({ session }: { session: Session | null }) {
           onClose={() => setNotice(false)}
         />
       )}
-      {editing && canWrite && (
+      {editing && canWrite && plan.data?.settings?.recordSource === "compass" && (
+        <CompassIssueDrawer
+          key={editing.issueId}
+          issue={editing}
+          issues={plan.data?.issues ?? []}
+          catalogs={{
+            statusOptions: plan.data.settings.statusOptions ?? [],
+            labels: plan.data.settings.labels ?? [],
+            issueTypes: plan.data.settings.issueTypes ?? [],
+            priorityOptions: plan.data.settings.priorityOptions ?? [],
+            milestones: plan.data.settings.milestones ?? [],
+          }}
+          members={plan.data.members ?? []}
+          columns={columns}
+          iterations={plan.data.settings.iterations ?? []}
+          users={plan.data.settings.assignableUsers ?? []}
+          datesDerived={derivedDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)}
+          summary={summaryIssue(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)}
+          derivedStart={rolledDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)?.startDate ?? null}
+          derivedFinish={rolledDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)?.finishDate ?? null}
+          onClose={() => setEditing(null)}
+          onSave={async (issueId, change) => {
+            await plan.saveIssue(issueId, change);
+            setEditing(null);
+          }}
+        />
+      )}
+      {editing && canWrite && plan.data?.settings?.recordSource !== "compass" && (
         <IssueDrawer
           key={editing.issueId}
           issue={editing}
@@ -417,7 +494,7 @@ function PlanStatus({ plan, session, canWrite }: { plan: ReturnType<typeof usePl
             {plan.data.sync.detail ? ` — ${plan.data.sync.detail}` : ""}
             {plan.data.override ? ` Override: ${plan.data.override.percent}% (${plan.data.override.explanation}).` : ""}
           </p>
-          {canWrite && session && plan.data.settings && (
+          {canWrite && session && plan.data.settings && plan.data.settings.recordSource !== "compass" && (
             <button className="btn small" type="button" onClick={() => plan.sync().catch((caught) => plan.setError(message(caught)))}>
               Sync from GitHub
             </button>
@@ -426,6 +503,25 @@ function PlanStatus({ plan, session, canWrite }: { plan: ReturnType<typeof usePl
       )}
       {plan.data && session?.adminGroup && (
         <GithubForm projectId={projectId} session={session} settings={plan.data.settings} onSaved={plan.reload} onError={plan.setError} />
+      )}
+      {plan.data?.settings?.recordSource === "compass" && session?.adminGroup && session && (
+        <Catalogs
+          key={projectId}
+          projectId={projectId}
+          session={session}
+          catalogs={{
+            statusOptions: plan.data.settings.statusOptions ?? [],
+            doneStatuses: plan.data.settings.doneStatuses ?? [],
+            columns: plan.data.settings.columns,
+            iterations: plan.data.settings.iterations ?? [],
+            labels: plan.data.settings.labels ?? [],
+            issueTypes: plan.data.settings.issueTypes ?? [],
+            priorityOptions: plan.data.settings.priorityOptions ?? [],
+            milestones: plan.data.settings.milestones ?? [],
+          }}
+          onSaved={plan.reload}
+          onError={plan.setError}
+        />
       )}
       {canWrite && session && plan.data && (
         <form

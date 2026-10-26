@@ -3,17 +3,20 @@ import {
   DEFAULT_COLUMNS,
   DEFAULT_DONE_STATUSES,
   type IssueChange,
+  type IssueRelationship,
+  type PlanIssue,
   type ProjectSettings,
   type SyncMessage,
   type SyncState,
 } from "../../../packages/domain/src/index";
-import { parentDoneBlocked, planKind } from "../../../packages/domain/src/hierarchy";
+import { createdIssueType, parentDoneBlocked, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { dependencyCycle, dependencyReview } from "../../../packages/domain/src/dependencies";
 import { baselineSnapshot, type BaselineRecord } from "../../../packages/domain/src/baselines";
 import { tracedComment } from "../../../packages/domain/src/comments";
 import { derivedSchedule, isIsoDate } from "../../../packages/domain/src/schedule";
 import { milestoneViews } from "../../../packages/domain/src/milestones";
 import { projectProgress } from "../../../packages/domain/src/progress";
+import { importCompass } from "../../sync/src/import-compass";
 import type { HandlerDeps, HttpResult } from "./router";
 
 type PlanCtx = {
@@ -31,6 +34,8 @@ export async function handlePlan(ctx: PlanCtx): Promise<HttpResult | null> {
   if (plan && ctx.method === "GET") return getPlan(ctx, decodeURIComponent(plan[1]));
   const settings = ctx.path.match(/^\/projects\/([^/]+)\/github$/);
   if (settings && ctx.method === "PUT") return saveGithub(ctx, decodeURIComponent(settings[1]));
+  const imported = ctx.path.match(/^\/projects\/([^/]+)\/import-compass$/);
+  if (imported && ctx.method === "POST") return importCompassProject(ctx, decodeURIComponent(imported[1]));
   const sync = ctx.path.match(/^\/projects\/([^/]+)\/sync$/);
   if (sync && ctx.method === "POST") return requestSync(ctx, decodeURIComponent(sync[1]));
   const override = ctx.path.match(/^\/projects\/([^/]+)\/progress-override$/);
@@ -68,7 +73,15 @@ async function getPlan(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
   const override = await ctx.deps.store.getOverride(projectId);
   const milestones = milestoneViews(issues, await ctx.deps.store.listMilestones(projectId), doneStatuses, ctx.deps.now().toISOString().slice(0, 10));
   const baselines = (await ctx.deps.store.listBaselines(projectId)).sort(baselineOrder);
-  return json(200, { settings, sync: await visibleSync(ctx, projectId, project.customerId, settings), issues, progress, override, milestones, baselines }, ctx.correlationId);
+  const members = settings?.recordSource === "compass" ? await compassMembers(ctx, project.customerId, projectId) : [];
+  return json(200, { settings, sync: await visibleSync(ctx, projectId, project.customerId, settings), issues, progress, override, milestones, baselines, members }, ctx.correlationId);
+}
+
+async function compassMembers(ctx: PlanCtx, customerId: string, projectId: string) {
+  const rows = await ctx.deps.store.listMembershipsForCustomer(customerId);
+  return rows
+    .filter((member) => member.projectIds === null || member.projectIds.includes(projectId))
+    .map((member) => ({ id: member.userId, login: member.email, name: member.name.trim() || null }));
 }
 
 async function saveGithub(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
@@ -111,6 +124,11 @@ async function saveGithub(ctx: PlanCtx, projectId: string): Promise<HttpResult> 
     doneStatuses: existing?.doneStatuses ?? [...DEFAULT_DONE_STATUSES],
     columns: existing?.columns ?? [...DEFAULT_COLUMNS],
     workstreamNumber: workstream,
+    recordSource: existing?.recordSource ?? "github",
+    labels: existing?.labels ?? [],
+    issueTypes: existing?.issueTypes ?? [],
+    priorityOptions: existing?.priorityOptions ?? [],
+    milestones: existing?.milestones ?? [],
   };
   await ctx.deps.store.putSettings(settings);
   await ctx.deps.store.putAudit({
@@ -129,6 +147,26 @@ async function saveGithub(ctx: PlanCtx, projectId: string): Promise<HttpResult> 
   return json(200, settings, ctx.correlationId);
 }
 
+/** Copies the stored GitHub projection into Compass records. Does not call GitHub. */
+async function importCompassProject(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
+  if (adminAccess(ctx.principal) !== "ok") {
+    return json(403, { code: "FORBIDDEN", message: "Administrator access is required.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const project = await ctx.deps.store.getProject(projectId);
+  if (!project) return notFound(ctx.correlationId);
+  const settings = await ctx.deps.store.getSettings(projectId);
+  if (!settings || settings.customerId !== project.customerId) {
+    return json(400, { code: "VALIDATION", message: "Save the GitHub repository before importing it into Compass.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (settings.recordSource === "compass") {
+    return json(409, { code: "CONFLICT", message: "This project is already imported into Compass.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const imported = importCompass(settings, await ctx.deps.store.listIssues(projectId));
+  await ctx.deps.store.putSettings(imported.settings);
+  for (const issue of imported.issues) await ctx.deps.store.putIssue(issue);
+  return json(200, { settings: imported.settings, issues: imported.issues }, ctx.correlationId);
+}
+
 async function requestSync(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
   const opened = await openForWrite(ctx, projectId);
   if (opened === "view") return viewOnly(ctx.correlationId);
@@ -136,6 +174,9 @@ async function requestSync(ctx: PlanCtx, projectId: string): Promise<HttpResult>
   if (!project) return notFound(ctx.correlationId);
   const settings = await ctx.deps.store.getSettings(projectId);
   if (!settings) return json(400, { code: "VALIDATION", message: "Save the GitHub repository before syncing.", correlationId: ctx.correlationId }, ctx.correlationId);
+  if (settings.recordSource === "compass") {
+    return json(409, { code: "COMPASS_OWNED", message: "This project is stored in Compass. GitHub is not updated.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
   if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
   await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Sync requested.", ctx.deps.now().toISOString()));
   await ctx.deps.enqueue({ type: "reconcile", projectId });
@@ -301,19 +342,20 @@ async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResu
   const parent = parentId ? byId.get(parentId) : undefined;
   if (parentId && !parent) return json(404, { code: "NOT_FOUND", message: "That parent is not on this plan.", correlationId: ctx.correlationId }, ctx.correlationId);
   const parentKind = parent ? planKind(parent, byId, settings.workstreamNumber) : null;
+  const parentNumbered = settings.recordSource === "compass" || parent?.number != null;
   if (kind === "epic" && !settings.workstreamNumber) {
     return json(409, { code: "WORKSTREAM_NOT_SET", message: "Save the Workstream issue number before adding an Epic.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
-  if (kind === "feature" && (parentKind !== "epic" || parent?.number == null)) {
+  if (kind === "feature" && (parentKind !== "epic" || !parentNumbered)) {
     return json(409, { code: "PARENT_REQUIRED", message: "A Feature nests under an Epic that already has a GitHub number.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
-  if (kind === "issue" && parent && (parentKind !== "epic" && parentKind !== "feature" || parent.number == null)) {
+  if (kind === "issue" && parent && ((parentKind !== "epic" && parentKind !== "feature") || !parentNumbered)) {
     return json(409, { code: "PARENT_REQUIRED", message: "An Issue nests under an Epic or a Feature.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
   if (kind === "issue" && !parent && !settings.workstreamNumber) {
     return json(409, { code: "WORKSTREAM_NOT_SET", message: "Save the Workstream issue number, or choose an Epic or Feature.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
-  if (kind === "subissue" && (parentKind !== "issue" || parent?.number == null)) {
+  if (kind === "subissue" && (parentKind !== "issue" || !parentNumbered)) {
     return json(409, { code: "PARENT_REQUIRED", message: "A Sub-issue nests under an Issue.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
   const rest = { ...ctx.body };
@@ -324,13 +366,15 @@ async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResu
   const sentFields = fieldKeys.some((key) => key in rest);
   const fields = issueChange(rest);
   if (sentFields && !fields) return json(400, { code: "VALIDATION", message: "Check the description, status, effort, dates, iteration, assignee, and comment.", correlationId: ctx.correlationId }, ctx.correlationId);
+  const compassExtra = settings.recordSource === "compass" ? readCompassExtra(rest) : { ok: true as const, value: {} };
+  if (!compassExtra.ok) return json(400, { code: "VALIDATION", message: "Check the priority, labels, and relationships.", correlationId: ctx.correlationId }, ctx.correlationId);
   const change: IssueChange & { comment?: string } = fields ?? {};
   const start = change.startDate ?? null;
   const finish = change.finishDate ?? null;
   if (start && finish && finish < start) {
     return json(400, { code: "VALIDATION", message: "The finish date cannot be before the start date.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
-  if ((change.startDate !== undefined || change.finishDate !== undefined) && (!settings.startFieldId || !settings.finishFieldId)) {
+  if ((change.startDate !== undefined || change.finishDate !== undefined) && settings.recordSource !== "compass" && (!settings.startFieldId || !settings.finishFieldId)) {
     return json(409, { code: "DATES_NOT_CONFIGURED", message: "Add Start and Finish date fields on the GitHub project before scheduling a task.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
   if (change.iterationId) {
@@ -342,6 +386,7 @@ async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResu
     change.comments = tracedComment(null, await actorLabel(ctx, project.customerId), ctx.deps.now().toISOString().slice(0, 10), change.comment);
     delete change.comment;
   }
+  if (settings.recordSource === "compass") return createCompassPlanItem(ctx, project.customerId, settings, issues, kind, title, parent ?? null, change, compassExtra.value);
   if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
   const idempotencyKey = ctx.deps.newId();
   await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Adding the plan row.", ctx.deps.now().toISOString()));
@@ -392,9 +437,17 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
   if (!project) return notFound(ctx.correlationId);
   const issue = await ctx.deps.store.getIssue(projectId, issueId);
   if (!issue || issue.customerId !== project.customerId) return notFound(ctx.correlationId);
-  const change = issueChange(ctx.body);
-  if (!change) return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, dates, iteration, assignee, or comment.", correlationId: ctx.correlationId }, ctx.correlationId);
+  const parsed = issueChange(ctx.body);
   const settingsForKind = await ctx.deps.store.getSettings(projectId);
+  const compass = settingsForKind?.recordSource === "compass";
+  const extraResult = compass ? readCompassExtra(ctx.body) : { ok: true as const, value: {} };
+  if (!extraResult.ok) return json(400, { code: "VALIDATION", message: "Check the priority, labels, and relationships.", correlationId: ctx.correlationId }, ctx.correlationId);
+  const parentEdit = compass ? readParent(ctx.body) : "absent";
+  if (parentEdit === "invalid") return json(400, { code: "VALIDATION", message: "Choose a parent on this plan.", correlationId: ctx.correlationId }, ctx.correlationId);
+  if (!parsed && !hasCompassEdit(extraResult.value) && parentEdit === "absent") {
+    return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, dates, iteration, assignee, or comment.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const change = parsed ?? {};
   const related = await ctx.deps.store.listIssues(projectId);
   if (derivedSchedule(related, settingsForKind?.workstreamNumber ?? null, issue.issueId)) {
     delete change.startDate;
@@ -420,8 +473,21 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
     change.comments = tracedComment(issue.comments, await actorLabel(ctx, project.customerId), ctx.deps.now().toISOString().slice(0, 10), change.comment);
     delete change.comment;
   }
-  if (Object.keys(change).length === 0) {
+  if (Object.keys(change).length === 0 && !hasCompassEdit(extraResult.value) && parentEdit === "absent") {
     return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, dates, iteration, assignee, or comment.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  let resolvedParent: string | null | undefined = parentEdit === "absent" ? undefined : parentEdit;
+  if (compass && settingsForKind && resolvedParent !== undefined) {
+    const refusal = compassParentRefusal(ctx, settingsForKind, issue, related, resolvedParent);
+    if (refusal) return refusal;
+    resolvedParent = settleParent(settingsForKind, issue, related, resolvedParent);
+  }
+  if (compass && extraResult.value.predecessorIds) {
+    for (const predecessorId of extraResult.value.predecessorIds) {
+      if (dependencyCycle(related, issue.issueId, predecessorId)) {
+        return json(409, { code: "DEPENDENCY_CYCLE", message: "That link would make tasks block each other.", correlationId: ctx.correlationId }, ctx.correlationId);
+      }
+    }
   }
   if (change.status) {
     const settings = await ctx.deps.store.getSettings(projectId);
@@ -436,7 +502,7 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
   }
   if (change.startDate !== undefined || change.finishDate !== undefined) {
     const settings = await ctx.deps.store.getSettings(projectId);
-    if (!settings?.startFieldId || !settings.finishFieldId) {
+    if (settings?.recordSource !== "compass" && (!settings?.startFieldId || !settings.finishFieldId)) {
       return json(
         409,
         { code: "DATES_NOT_CONFIGURED", message: "Add Start and Finish date fields on the GitHub project before scheduling a task.", correlationId: ctx.correlationId },
@@ -461,6 +527,7 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
       );
     }
     if (proposals.length > 0 && decision === "approve") {
+      if (settings?.recordSource === "compass") return saveCompassIssue(ctx, settings, issue, related, change, extraResult.value, resolvedParent, proposals);
       if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
       const idempotencyKey = typeof ctx.body.idempotencyKey === "string" && ctx.body.idempotencyKey.trim() ? ctx.body.idempotencyKey.trim() : ctx.deps.newId();
       await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Sending the schedule to GitHub.", ctx.deps.now().toISOString()));
@@ -476,6 +543,7 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
       return json(202, { accepted: true, idempotencyKey }, ctx.correlationId);
     }
   }
+  if (compass && settingsForKind) return saveCompassIssue(ctx, settingsForKind, issue, related, change, extraResult.value, resolvedParent, []);
   if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
   const idempotencyKey = typeof ctx.body.idempotencyKey === "string" && ctx.body.idempotencyKey.trim() ? ctx.body.idempotencyKey.trim() : ctx.deps.newId();
   await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Sending the change to GitHub.", ctx.deps.now().toISOString()));
@@ -500,6 +568,12 @@ async function setPredecessor(ctx: PlanCtx, projectId: string, issueId: string, 
   }
   if (action === "add" && issue.predecessorIds.includes(predecessorId)) return json(200, { predecessorIds: issue.predecessorIds }, ctx.correlationId);
   if (action === "remove" && !issue.predecessorIds.includes(predecessorId)) return json(200, { predecessorIds: issue.predecessorIds }, ctx.correlationId);
+  const dependencySettings = await ctx.deps.store.getSettings(projectId);
+  if (dependencySettings?.recordSource === "compass") {
+    const predecessorIds = action === "add" ? [...issue.predecessorIds, predecessorId] : issue.predecessorIds.filter((id) => id !== predecessorId);
+    await ctx.deps.store.putIssue({ ...issue, predecessorIds, updatedAt: ctx.deps.now().toISOString() });
+    return json(200, { predecessorIds }, ctx.correlationId);
+  }
   if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
   const idempotencyKey = typeof ctx.body.idempotencyKey === "string" && ctx.body.idempotencyKey.trim() ? ctx.body.idempotencyKey.trim() : ctx.deps.newId();
   await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Sending the dependency to GitHub.", ctx.deps.now().toISOString()));
@@ -700,9 +774,314 @@ function dateField(
   return true;
 }
 
+type CompassPatch = {
+  priority?: string | null;
+  labels?: string[];
+  relationships?: IssueRelationship[];
+  issueType?: string | null;
+  milestone?: string | null;
+  predecessorIds?: string[];
+  assigneeIds?: string[];
+};
+
+type PlanKindName = "epic" | "feature" | "issue" | "subissue";
+
+/** Compass projects write the plan row here. GitHub projects keep the enqueue path. */
+async function createCompassPlanItem(
+  ctx: PlanCtx,
+  customerId: string,
+  settings: ProjectSettings,
+  issues: PlanIssue[],
+  kind: PlanKindName,
+  title: string,
+  parent: PlanIssue | null,
+  change: IssueChange,
+  extra: CompassPatch,
+): Promise<HttpResult> {
+  const now = ctx.deps.now().toISOString();
+  const parentIssueId = kind === "epic" || (kind === "issue" && !parent) ? workstreamParentId(issues, settings.workstreamNumber) : parent?.issueId ?? null;
+  const created = applyLocalIssue(
+    {
+      issueId: ctx.deps.newId(),
+      itemId: null,
+      projectId: settings.projectId,
+      customerId,
+      number: null,
+      title,
+      description: null,
+      status: "",
+      effort: null,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId,
+      issueType: createdIssueType(kind),
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      iterationTitle: null,
+      iterationStart: null,
+      iterationDuration: null,
+      iterationId: null,
+      assignees: [],
+      comments: null,
+      priority: null,
+      labels: [],
+      relationships: [],
+      predecessorIds: [],
+      inProject: true,
+      updatedAt: now,
+    },
+    change,
+    settings,
+    extra,
+    now,
+  );
+  await ctx.deps.store.putIssue(created);
+  await ctx.deps.store.putAudit({
+    eventId: ctx.deps.newId(),
+    customerId,
+    projectId: settings.projectId,
+    actorUserId: ctx.principal.userId,
+    action: "plan.item_created",
+    targetType: "issue",
+    targetId: created.issueId,
+    before: null,
+    after: { kind, title, parentIssueId },
+    at: now,
+    correlationId: ctx.correlationId,
+  });
+  return json(201, { issue: created }, ctx.correlationId);
+}
+
+/** Writes the edited issue and any dependency shifts. Does not enqueue a GitHub mutation. */
+async function saveCompassIssue(
+  ctx: PlanCtx,
+  settings: ProjectSettings,
+  issue: PlanIssue,
+  issues: PlanIssue[],
+  change: IssueChange,
+  extra: CompassPatch,
+  parentIssueId: string | null | undefined,
+  proposals: { issueId: string; toStart: string; toFinish: string }[],
+): Promise<HttpResult> {
+  const now = ctx.deps.now().toISOString();
+  const next = applyLocalIssue(issue, change, settings, { ...extra, parentIssueId }, now);
+  if (extra.assigneeIds) {
+    const memberships = await ctx.deps.store.listMembershipsForCustomer(settings.customerId);
+    next.assignees = extra.assigneeIds.map((id) => {
+      const member = memberships.find((item) => item.userId === id);
+      const known = settings.assignableUsers.find((user) => user.id === id);
+      if (member) return { id, login: member.email || id, name: member.name.trim() || known?.name || null };
+      return known ?? { id, login: id, name: null };
+    });
+  }
+  await ctx.deps.store.putIssue(next);
+  for (const proposal of proposals) {
+    const later = issues.find((item) => item.issueId === proposal.issueId);
+    if (!later || later.issueId === issue.issueId) continue;
+    await ctx.deps.store.putIssue({ ...later, startDate: proposal.toStart, finishDate: proposal.toFinish, updatedAt: now });
+  }
+  return json(200, { issue: next }, ctx.correlationId);
+}
+
+function applyLocalIssue(issue: PlanIssue, change: IssueChange, settings: ProjectSettings, extra: CompassPatch & { parentIssueId?: string | null }, now: string): PlanIssue {
+  const next: PlanIssue = { ...issue, updatedAt: now };
+  if (change.title !== undefined) next.title = change.title;
+  if (change.description !== undefined) next.description = change.description;
+  if (change.status !== undefined) next.status = change.status;
+  if (change.effort !== undefined) next.effort = change.effort;
+  if (change.startDate !== undefined) next.startDate = change.startDate;
+  if (change.finishDate !== undefined) next.finishDate = change.finishDate;
+  if (change.comments !== undefined) next.comments = change.comments;
+  if (change.iterationId !== undefined) {
+    const iteration = change.iterationId ? settings.iterations.find((item) => item.id === change.iterationId) : undefined;
+    next.iterationId = change.iterationId;
+    next.iterationTitle = iteration?.title ?? null;
+    next.iterationStart = iteration?.startDate ?? null;
+    next.iterationDuration = iteration?.duration ?? null;
+  }
+  if (change.assigneeId !== undefined && extra.assigneeIds === undefined) {
+    if (!change.assigneeId) next.assignees = [];
+    else {
+      const known = settings.assignableUsers.find((user) => user.id === change.assigneeId);
+      next.assignees = [known ?? { id: change.assigneeId, login: change.assigneeId, name: null }];
+    }
+  }
+  if (extra.assigneeIds !== undefined) next.assignees = extra.assigneeIds.map((id) => settings.assignableUsers.find((user) => user.id === id) ?? { id, login: id, name: null });
+  if (extra.priority !== undefined) next.priority = extra.priority;
+  if (extra.labels !== undefined) next.labels = extra.labels;
+  if (extra.relationships !== undefined) next.relationships = extra.relationships;
+  if (extra.parentIssueId !== undefined) next.parentIssueId = extra.parentIssueId;
+  if (extra.issueType !== undefined) next.issueType = extra.issueType;
+  if (extra.milestone !== undefined) {
+    const known = extra.milestone ? settings.milestones.find((item) => item.id === extra.milestone || item.title === extra.milestone) : undefined;
+    next.milestone = known?.title ?? extra.milestone;
+    next.milestoneId = known?.id ?? null;
+    next.milestoneDueOn = known?.dueOn ?? null;
+  }
+  if (extra.predecessorIds !== undefined) next.predecessorIds = extra.predecessorIds;
+  return next;
+}
+
+function readCompassExtra(body: Record<string, unknown>): { ok: true; value: CompassPatch } | { ok: false } {
+  const value: CompassPatch = {};
+  if ("priority" in body) {
+    if (body.priority === null) value.priority = null;
+    else if (typeof body.priority !== "string" || !body.priority.trim() || body.priority.trim().length > 80) return { ok: false };
+    else value.priority = body.priority.trim();
+  }
+  if ("labels" in body) {
+    if (!Array.isArray(body.labels) || body.labels.length > 50) return { ok: false };
+    const labels: string[] = [];
+    for (const label of body.labels) {
+      if (typeof label !== "string" || !label.trim() || label.trim().length > 80) return { ok: false };
+      labels.push(label.trim());
+    }
+    value.labels = [...new Set(labels)];
+  }
+  if ("relationships" in body) {
+    if (!Array.isArray(body.relationships) || body.relationships.length > 100) return { ok: false };
+    const relationships: IssueRelationship[] = [];
+    for (const entry of body.relationships) {
+      if (!entry || typeof entry !== "object") return { ok: false };
+      const record = entry as Record<string, unknown>;
+      const id = typeof record.id === "string" ? record.id.trim() : "";
+      const kind = typeof record.kind === "string" ? record.kind.trim() : "";
+      const otherIssueId = typeof record.otherIssueId === "string" ? record.otherIssueId.trim() : "";
+      if (!id || !kind || !otherIssueId || id.length > 200 || kind.length > 80 || otherIssueId.length > 200) return { ok: false };
+      relationships.push({ id, kind, otherIssueId });
+    }
+    value.relationships = relationships;
+  }
+  if ("issueType" in body) {
+    if (body.issueType === null || body.issueType === "") value.issueType = null;
+    else if (typeof body.issueType !== "string" || !body.issueType.trim() || body.issueType.trim().length > 80) return { ok: false };
+    else value.issueType = body.issueType.trim();
+  }
+  if ("milestone" in body) {
+    if (body.milestone === null || body.milestone === "") value.milestone = null;
+    else if (typeof body.milestone !== "string" || !body.milestone.trim() || body.milestone.trim().length > 120) return { ok: false };
+    else value.milestone = body.milestone.trim();
+  }
+  if ("predecessorIds" in body) {
+    if (!Array.isArray(body.predecessorIds) || body.predecessorIds.length > 40) return { ok: false };
+    const ids: string[] = [];
+    for (const id of body.predecessorIds) {
+      if (typeof id !== "string" || !id.trim() || id.trim().length > 200) return { ok: false };
+      ids.push(id.trim());
+    }
+    value.predecessorIds = [...new Set(ids)];
+  }
+  if ("assigneeIds" in body) {
+    if (!Array.isArray(body.assigneeIds) || body.assigneeIds.length > 30) return { ok: false };
+    const ids: string[] = [];
+    for (const id of body.assigneeIds) {
+      if (typeof id !== "string" || !id.trim() || id.trim().length > 200) return { ok: false };
+      ids.push(id.trim());
+    }
+    value.assigneeIds = [...new Set(ids)];
+  }
+  return { ok: true, value };
+}
+
+function hasCompassEdit(value: CompassPatch): boolean {
+  return (
+    value.priority !== undefined ||
+    value.labels !== undefined ||
+    value.relationships !== undefined ||
+    value.issueType !== undefined ||
+    value.milestone !== undefined ||
+    value.predecessorIds !== undefined ||
+    value.assigneeIds !== undefined
+  );
+}
+
+function readParent(body: Record<string, unknown>): string | null | "absent" | "invalid" {
+  if (!("parentIssueId" in body)) return "absent";
+  if (body.parentIssueId === null || body.parentIssueId === "") return null;
+  if (typeof body.parentIssueId !== "string" || !body.parentIssueId.trim() || body.parentIssueId.trim().length > 200) return "invalid";
+  return body.parentIssueId.trim();
+}
+
+function compassParentRefusal(ctx: PlanCtx, settings: ProjectSettings, issue: PlanIssue, issues: PlanIssue[], parentId: string | null): HttpResult | null {
+  if (parentId === issue.issueId || (parentId && parentLoop(issues, issue.issueId, parentId))) {
+    return json(409, { code: "PARENT_REQUIRED", message: "That parent would nest this row under itself.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const parent = parentId ? issues.find((item) => item.issueId === parentId && item.inProject && !item.archived && !item.deletedAt) : undefined;
+  if (parentId && !parent) return notFound(ctx.correlationId);
+  const byId = new Map(issues.map((item) => [item.issueId, item]));
+  const kind = declaredKind(issue, byId, settings.workstreamNumber);
+  const parentKind = parent ? planKind(parent, byId, settings.workstreamNumber) : null;
+  const rule = parentRule(kind, parentKind, Boolean(parent), settings.workstreamNumber);
+  if (rule === "WORKSTREAM_NOT_SET") {
+    const message = kind === "issue" ? "Save the Workstream issue number, or choose an Epic or Feature." : "Save the Workstream issue number before adding an Epic.";
+    return json(409, { code: "WORKSTREAM_NOT_SET", message, correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (rule === "PARENT_REQUIRED") return json(409, { code: "PARENT_REQUIRED", message: parentMessage(kind), correlationId: ctx.correlationId }, ctx.correlationId);
+  return null;
+}
+
+function settleParent(settings: ProjectSettings, issue: PlanIssue, issues: PlanIssue[], parentId: string | null): string | null {
+  if (parentId) return parentId;
+  const byId = new Map(issues.map((item) => [item.issueId, item]));
+  const kind = declaredKind(issue, byId, settings.workstreamNumber);
+  if (kind === "epic" || kind === "issue") return workstreamParentId(issues, settings.workstreamNumber);
+  return null;
+}
+
+function declaredKind(issue: PlanIssue, byId: Map<string, PlanIssue>, workstreamNumber: number | null): PlanKindName {
+  const typeName = issue.issueType?.trim().toLowerCase() ?? "";
+  if (typeName === "epic") return "epic";
+  if (typeName === "feature") return "feature";
+  if (typeName === "task") return "issue";
+  return planKind(issue, byId, workstreamNumber) === "subissue" ? "subissue" : "issue";
+}
+
+function parentRule(kind: PlanKindName, parentKind: PlanKind | null, hasParent: boolean, workstreamNumber: number | null): "WORKSTREAM_NOT_SET" | "PARENT_REQUIRED" | null {
+  if (kind === "epic") {
+    if (!workstreamNumber) return "WORKSTREAM_NOT_SET";
+    if (hasParent && parentKind !== "workstream") return "PARENT_REQUIRED";
+    return null;
+  }
+  if (kind === "feature") return parentKind === "epic" ? null : "PARENT_REQUIRED";
+  if (kind === "subissue") return parentKind === "issue" ? null : "PARENT_REQUIRED";
+  if (!hasParent) return workstreamNumber ? null : "WORKSTREAM_NOT_SET";
+  if (parentKind !== "epic" && parentKind !== "feature" && parentKind !== "workstream") return "PARENT_REQUIRED";
+  return null;
+}
+
+function parentMessage(kind: PlanKindName): string {
+  if (kind === "feature") return "A Feature nests under an Epic.";
+  if (kind === "subissue") return "A Sub-issue nests under an Issue.";
+  if (kind === "issue") return "An Issue nests under an Epic or a Feature.";
+  return "An Epic stays under the Workstream.";
+}
+
+function parentLoop(issues: PlanIssue[], issueId: string, parentId: string): boolean {
+  const parents = new Map(issues.map((item) => [item.issueId, item.parentIssueId]));
+  const seen = new Set<string>();
+  let current: string | null = parentId;
+  while (current) {
+    if (current === issueId || seen.has(current)) return true;
+    seen.add(current);
+    current = parents.get(current) ?? null;
+  }
+  return false;
+}
+
+function workstreamParentId(issues: PlanIssue[], workstreamNumber: number | null): string | null {
+  if (workstreamNumber == null) return null;
+  const match = issues.find((item) => item.number === workstreamNumber && item.inProject && !item.archived && !item.deletedAt);
+  return match?.issueId ?? null;
+}
+
 async function visibleSync(ctx: PlanCtx, projectId: string, customerId: string, settings: ProjectSettings | null): Promise<SyncState> {
   const now = ctx.deps.now().toISOString();
   if (!settings) return syncRow(projectId, customerId, "not_configured", "Add the GitHub repository for this project.", now);
+  if (settings.recordSource === "compass") return (await ctx.deps.store.getSync(projectId)) ?? syncRow(projectId, customerId, "ok", null, now);
   if (!ctx.deps.githubConfigured) return syncRow(projectId, customerId, "not_configured", "GitHub App is not configured.", now);
   return (await ctx.deps.store.getSync(projectId)) ?? syncRow(projectId, customerId, "ok", null, now);
 }

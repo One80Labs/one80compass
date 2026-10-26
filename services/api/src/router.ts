@@ -17,6 +17,7 @@ import {
 import { milestoneViews } from "../../../packages/domain/src/milestones";
 import { projectProgress } from "../../../packages/domain/src/progress";
 import { handlePlan } from "./plan";
+import { handleCatalogs } from "./catalogs";
 import { handleReports } from "./reports";
 import type { Store } from "./store";
 import { acceptWebhook } from "./webhook";
@@ -101,6 +102,8 @@ export function createHandler(deps: HandlerDeps) {
     try {
       const planned = await handlePlan({ deps, principal, method, path, body, correlationId });
       if (planned) return planned;
+      const catalogs = await handleCatalogs({ deps, principal, method, path, body, correlationId });
+      if (catalogs) return catalogs;
       const reported = await handleReports({ deps, principal, method, path, body, correlationId });
       if (reported) return reported;
 

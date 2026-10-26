@@ -120,6 +120,19 @@ export function isModuleKey(value: string): value is ModuleKey {
 export const DEFAULT_COLUMNS = ["Todo", "In Progress", "Done"] as const;
 export const DEFAULT_DONE_STATUSES = ["Done"] as const;
 
+/** Where the plan record was written. Existing GitHub sync rows stay `github`. */
+export type RecordSource = "github" | "compass";
+/** A label in the project catalog. */
+export type CatalogLabel = { id: string; name: string };
+/** An issue type in the project catalog. */
+export type CatalogIssueType = { id: string; name: string };
+/** A priority choice in the project catalog. */
+export type PriorityOption = { id: string; name: string };
+/** A milestone in the project catalog. `dueOn` is YYYY-MM-DD, or null when there is no due date. */
+export type CatalogMilestone = { id: string; title: string; dueOn: string | null };
+/** A link from this issue to another. `kind` is the relationship name. */
+export type IssueRelationship = { id: string; kind: string; otherIssueId: string };
+
 export type ProjectSettings = {
   projectId: string;
   customerId: string;
@@ -149,11 +162,27 @@ export type ProjectSettings = {
   columns: string[];
   /** GitHub issue number of the Workstream. Null until an administrator saves one. The Workstream is not a plan row. */
   workstreamNumber: number | null;
+  /** `github` for a project filled by GitHub sync. `compass` when Compass owns the catalog. */
+  recordSource: RecordSource;
+  /** Labels available on this project. Empty until a catalog is stored. */
+  labels: CatalogLabel[];
+  /** Issue types available on this project. Empty until a catalog is stored. */
+  issueTypes: CatalogIssueType[];
+  /** Priority choices. Empty until a catalog is stored. */
+  priorityOptions: PriorityOption[];
+  /** Milestones available on this project. Empty until a catalog is stored. */
+  milestones: CatalogMilestone[];
 };
 
 export type GitHubUser = { id: string; login: string; name: string | null };
 
 export type IterationChoice = { id: string; title: string; startDate: string; duration: number };
+
+/** Catalog lists replaced together by `PUT /projects/{projectId}/catalogs`. */
+export type ProjectCatalogs = Pick<
+  ProjectSettings,
+  "statusOptions" | "doneStatuses" | "columns" | "iterations" | "labels" | "issueTypes" | "priorityOptions" | "milestones"
+>;
 
 /** Fields the portal can write back to a GitHub issue. `comments` is the full Comments field, already attributed. */
 export type IssueChange = {
@@ -166,6 +195,10 @@ export type IssueChange = {
   iterationId?: string | null;
   assigneeId?: string | null;
   comments?: string;
+  /** Priority option id. Omitted when this edit does not change priority. GitHub sync does not write it. */
+  priority?: string | null;
+  /** Label ids. Omitted when this edit does not change labels. GitHub sync does not write them. */
+  labels?: string[];
 };
 
 export type PlanIssue = {
@@ -209,9 +242,91 @@ export type PlanIssue = {
   comments: string | null;
   /** GitHub issues that block this one. The task starts the day after the latest of those finishes. */
   predecessorIds: string[];
+  /** Priority option id. Null when the issue has no priority. GitHub sync does not clear a stored value. */
+  priority: string | null;
+  /** Label ids on this issue. Empty when the issue has no labels. GitHub sync does not clear a stored list. */
+  labels: string[];
+  /** Links to other issues. Empty when none are stored. GitHub sync does not clear a stored list. */
+  relationships: IssueRelationship[];
   inProject: boolean;
   updatedAt: string;
 };
+
+/**
+ * Missing or unknown sources stay `github` so a row saved before this field still syncs as a GitHub project.
+ * Only the exact value `compass` selects Compass.
+ */
+export function recordSourceFromStore(value: unknown): RecordSource {
+  return value === "compass" ? "compass" : "github";
+}
+
+/** Missing catalogs become an empty list. Rows without an id and a name are dropped. */
+export function catalogLabelsFromStore(value: unknown): CatalogLabel[] {
+  return namedCatalog(value);
+}
+
+/** Missing catalogs become an empty list. Rows without an id and a name are dropped. */
+export function catalogIssueTypesFromStore(value: unknown): CatalogIssueType[] {
+  return namedCatalog(value);
+}
+
+/** Missing catalogs become an empty list. Rows without an id and a name are dropped. */
+export function priorityOptionsFromStore(value: unknown): PriorityOption[] {
+  return namedCatalog(value);
+}
+
+/** Missing catalogs become an empty list. A missing or non-date `dueOn` becomes null. */
+export function catalogMilestonesFromStore(value: unknown): CatalogMilestone[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as { id?: unknown; title?: unknown; dueOn?: unknown };
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const title = typeof row.title === "string" ? row.title.trim() : "";
+    if (!id || !title) return [];
+    const dueOn = typeof row.dueOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(row.dueOn) ? row.dueOn : null;
+    return [{ id, title, dueOn }];
+  });
+}
+
+/** Missing, blank, or non-text priority becomes null. */
+export function priorityFromStore(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+/** Missing label lists become an empty list. Blank entries are dropped. */
+export function labelIdsFromStore(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : [])))];
+}
+
+/** Missing relationship lists become an empty list. Rows without id, kind, and other issue are dropped. */
+export function relationshipsFromStore(value: unknown): IssueRelationship[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as { id?: unknown; kind?: unknown; otherIssueId?: unknown };
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const kind = typeof row.kind === "string" ? row.kind.trim() : "";
+    const otherIssueId = typeof row.otherIssueId === "string" ? row.otherIssueId.trim() : "";
+    if (!id || !kind || !otherIssueId) return [];
+    return [{ id, kind, otherIssueId }];
+  });
+}
+
+function namedCatalog(value: unknown): { id: string; name: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as { id?: unknown; name?: unknown };
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const name = typeof row.name === "string" ? row.name.trim() : "";
+    if (!id || !name) return [];
+    return [{ id, name }];
+  });
+}
 
 export type ProgressOverride = {
   projectId: string;

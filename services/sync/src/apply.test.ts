@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlanIssue, ProjectSettings } from "../../../packages/domain/src/index";
-import { applyGithubDelivery } from "./apply";
+import { applyGithubDelivery, keepStoredPlanFields } from "./apply";
 
 const settings: ProjectSettings = {
   projectId: "proj-1",
@@ -25,6 +25,11 @@ const settings: ProjectSettings = {
   iterations: [],
   commentsFieldId: null,
   assignableUsers: [],
+  recordSource: "github",
+  labels: [],
+  issueTypes: [],
+  priorityOptions: [],
+  milestones: [],
 };
 
 describe("applyGithubDelivery", () => {
@@ -57,6 +62,9 @@ describe("applyGithubDelivery", () => {
         iterationId: null,
         assignees: [],
         comments: null,
+        priority: "high",
+        labels: ["bug"],
+        relationships: [{ id: "rel-1", kind: "blocked_by", otherIssueId: "I_9" }],
         inProject: true,
         updatedAt: "2026-10-24T00:00:00.000Z",
       },
@@ -71,6 +79,9 @@ describe("applyGithubDelivery", () => {
     expect(next?.[0].title).toBe("New");
     expect(next?.[0].effort).toBe(5);
     expect(next?.[0].milestone).toBeNull();
+    expect(next?.[0].priority).toBe("high");
+    expect(next?.[0].labels).toEqual(["bug"]);
+    expect(next?.[0].relationships).toEqual([{ id: "rel-1", kind: "blocked_by", otherIssueId: "I_9" }]);
   });
 
   it("copies a GitHub milestone title and clears it when GitHub removes the milestone", () => {
@@ -167,4 +178,52 @@ describe("applyGithubDelivery", () => {
     expect(next?.[0].finishDate).toBe("2026-11-02");
     expect(next?.[0].startDate).toBeNull();
   });
+
+  it("keeps stored priority, labels, and relationships when a GitHub replace has none", () => {
+    const stored = currentIssue();
+    const incoming: PlanIssue = { ...stored, title: "From GitHub", priority: null, labels: [], relationships: [] };
+    const kept = keepStoredPlanFields(incoming, stored);
+    expect(kept.title).toBe("From GitHub");
+    expect(kept.priority).toBe("high");
+    expect(kept.labels).toEqual(["bug"]);
+    expect(kept.relationships).toEqual([{ id: "rel-1", kind: "blocked_by", otherIssueId: "I_9" }]);
+    expect(kept.labels).not.toBe(stored.labels);
+    expect(keepStoredPlanFields(incoming, undefined)).toEqual(incoming);
+  });
 });
+
+function currentIssue(): PlanIssue {
+  return {
+    issueId: "I_1",
+    itemId: "PVTI_1",
+    projectId: "proj-1",
+    customerId: "cust-1",
+    number: 4,
+    title: "Old",
+    status: "Todo",
+    effort: 5,
+    issueState: "open",
+    archived: false,
+    deletedAt: null,
+    parentIssueId: null,
+    milestone: null,
+    milestoneId: null,
+    milestoneDueOn: null,
+    startDate: null,
+    finishDate: null,
+    predecessorIds: [],
+    issueType: null,
+    description: null,
+    iterationTitle: null,
+    iterationStart: null,
+    iterationDuration: null,
+    iterationId: null,
+    assignees: [],
+    comments: null,
+    priority: "high",
+    labels: ["bug"],
+    relationships: [{ id: "rel-1", kind: "blocked_by", otherIssueId: "I_9" }],
+    inProject: true,
+    updatedAt: "2026-10-24T00:00:00.000Z",
+  };
+}

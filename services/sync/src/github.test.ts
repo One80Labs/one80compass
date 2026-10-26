@@ -25,6 +25,11 @@ const settings: ProjectSettings = {
   iterations: [],
   commentsFieldId: null,
   assignableUsers: [],
+  recordSource: "github",
+  labels: [{ id: "L1", name: "Bug" }],
+  issueTypes: [],
+  priorityOptions: [{ id: "P1", name: "High" }],
+  milestones: [],
 };
 
 describe("chooseProject", () => {
@@ -110,7 +115,13 @@ describe("readProject", () => {
       milestoneDueOn: "2026-11-02",
       startDate: "2026-10-26",
       finishDate: "2026-11-02",
+      priority: null,
+      labels: [],
+      relationships: [],
     });
+    expect(result.settings.recordSource).toBe("github");
+    expect(result.settings.labels).toEqual([{ id: "L1", name: "Bug" }]);
+    expect(result.settings.priorityOptions).toEqual([{ id: "P1", name: "High" }]);
   });
 });
 

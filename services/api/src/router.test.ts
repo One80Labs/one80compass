@@ -266,7 +266,7 @@ const employeeClaims = { sub: "user-a", email: "ada@example.com", amr: '["authen
 
 const queued: unknown[] = [];
 
-function handlerFor(store: Store, extras: Partial<Pick<HandlerDeps, "inviteUser" | "disableLogin">> = {}) {
+function handlerFor(store: Store, extras: Partial<Pick<HandlerDeps, "inviteUser" | "disableLogin" | "githubConfigured">> = {}) {
   let n = 0;
   return createHandler({
     store,
@@ -459,6 +459,9 @@ describe("api router", () => {
       assignees: [],
       comments: null,
       inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
     store.reportVersions.push({
@@ -766,6 +769,9 @@ describe("plan and webhooks", () => {
       assignees: [],
       comments: null,
       inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
     const missing = await handler(event({ method: "POST", path: `/projects/${projectId}/progress-override`, claims: employeeClaims, body: { percent: 80 } }));
@@ -813,6 +819,9 @@ describe("plan and webhooks", () => {
       assignees: [],
       comments: null,
       inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
       updatedAt: "2026-10-26T12:00:00.000Z",
     };
     store.issues.push(
@@ -863,6 +872,9 @@ describe("plan and webhooks", () => {
       assignees: [],
       comments: null,
       inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
       updatedAt: "2026-10-26T12:00:00.000Z",
     });
     const order = await handler(
@@ -943,6 +955,9 @@ describe("plan and webhooks", () => {
       finishDate: null,
       predecessorIds: [],
       inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
       updatedAt: "2026-10-26T12:00:00.000Z",
     });
     const feature = await handler(
@@ -993,6 +1008,11 @@ describe("plan and webhooks", () => {
       iterations: [],
       commentsFieldId: null,
       assignableUsers: [],
+      recordSource: "github",
+      labels: [],
+      issueTypes: [],
+      priorityOptions: [],
+      milestones: [],
     });
     const base = {
       itemId: null,
@@ -1015,6 +1035,9 @@ describe("plan and webhooks", () => {
       milestoneId: null,
       milestoneDueOn: null,
       inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
       updatedAt: "2026-10-26T12:00:00.000Z",
     };
     store.issues.push(
@@ -1082,6 +1105,9 @@ describe("plan and webhooks", () => {
       assignees: [],
       comments: null,
       inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
     const early = await handler(event({ method: "POST", path: `/projects/${projectId}/milestones/M_1/confirm`, claims: employeeClaims, body: {} }));
@@ -1140,6 +1166,9 @@ describe("plan and webhooks", () => {
       assignees: [],
       comments: null,
       inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
       updatedAt: "2026-10-26T12:00:00.000Z",
     });
     const blocked = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines`, claims: employeeClaims, body: { explanation: "First cut." } }));
@@ -1173,6 +1202,467 @@ describe("plan and webhooks", () => {
     );
     expect(JSON.parse(rejected.body).baseline.state).toBe("rejected");
     expect(store.audits.some((row) => row.action === "baseline.established")).toBe(true);
+  });
+
+  it("stores Compass plan edits without queueing GitHub", async () => {
+    queued.length = 0;
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.settings.push({
+      projectId,
+      customerId,
+      recordSource: "compass",
+      owner: "One80Labs",
+      repo: "one80compass",
+      projectNumber: 1,
+      projectNodeId: null,
+      statusFieldName: "Status",
+      effortFieldName: "Effort",
+      statusFieldId: null,
+      effortFieldId: null,
+      startFieldName: "Start",
+      finishFieldName: "Finish",
+      startFieldId: null,
+      finishFieldId: null,
+      statusOptions: [],
+      doneStatuses: ["Done"],
+      columns: ["Ready", "Done"],
+      workstreamNumber: 10,
+      iterationFieldId: null,
+      iterations: [{ id: "iter-1", title: "Sprint 1", startDate: "2026-10-01", duration: 14 }],
+      commentsFieldId: null,
+      assignableUsers: [{ id: "U_ada", login: "ada", name: "Ada" }],
+      labels: [],
+      issueTypes: [],
+      priorityOptions: [],
+      milestones: [],
+    });
+    const issue = (partial: Partial<PlanIssue> & Pick<PlanIssue, "issueId" | "title" | "number">): PlanIssue => ({
+      itemId: null,
+      projectId,
+      customerId,
+      status: "Ready",
+      effort: 1,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      issueType: "Task",
+      description: null,
+      iterationTitle: null,
+      iterationStart: null,
+      iterationDuration: null,
+      iterationId: null,
+      assignees: [],
+      comments: null,
+      priority: null,
+      labels: [],
+      relationships: [],
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
+      inProject: true,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+      ...partial,
+    });
+    store.issues.push(
+      issue({ issueId: "I_epic", number: null, title: "Billing", issueType: "EPIC", effort: null }),
+      issue({ issueId: "A", number: null, title: "Deck", startDate: "2026-10-01", finishDate: "2026-10-05", parentIssueId: "I_epic" }),
+      issue({ issueId: "B", number: null, title: "Rail", startDate: "2026-10-06", finishDate: "2026-10-08", predecessorIds: ["A"], parentIssueId: "I_epic" }),
+      issue({ issueId: "I_child", number: null, title: "Open task", parentIssueId: "A" }),
+    );
+    const updated = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/A`,
+        claims: employeeClaims,
+        body: { title: "Deck boards", priority: "High", labels: ["ops"], assigneeId: "U_ada", iterationId: "iter-1", comment: "Shifted the pour." },
+      }),
+    );
+    expect(updated.statusCode).toBe(200);
+    const saved = store.issues.find((item) => item.issueId === "A");
+    expect(saved).toMatchObject({
+      title: "Deck boards",
+      priority: "High",
+      labels: ["ops"],
+      iterationId: "iter-1",
+      iterationTitle: "Sprint 1",
+      assignees: [{ id: "U_ada", login: "ada", name: "Ada" }],
+    });
+    expect(saved?.comments).toContain("Shifted the pour.");
+    expect(queued).toHaveLength(0);
+    const blocked = await handler(event({ method: "PATCH", path: `/projects/${projectId}/issues/A`, claims: employeeClaims, body: { status: "Done" } }));
+    expect(blocked.statusCode).toBe(409);
+    expect(JSON.parse(blocked.body).code).toBe("PARENT_INCOMPLETE");
+    const review = await handler(event({ method: "PATCH", path: `/projects/${projectId}/issues/A`, claims: employeeClaims, body: { finishDate: "2026-10-10" } }));
+    expect(review.statusCode).toBe(409);
+    expect(JSON.parse(review.body).code).toBe("DEPENDENCY_REVIEW");
+    const approved = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/A`,
+        claims: employeeClaims,
+        body: { finishDate: "2026-10-10", dependencyDecision: "approve" },
+      }),
+    );
+    expect(approved.statusCode).toBe(200);
+    expect(store.issues.find((item) => item.issueId === "A")?.finishDate).toBe("2026-10-10");
+    expect(store.issues.find((item) => item.issueId === "B")).toMatchObject({ startDate: "2026-10-11", finishDate: "2026-10-13" });
+    const loop = await handler(event({ method: "POST", path: `/projects/${projectId}/issues/A/predecessors`, claims: employeeClaims, body: { predecessorId: "B" } }));
+    expect(loop.statusCode).toBe(409);
+    expect(JSON.parse(loop.body).code).toBe("DEPENDENCY_CYCLE");
+    const linked = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/issues/B/predecessors`, claims: employeeClaims, body: { predecessorId: "I_child" } }),
+    );
+    expect(linked.statusCode).toBe(200);
+    expect(store.issues.find((item) => item.issueId === "B")?.predecessorIds).toEqual(["A", "I_child"]);
+    const removed = await handler(
+      event({ method: "POST", path: `/projects/${projectId}/issues/B/predecessors/remove`, claims: employeeClaims, body: { predecessorId: "I_child" } }),
+    );
+    expect(removed.statusCode).toBe(200);
+    expect(store.issues.find((item) => item.issueId === "B")?.predecessorIds).toEqual(["A"]);
+    const wrongParent = await handler(
+      event({ method: "PATCH", path: `/projects/${projectId}/issues/B`, claims: employeeClaims, body: { parentIssueId: "A" } }),
+    );
+    expect(JSON.parse(wrongParent.body).code).toBe("PARENT_REQUIRED");
+    const moved = await handler(
+      event({ method: "PATCH", path: `/projects/${projectId}/issues/I_child`, claims: employeeClaims, body: { parentIssueId: "I_epic" } }),
+    );
+    expect(moved.statusCode).toBe(200);
+    expect(store.issues.find((item) => item.issueId === "I_child")?.parentIssueId).toBe("I_epic");
+    expect(queued).toHaveLength(0);
+  });
+
+  it("persists a Compass issue when GitHub is not configured", async () => {
+    queued.length = 0;
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.settings.push({
+      projectId,
+      customerId,
+      recordSource: "compass",
+      owner: "One80Labs",
+      repo: "one80compass",
+      projectNumber: 1,
+      projectNodeId: null,
+      statusFieldName: "Status",
+      effortFieldName: "Effort",
+      statusFieldId: null,
+      effortFieldId: null,
+      startFieldName: "Start",
+      finishFieldName: "Finish",
+      startFieldId: null,
+      finishFieldId: null,
+      statusOptions: [],
+      doneStatuses: ["Done"],
+      columns: ["Ready", "Done"],
+      workstreamNumber: null,
+      iterationFieldId: null,
+      iterations: [],
+      commentsFieldId: null,
+      assignableUsers: [],
+      labels: [],
+      issueTypes: [],
+      priorityOptions: [],
+      milestones: [],
+    });
+    const missing = await handler(event({ method: "POST", path: `/projects/${projectId}/plan-items`, claims: employeeClaims, body: { kind: "epic", title: "Billing" } }));
+    expect(JSON.parse(missing.body).code).toBe("WORKSTREAM_NOT_SET");
+    store.settings[0].workstreamNumber = 10;
+    const created = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/plan-items`,
+        claims: employeeClaims,
+        body: { kind: "epic", title: "Billing", description: "Invoice flow", priority: "High", labels: ["billing"] },
+      }),
+    );
+    expect(created.statusCode).toBe(201);
+    const epic = store.issues.find((item) => item.title === "Billing");
+    expect(epic).toMatchObject({
+      number: null,
+      issueState: "open",
+      inProject: true,
+      issueType: "EPIC",
+      description: "Invoice flow",
+      priority: "High",
+      labels: ["billing"],
+      parentIssueId: null,
+    });
+    expect(epic?.issueId).toMatch(/^id-/);
+    const feature = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/plan-items`,
+        claims: employeeClaims,
+        body: { kind: "feature", title: "Payments", parentIssueId: epic?.issueId },
+      }),
+    );
+    expect(feature.statusCode).toBe(201);
+    expect(store.issues.find((item) => item.title === "Payments")).toMatchObject({ parentIssueId: epic?.issueId, issueType: "Feature", number: null });
+    const wrong = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/plan-items`,
+        claims: employeeClaims,
+        body: { kind: "subissue", title: "Charge", parentIssueId: epic?.issueId },
+      }),
+    );
+    expect(JSON.parse(wrong.body).code).toBe("PARENT_REQUIRED");
+    expect(queued).toHaveLength(0);
+  });
+
+  it("saves Compass editor fields and refuses a GitHub sync", async () => {
+    queued.length = 0;
+    const store = memoryStore();
+    const handler = handlerFor(store, { githubConfigured: true });
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.settings.push({
+      ...mappedSettings(projectId, customerId, "compass"),
+      milestones: [{ id: "ms-1", title: "Pour", dueOn: "2026-11-01" }],
+    });
+    store.issues.push({
+      issueId: "A",
+      itemId: null,
+      projectId,
+      customerId,
+      number: 1,
+      title: "Deck",
+      status: "Ready",
+      effort: 1,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
+      issueType: null,
+      description: null,
+      iterationTitle: null,
+      iterationStart: null,
+      iterationDuration: null,
+      iterationId: null,
+      assignees: [],
+      comments: null,
+      inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    });
+    const updated = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/A`,
+        claims: employeeClaims,
+        body: {
+          issueType: "Task",
+          milestone: "Pour",
+          assigneeIds: ["user-a"],
+          predecessorIds: ["A"],
+        },
+      }),
+    );
+    expect(updated.statusCode).toBe(409);
+    const saved = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/A`,
+        claims: employeeClaims,
+        body: {
+          issueType: "Task",
+          milestone: "Pour",
+          assigneeIds: ["user-a"],
+          relationships: [{ id: "rel-1", kind: "relates to", otherIssueId: "missing" }],
+        },
+      }),
+    );
+    expect(saved.statusCode).toBe(200);
+    expect(store.issues.find((item) => item.issueId === "A")).toMatchObject({
+      issueType: "Task",
+      milestone: "Pour",
+      milestoneId: "ms-1",
+      milestoneDueOn: "2026-11-01",
+      assignees: [{ id: "user-a", login: "ada@example.com" }],
+      relationships: [{ id: "rel-1", kind: "relates to", otherIssueId: "missing" }],
+    });
+    const sync = await handler(event({ method: "POST", path: `/projects/${projectId}/sync`, claims: employeeClaims, body: {} }));
+    expect(sync.statusCode).toBe(409);
+    expect(JSON.parse(sync.body).code).toBe("COMPASS_OWNED");
+    const plan = await handler(event({ method: "GET", path: `/projects/${projectId}/plan`, claims: employeeClaims }));
+    expect(JSON.parse(plan.body).members).toEqual(expect.arrayContaining([expect.objectContaining({ id: "user-a" })]));
+    expect(queued).toHaveLength(0);
+  });
+
+  it("still queues an issue update for a GitHub project", async () => {
+    queued.length = 0;
+    const store = memoryStore();
+    const handler = handlerFor(store, { githubConfigured: true });
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.settings.push({
+      projectId,
+      customerId,
+      recordSource: "github",
+      owner: "One80Labs",
+      repo: "one80compass",
+      projectNumber: 1,
+      projectNodeId: "PVT_1",
+      statusFieldName: "Status",
+      effortFieldName: "Effort",
+      statusFieldId: null,
+      effortFieldId: null,
+      startFieldName: "Start",
+      finishFieldName: "Finish",
+      startFieldId: "start",
+      finishFieldId: "finish",
+      statusOptions: [],
+      doneStatuses: ["Done"],
+      columns: ["Ready", "Done"],
+      workstreamNumber: null,
+      iterationFieldId: null,
+      iterations: [],
+      commentsFieldId: null,
+      assignableUsers: [],
+      labels: [],
+      issueTypes: [],
+      priorityOptions: [],
+      milestones: [],
+    });
+    store.issues.push({
+      issueId: "I_date",
+      itemId: null,
+      projectId,
+      customerId,
+      number: 4,
+      title: "Deck",
+      status: "Ready",
+      effort: 1,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      issueType: "Task",
+      description: null,
+      iterationTitle: null,
+      iterationStart: null,
+      iterationDuration: null,
+      iterationId: null,
+      assignees: [],
+      comments: null,
+      priority: null,
+      labels: [],
+      relationships: [],
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [],
+      inProject: true,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    });
+    const response = await handler(event({ method: "PATCH", path: `/projects/${projectId}/issues/I_date`, claims: employeeClaims, body: { title: "Changed" } }));
+    expect(response.statusCode).toBe(202);
+    expect(queued).toEqual([expect.objectContaining({ type: "update-issue", projectId, issueId: "I_date", title: "Changed" })]);
+    expect(store.issues[0].title).toBe("Deck");
+  });
+
+  it("imports the stored projection once and returns 409 when Compass already owns it", async () => {
+    queued.length = 0;
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.settings.push({
+      projectId,
+      customerId,
+      owner: "One80Labs",
+      repo: "one80compass",
+      projectNumber: 1,
+      projectNodeId: "PVT_1",
+      statusFieldName: "Status",
+      effortFieldName: "Effort",
+      statusFieldId: null,
+      effortFieldId: null,
+      startFieldName: "Start",
+      finishFieldName: "Finish",
+      startFieldId: null,
+      finishFieldId: null,
+      statusOptions: [{ id: "ready", name: "Ready" }],
+      doneStatuses: ["Done"],
+      columns: ["Ready", "Done"],
+      workstreamNumber: null,
+      iterationFieldId: null,
+      iterations: [{ id: "iter-1", title: "Sprint 1", startDate: "2026-10-01", duration: 14 }],
+      commentsFieldId: null,
+      assignableUsers: [],
+      recordSource: "github",
+      labels: [],
+      issueTypes: [],
+      priorityOptions: [],
+      milestones: [],
+    });
+    store.issues.push({
+      issueId: "I_child",
+      itemId: null,
+      projectId,
+      customerId,
+      number: 12,
+      title: "Charge card",
+      description: "Take payment",
+      status: "Ready",
+      effort: 3,
+      issueState: "open",
+      archived: false,
+      deletedAt: null,
+      parentIssueId: "I_parent",
+      issueType: "Task",
+      milestone: "Phase 1",
+      milestoneId: "M_1",
+      milestoneDueOn: "2026-11-02",
+      startDate: "2026-10-06",
+      finishDate: "2026-10-08",
+      iterationTitle: "Sprint 1",
+      iterationStart: "2026-10-01",
+      iterationDuration: 14,
+      iterationId: "iter-1",
+      assignees: [{ id: "U_1", login: "ada", name: "Ada" }],
+      comments: "Ada 2026-10-01 Ready for review",
+      predecessorIds: ["I_parent"],
+      priority: null,
+      labels: ["risk"],
+      relationships: [],
+      inProject: true,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    });
+    const denied = await handler(event({ method: "POST", path: `/projects/${projectId}/import-compass`, claims: employeeClaims, body: {} }));
+    expect(denied.statusCode).toBe(403);
+    const first = await handler(event({ method: "POST", path: `/projects/${projectId}/import-compass`, claims: adminClaims, body: {} }));
+    expect(first.statusCode).toBe(200);
+    expect(store.settings[0].recordSource).toBe("compass");
+    expect(store.issues[0]).toMatchObject({
+      parentIssueId: "I_parent",
+      predecessorIds: ["I_parent"],
+      labels: ["risk"],
+      relationships: [{ id: "blocks:I_child:I_parent", kind: "blocks", otherIssueId: "I_parent" }],
+    });
+    expect(queued).toEqual([]);
+    const second = await handler(event({ method: "POST", path: `/projects/${projectId}/import-compass`, claims: adminClaims, body: {} }));
+    expect(second.statusCode).toBe(409);
+    expect(JSON.parse(second.body).code).toBe("CONFLICT");
   });
 
   it("rejects an unsigned webhook and queues a signed one", async () => {
@@ -1224,3 +1714,89 @@ describe("plan and webhooks", () => {
     expect(hidden.statusCode).toBe(404);
   });
 });
+
+describe("catalogs", () => {
+  it("lets an administrator replace catalogs on a Compass project, refuses a non-admin, and returns 409 for GitHub", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    const body = {
+      statusOptions: [
+        { id: "status-1", name: "Ready" },
+        { id: "status-2", name: "Done" },
+      ],
+      doneStatuses: ["Done"],
+      columns: ["Ready", "Done"],
+      iterations: [{ id: "iter-1", title: "Sprint 1", startDate: "2026-11-02", duration: 14 }],
+      labels: [{ id: "label-1", name: "Billing" }],
+      issueTypes: [{ id: "type-1", name: "Epic" }],
+      priorityOptions: [{ id: "pri-1", name: "High" }],
+      milestones: [
+        { id: "mile-1", title: "Launch", dueOn: "2026-12-01" },
+        { id: "mile-2", title: "Open", dueOn: null },
+      ],
+    };
+    store.settings.push(mappedSettings(projectId, customerId, "compass"));
+    const denied = await handler(event({ method: "PUT", path: `/projects/${projectId}/catalogs`, claims: employeeClaims, body }));
+    expect(denied.statusCode).toBe(403);
+    expect(JSON.parse(denied.body).code).toBe("FORBIDDEN");
+    expect(store.settings[0].labels).toEqual([]);
+
+    store.settings[0] = mappedSettings(projectId, customerId, "github");
+    const locked = await handler(event({ method: "PUT", path: `/projects/${projectId}/catalogs`, claims: adminClaims, body }));
+    expect(locked.statusCode).toBe(409);
+    expect(JSON.parse(locked.body).code).toBe("CONFLICT");
+    expect(store.settings[0].labels).toEqual([]);
+    expect(store.settings[0].recordSource).toBe("github");
+
+    store.settings[0] = mappedSettings(projectId, customerId, "compass");
+    const saved = await handler(event({ method: "PUT", path: `/projects/${projectId}/catalogs`, claims: adminClaims, body }));
+    expect(saved.statusCode).toBe(200);
+    const payload = JSON.parse(saved.body);
+    expect(payload.labels).toEqual([{ id: "label-1", name: "Billing" }]);
+    expect(payload.iterations).toEqual([{ id: "iter-1", title: "Sprint 1", startDate: "2026-11-02", duration: 14 }]);
+    expect(payload.milestones).toEqual([
+      { id: "mile-1", title: "Launch", dueOn: "2026-12-01" },
+      { id: "mile-2", title: "Open", dueOn: null },
+    ]);
+    expect(payload.doneStatuses).toEqual(["Done"]);
+    expect(payload.owner).toBe("One80Labs");
+    expect(payload.recordSource).toBe("compass");
+    const audit = store.audits.find((row) => row.action === "catalogs.updated");
+    expect(audit?.targetType).toBe("project");
+    expect(audit?.after).toMatchObject({ labels: [{ id: "label-1", name: "Billing" }] });
+  });
+});
+
+function mappedSettings(projectId: string, customerId: string, recordSource: "github" | "compass"): ProjectSettings {
+  return {
+    projectId,
+    customerId,
+    owner: "One80Labs",
+    repo: "one80compass",
+    projectNumber: 1,
+    projectNodeId: "PVT_1",
+    statusFieldName: "Status",
+    effortFieldName: "Effort",
+    statusFieldId: null,
+    effortFieldId: null,
+    startFieldName: "Start",
+    finishFieldName: "Finish",
+    startFieldId: null,
+    finishFieldId: null,
+    iterationFieldId: null,
+    iterations: [],
+    commentsFieldId: null,
+    assignableUsers: [],
+    statusOptions: [],
+    doneStatuses: ["Done"],
+    columns: ["Todo"],
+    labels: [],
+    issueTypes: [],
+    priorityOptions: [],
+    milestones: [],
+    recordSource,
+    workstreamNumber: null,
+  };
+}
