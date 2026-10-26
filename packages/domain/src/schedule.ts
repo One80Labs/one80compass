@@ -1,5 +1,7 @@
 /** Task dates. ADR 0006. A bar needs both dates. The finish cannot move before the start. */
 
+import { planKind, type PlanKind, type PlanNode } from "./hierarchy";
+
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export function isIsoDate(value: string): boolean {
@@ -89,26 +91,96 @@ export function scheduleText(issue: { startDate: string | null; finishDate: stri
 
 type ChartRow = { depth: number; kind?: string } & Parameters<typeof scheduledRange>[0];
 
-/** The bar the Timeline draws. An Epic or Feature spans its children when it has no schedule of its own. */
+/** An Epic or Feature can keep its own dates until a Task or Sub-issue is under it. */
+export function datesAreDerived(kind: PlanKind): boolean {
+  return kind === "epic" || kind === "feature";
+}
+
+type DatedNode = PlanNode & { startDate: string | null; finishDate: string | null };
+
+/** Epic and Feature Start and Finish values that differ from the tasks under them. */
+export function scheduleRollups(
+  issues: DatedNode[],
+  workstreamNumber: number | null,
+): { issueId: string; startDate: string | null; finishDate: string | null }[] {
+  return issues.flatMap((issue) => {
+    const rolled = derivedSchedule(issues, workstreamNumber, issue.issueId);
+    if (!rolled || (rolled.startDate === issue.startDate && rolled.finishDate === issue.finishDate)) return [];
+    return [{ issueId: issue.issueId, ...rolled }];
+  });
+}
+
+/**
+ * Start and Finish for one Epic or Feature once a Task or Sub-issue is under it.
+ * Null when that parent still has no Task or Sub-issue, so its own dates stay.
+ */
+export function derivedSchedule(
+  issues: DatedNode[],
+  workstreamNumber: number | null,
+  issueId: string,
+): { startDate: string | null; finishDate: string | null } | null {
+  const byId = new Map(issues.map((issue) => [issue.issueId, issue]));
+  const issue = byId.get(issueId);
+  if (!issue || !datesAreDerived(planKind(issue, byId, workstreamNumber))) return null;
+  const children = new Map<string, DatedNode[]>();
+  for (const item of issues) {
+    if (!item.parentIssueId || item.parentIssueId === item.issueId) continue;
+    const list = children.get(item.parentIssueId) ?? [];
+    list.push(item);
+    children.set(item.parentIssueId, list);
+  }
+  return descendantSpan(issueId, children, byId, workstreamNumber);
+}
+
+function descendantSpan(
+  issueId: string,
+  children: Map<string, DatedNode[]>,
+  byId: Map<string, DatedNode>,
+  workstreamNumber: number | null,
+): { startDate: string | null; finishDate: string | null } | null {
+  let start: string | null = null;
+  let finish: string | null = null;
+  let sawTask = false;
+  const stack = [...(children.get(issueId) ?? [])];
+  const seen = new Set<string>();
+  while (stack.length > 0) {
+    const child = stack.pop();
+    if (!child || seen.has(child.issueId)) continue;
+    seen.add(child.issueId);
+    stack.push(...(children.get(child.issueId) ?? []));
+    if (datesAreDerived(planKind(child, byId, workstreamNumber))) continue;
+    sawTask = true;
+    const range = scheduledRange(child);
+    if (!range) continue;
+    if (!start || range.start < start) start = range.start;
+    if (!finish || range.finish > finish) finish = range.finish;
+  }
+  if (!sawTask) return null;
+  return { startDate: start, finishDate: finish };
+}
+
+/** The bar the Timeline draws. An Epic or Feature with a task under it uses that span. Otherwise it uses its own Start and Finish. */
 export function chartRanges(rows: ChartRow[]): (ScheduledRange | null)[] {
   return rows.map((_, index) => chartRange(rows, index));
 }
 
 function chartRange(rows: ChartRow[], index: number): ScheduledRange | null {
   const row = rows[index];
-  const own = scheduledRange(row);
-  if (row.kind !== "epic" && row.kind !== "feature") return own;
-  let start = own?.start ?? null;
-  let finish = own?.finish ?? null;
+  if (row.kind !== "epic" && row.kind !== "feature") return scheduledRange(row);
+  let start: string | null = null;
+  let finish: string | null = null;
+  let sawTask = false;
   for (let child = index + 1; child < rows.length && rows[child].depth > row.depth; child += 1) {
+    if (rows[child].kind === "epic" || rows[child].kind === "feature") continue;
+    sawTask = true;
     const range = scheduledRange(rows[child]);
     if (!range) continue;
     if (!start || range.start < start) start = range.start;
     if (!finish || range.finish > finish) finish = range.finish;
   }
+  if (!sawTask) return scheduledRange(row);
   if (!start || !finish) return null;
-  const sameAsOwn = own?.start === start && own.finish === finish;
-  return { start, finish, fromIteration: sameAsOwn ? own.fromIteration : false };
+  return { start, finish, fromIteration: false };
 }
 
 export function barPlacement(start: string, finish: string, origin: string, days: number): { left: string; width: string } {

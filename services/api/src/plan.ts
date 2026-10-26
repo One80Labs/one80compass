@@ -11,7 +11,7 @@ import { parentDoneBlocked, planKind } from "../../../packages/domain/src/hierar
 import { dependencyCycle, dependencyReview } from "../../../packages/domain/src/dependencies";
 import { baselineSnapshot, type BaselineRecord } from "../../../packages/domain/src/baselines";
 import { tracedComment } from "../../../packages/domain/src/comments";
-import { isIsoDate } from "../../../packages/domain/src/schedule";
+import { derivedSchedule, isIsoDate } from "../../../packages/domain/src/schedule";
 import { milestoneViews } from "../../../packages/domain/src/milestones";
 import { projectProgress } from "../../../packages/domain/src/progress";
 import type { HandlerDeps, HttpResult } from "./router";
@@ -316,6 +316,32 @@ async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResu
   if (kind === "subissue" && (parentKind !== "issue" || parent?.number == null)) {
     return json(409, { code: "PARENT_REQUIRED", message: "A Sub-issue nests under an Issue.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
+  const rest = { ...ctx.body };
+  delete rest.kind;
+  delete rest.title;
+  delete rest.parentIssueId;
+  const fieldKeys = ["description", "status", "effort", "startDate", "finishDate", "iterationId", "assigneeId", "comment"];
+  const sentFields = fieldKeys.some((key) => key in rest);
+  const fields = issueChange(rest);
+  if (sentFields && !fields) return json(400, { code: "VALIDATION", message: "Check the description, status, effort, dates, iteration, assignee, and comment.", correlationId: ctx.correlationId }, ctx.correlationId);
+  const change: IssueChange & { comment?: string } = fields ?? {};
+  const start = change.startDate ?? null;
+  const finish = change.finishDate ?? null;
+  if (start && finish && finish < start) {
+    return json(400, { code: "VALIDATION", message: "The finish date cannot be before the start date.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if ((change.startDate !== undefined || change.finishDate !== undefined) && (!settings.startFieldId || !settings.finishFieldId)) {
+    return json(409, { code: "DATES_NOT_CONFIGURED", message: "Add Start and Finish date fields on the GitHub project before scheduling a task.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (change.iterationId) {
+    if (settings.iterations.length > 0 && !settings.iterations.some((item) => item.id === change.iterationId)) {
+      return json(400, { code: "VALIDATION", message: "That iteration is not on the GitHub project.", correlationId: ctx.correlationId }, ctx.correlationId);
+    }
+  }
+  if (change.comment) {
+    change.comments = tracedComment(null, await actorLabel(ctx, project.customerId), ctx.deps.now().toISOString().slice(0, 10), change.comment);
+    delete change.comment;
+  }
   if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
   const idempotencyKey = ctx.deps.newId();
   await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Adding the plan row.", ctx.deps.now().toISOString()));
@@ -327,6 +353,7 @@ async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResu
     title,
     parentIssueId: parent?.issueId ?? null,
     workstreamNumber: settings.workstreamNumber,
+    ...change,
   });
   await ctx.deps.store.putAudit({
     eventId: ctx.deps.newId(),
@@ -367,6 +394,12 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
   if (!issue || issue.customerId !== project.customerId) return notFound(ctx.correlationId);
   const change = issueChange(ctx.body);
   if (!change) return json(400, { code: "VALIDATION", message: "Send a title, description, status, effort, dates, iteration, assignee, or comment.", correlationId: ctx.correlationId }, ctx.correlationId);
+  const settingsForKind = await ctx.deps.store.getSettings(projectId);
+  const related = await ctx.deps.store.listIssues(projectId);
+  if (derivedSchedule(related, settingsForKind?.workstreamNumber ?? null, issue.issueId)) {
+    delete change.startDate;
+    delete change.finishDate;
+  }
   const start = change.startDate !== undefined ? change.startDate : issue.startDate;
   const finish = change.finishDate !== undefined ? change.finishDate : issue.finishDate;
   if (start && finish && finish < start) {

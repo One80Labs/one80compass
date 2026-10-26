@@ -3,6 +3,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { PlanIssue, ProjectSettings, SyncMessage } from "../../../packages/domain/src/index";
 import { parentStatusChanges, rollupTargets } from "../../../packages/domain/src/hierarchy";
+import { scheduleRollups } from "../../../packages/domain/src/schedule";
 import { DynamoStore } from "../../api/src/store";
 import { applyGithubDelivery } from "./apply";
 import { githubFromEnv, type GitHubGateway } from "./github";
@@ -34,6 +35,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
       if (!next) continue;
       for (const issue of next) await store.putIssue(issue);
       await rollUpParents(store, gateway, settings, changedIssue(issues, next), now, message.deliveryId);
+      await rollUpSchedules(store, gateway, settings, now);
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
     }
     await store.claimDelivery(message.deliveryId);
@@ -62,6 +64,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
           if (!seen.has(issue.issueId) && issue.inProject) await store.putIssue({ ...issue, inProject: false, updatedAt: now });
         }
         await rollUpParents(store, gateway, result.settings, null, now, "reconcile");
+        await rollUpSchedules(store, gateway, result.settings, now);
         await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
       } catch (error) {
         await store.putSync({
@@ -121,6 +124,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
         await store.putSettings(settings);
       }
       await rollUpParents(store, gateway, settings, message.changes[0]?.issueId ?? null, now, message.idempotencyKey);
+      await rollUpSchedules(store, gateway, settings, now);
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
     } catch (error) {
       await store.putSync({
@@ -175,6 +179,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
       for (const issue of previous) {
         if (!seen.has(issue.issueId) && issue.inProject) await store.putIssue({ ...issue, inProject: false, updatedAt: now });
       }
+      await rollUpSchedules(store, gateway, result.settings, now);
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
     } catch (error) {
       await store.putSync({
@@ -200,6 +205,7 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
     await store.putIssue(updated);
     await store.putSettings(settings);
     await rollUpParents(store, gateway, settings, message.issueId, now, message.idempotencyKey);
+    await rollUpSchedules(store, gateway, settings, now);
     await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
   } catch (error) {
     await store.putSync({
@@ -210,6 +216,20 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
       updatedAt: now,
     });
     throw error;
+  }
+}
+
+/** Writes Epic and Feature Start and Finish from the tasks under them. */
+async function rollUpSchedules(store: DynamoStore, gateway: GitHubGateway, settings: ProjectSettings, now: string): Promise<void> {
+  if (!gateway.configured || !settings.startFieldId || !settings.finishFieldId) return;
+  const issues = await store.listIssues(settings.projectId);
+  for (const change of scheduleRollups(issues, settings.workstreamNumber)) {
+    const issue = issues.find((item) => item.issueId === change.issueId);
+    if (!issue?.itemId) continue;
+    const updated = await gateway.updateIssue(settings, issue, { startDate: change.startDate, finishDate: change.finishDate });
+    await store.putIssue({ ...updated, updatedAt: now });
+    issue.startDate = change.startDate;
+    issue.finishDate = change.finishDate;
   }
 }
 

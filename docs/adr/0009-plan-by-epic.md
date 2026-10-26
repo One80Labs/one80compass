@@ -6,4 +6,4 @@ An Epic is a GitHub issue whose type is EPIC. The name match ignores capitalizat
 
 The Timeline uses that order. A task with no Epic ancestor is shown under Outside an Epic. The Kanban board stays grouped by status.
 
-Adding a row creates the GitHub issue, sets the issue type to EPIC, Feature, or Task, links the parent, and adds the issue to the mapped project. A Sub-issue is created with no type. A parent is still marked Done in GitHub when every task under it is Done.
+Adding a row creates the GitHub issue, sets the issue type to EPIC, Feature, or Task, and sends the same GitHub fields the edit drawer uses for that type: description, status, effort, iteration, assignee, comments, and Start and Finish. An Epic or Feature keeps the dates entered at creation until a Task or Sub-issue is added under it. Then those dates are replaced by the span of those tasks. A Sub-issue is created with no type. A parent is still marked Done in GitHub when every task under it is Done.

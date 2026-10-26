@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import type { ProposedShift } from "../../../packages/domain/src/dependencies";
 import { scheduleConflicts } from "../../../packages/domain/src/dependencies";
-import { addDays, barPlacement, chartRanges, datesAfterIterationPick, iterationFinish, scheduleSpan, scheduleText, type ScheduledRange } from "../../../packages/domain/src/schedule";
+import { addDays, barPlacement, chartRanges, datesAfterIterationPick, datesAreDerived, derivedSchedule, iterationFinish, scheduleSpan, scheduleText, type ScheduledRange } from "../../../packages/domain/src/schedule";
 import type { MilestoneView } from "../../../packages/domain/src/milestones";
 import { api, ApiError } from "./api";
 import type { Session } from "./auth";
@@ -108,7 +108,7 @@ export function PlanPage({ session }: { session: Session | null }) {
           {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, effort, and dates can be edited from a row after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
-            The plan is grouped by Epic. Date bars use the Start and Finish fields. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
+            The plan is grouped by Epic. Date bars use the Start and Finish fields. An Epic or Feature can keep its own dates until a task or sub-issue is added, and then those dates come from the tasks under it. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
           </p>
         </div>
       )}
@@ -162,10 +162,13 @@ export function PlanPage({ session }: { session: Session | null }) {
         <AddPlanDrawer
           kind={addKind}
           issues={issues}
+          columns={columns}
+          iterations={plan.data?.settings?.iterations ?? []}
+          users={plan.data?.settings?.assignableUsers ?? []}
           workstreamNumber={workstreamNumber}
           busy={plan.busy}
           onClose={() => setAddKind(null)}
-          onCreate={(kind, title, parentIssueId) => plan.createPlanItem(kind, title, parentIssueId)}
+          onCreate={(kind, title, parentIssueId, draft) => plan.createPlanItem(kind, title, parentIssueId, draft)}
         />
       )}
       {editing && canWrite && (
@@ -175,6 +178,10 @@ export function PlanPage({ session }: { session: Session | null }) {
           columns={columns}
           iterations={plan.data?.settings?.iterations ?? []}
           users={plan.data?.settings?.assignableUsers ?? []}
+          datesDerived={derivedDates(editing, issues, workstreamNumber)}
+          summary={summaryIssue(editing, issues, workstreamNumber)}
+          derivedStart={rolledDates(editing, issues, workstreamNumber)?.startDate ?? null}
+          derivedFinish={rolledDates(editing, issues, workstreamNumber)?.finishDate ?? null}
           onClose={() => setEditingId(null)}
           onSave={async (issueId, change) => {
             await plan.saveIssue(issueId, change);
@@ -382,6 +389,10 @@ export function KanbanPage({ session }: { session: Session | null }) {
           columns={columns}
           iterations={plan.data?.settings?.iterations ?? []}
           users={plan.data?.settings?.assignableUsers ?? []}
+          datesDerived={derivedDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)}
+          summary={summaryIssue(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)}
+          derivedStart={rolledDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)?.startDate ?? null}
+          derivedFinish={rolledDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)?.finishDate ?? null}
           onClose={() => setEditing(null)}
           onSave={async (issueId, change) => {
             await plan.saveIssue(issueId, change);
@@ -445,6 +456,10 @@ function IssueDrawer({
   columns,
   iterations,
   users,
+  datesDerived,
+  summary,
+  derivedStart,
+  derivedFinish,
   onClose,
   onSave,
 }: {
@@ -452,6 +467,10 @@ function IssueDrawer({
   columns: string[];
   iterations: IterationChoice[];
   users: GitHubUser[];
+  datesDerived: boolean;
+  summary: boolean;
+  derivedStart: string | null;
+  derivedFinish: string | null;
   onClose: () => void;
   onSave: (issueId: string, change: IssueEdit) => Promise<void>;
 }) {
@@ -474,7 +493,7 @@ function IssueDrawer({
 
   function chooseIteration(nextId: string) {
     setIterationId(nextId);
-    if (!nextId) return;
+    if (!nextId || datesDerived) return;
     const next = iterationChoices.find((item) => item.id === nextId);
     const end = next ? iterationFinish(next.startDate, next.duration) : null;
     if (!next || !end) return;
@@ -497,7 +516,7 @@ function IssueDrawer({
       setError("Effort must be a number that is zero or more.");
       return;
     }
-    if (startDate && finishDate && finishDate < startDate) {
+    if (!datesDerived && startDate && finishDate && finishDate < startDate) {
       setError("The finish date cannot be before the start date.");
       return;
     }
@@ -509,8 +528,8 @@ function IssueDrawer({
         description: description.trim() ? description : null,
         status,
         effort: parsed,
-        ...(startDate !== (issue.startDate ?? "") ? { startDate: startDate || null } : {}),
-        ...(finishDate !== (issue.finishDate ?? "") ? { finishDate: finishDate || null } : {}),
+        ...(!datesDerived && startDate !== (issue.startDate ?? "") ? { startDate: startDate || null } : {}),
+        ...(!datesDerived && finishDate !== (issue.finishDate ?? "") ? { finishDate: finishDate || null } : {}),
         ...(iterationId !== (issue.iterationId ?? "") ? { iterationId: iterationId || null } : {}),
         ...(assigneeId !== (issue.assignees?.[0]?.id ?? "") ? { assigneeId: assigneeId || null } : {}),
         ...(comment.trim() ? { comment: comment.trim() } : {}),
@@ -524,7 +543,15 @@ function IssueDrawer({
 
   return (
     <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
-      <p>Title, description, status, effort, iteration, assignee, dates, and comments are sent to GitHub. Choosing an iteration fills Start and Finish from that iteration. A later iteration keeps Start and sets Finish to the new end date. You can still change the dates. The timeline bar uses Start and Finish. A comment is stored with your name and the date.</p>
+      <p>
+        Title, description, status, effort, iteration, assignee, and comments are sent to GitHub.
+        {datesDerived
+          ? " Start and Finish come from the tasks and sub-issues under this item."
+          : summary
+            ? " Choosing an iteration fills Start and Finish. You can still change the dates. Those dates stay until a task or sub-issue is added, and then they come from those items."
+            : " Choosing an iteration fills Start and Finish from that iteration. A later iteration keeps Start and sets Finish to the new end date. You can still change the dates."}{" "}
+        The timeline bar uses Start and Finish. A comment is stored with your name and the date.
+      </p>
       <label>
         Title
         <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={200} />
@@ -567,14 +594,22 @@ function IssueDrawer({
           ))}
         </select>
       </label>
-      <label>
-        Start
-        <input className="field" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-      </label>
-      <label>
-        Finish
-        <input className="field" type="date" value={finishDate} onChange={(event) => setFinishDate(event.target.value)} />
-      </label>
+      {datesDerived ? (
+        <p>
+          {derivedStart && derivedFinish ? `Start ${derivedStart}. Finish ${derivedFinish}.` : "No task under this item has both a start and a finish yet."}
+        </p>
+      ) : (
+        <>
+          <label>
+            Start
+            <input className="field" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+          </label>
+          <label>
+            Finish
+            <input className="field" type="date" value={finishDate} onChange={(event) => setFinishDate(event.target.value)} />
+          </label>
+        </>
+      )}
       <label>
         Comments
         {issue.comments ? <span className="comment-log">{issue.comments}</span> : <span className="muted small">No comments yet.</span>}
@@ -583,6 +618,19 @@ function IssueDrawer({
       {error && <p className="error">{error}</p>}
     </EditDrawer>
   );
+}
+
+function derivedDates(issue: PlanIssue, issues: PlanIssue[], workstreamNumber: number | null): boolean {
+  return derivedSchedule(issues.map(planNode), workstreamNumber, issue.issueId) !== null;
+}
+
+function summaryIssue(issue: PlanIssue, issues: PlanIssue[], workstreamNumber: number | null): boolean {
+  const nodes = issues.map(planNode);
+  return datesAreDerived(planKind(planNode(issue), new Map(nodes.map((item) => [item.issueId, item])), workstreamNumber));
+}
+
+function rolledDates(issue: PlanIssue, issues: PlanIssue[], workstreamNumber: number | null) {
+  return derivedSchedule(issues.map(planNode), workstreamNumber, issue.issueId);
 }
 
 function iterationOptions(iterations: IterationChoice[], issue: PlanIssue): IterationChoice[] {
@@ -681,9 +729,23 @@ function AddPlanBar({ onAdd }: { onAdd: (kind: Exclude<PlanKind, "workstream">) 
   );
 }
 
+type PlanDraft = {
+  description: string | null;
+  status?: string;
+  effort: number | null;
+  startDate?: string | null;
+  finishDate?: string | null;
+  iterationId?: string | null;
+  assigneeId?: string | null;
+  comment?: string;
+};
+
 function AddPlanDrawer({
   kind,
   issues,
+  columns,
+  iterations,
+  users,
   workstreamNumber,
   busy,
   onClose,
@@ -691,13 +753,28 @@ function AddPlanDrawer({
 }: {
   kind: Exclude<PlanKind, "workstream">;
   issues: PlanIssue[];
+  columns: string[];
+  iterations: IterationChoice[];
+  users: GitHubUser[];
   workstreamNumber: number | null;
   busy: boolean;
   onClose: () => void;
-  onCreate: (kind: Exclude<PlanKind, "workstream">, title: string, parentIssueId: string | null) => Promise<void>;
+  onCreate: (kind: Exclude<PlanKind, "workstream">, title: string, parentIssueId: string | null, draft: PlanDraft) => Promise<void>;
 }) {
+  const plansAhead = datesAreDerived(kind);
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [descriptionOpen, setDescriptionOpen] = useState(true);
+  const [status, setStatus] = useState(columns[0] ?? "");
+  const [effort, setEffort] = useState("");
+  const [iterationId, setIterationId] = useState("");
+  const [pickedIteration, setPickedIteration] = useState(false);
+  const [startDate, setStartDate] = useState("");
+  const [finishDate, setFinishDate] = useState("");
+  const [assigneeId, setAssigneeId] = useState("");
+  const [comment, setComment] = useState("");
   const [parentIssueId, setParentIssueId] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const nodes = issues.map(planNode);
   const byId = new Map(nodes.map((issue) => [issue.issueId, issue]));
   const parents = nodes.filter((issue) => {
@@ -706,6 +783,25 @@ function AddPlanDrawer({
     if (kind === "issue") return rowKind === "epic" || rowKind === "feature";
     return rowKind === "issue";
   });
+
+  function chooseIteration(nextId: string) {
+    setIterationId(nextId);
+    if (!nextId) return;
+    const next = iterations.find((item) => item.id === nextId);
+    const end = next ? iterationFinish(next.startDate, next.duration) : null;
+    if (!next || !end) return;
+    const dates = datesAfterIterationPick({
+      hadIteration: false,
+      pickedBefore: pickedIteration,
+      startDate,
+      iterationStart: next.startDate,
+      iterationEnd: end,
+    });
+    setStartDate(dates.startDate);
+    setFinishDate(dates.finishDate);
+    setPickedIteration(true);
+  }
+
   return (
     <EditDrawer
       title={`Add ${kindLabel[kind]}`}
@@ -713,18 +809,44 @@ function AddPlanDrawer({
       saving={busy}
       onSubmit={(event) => {
         event.preventDefault();
-        void onCreate(kind, title, kind === "epic" ? null : parentIssueId || null).then(onClose, () => undefined);
+        const parsed = effort.trim() === "" ? null : Number(effort);
+        if (parsed != null && (!Number.isFinite(parsed) || parsed < 0)) {
+          setError("Effort must be a number that is zero or more.");
+          return;
+        }
+        if (startDate && finishDate && finishDate < startDate) {
+          setError("The finish date cannot be before the start date.");
+          return;
+        }
+        setError(null);
+        const draft: PlanDraft = {
+          description: description.trim() ? description : null,
+          effort: parsed,
+          ...(status ? { status } : {}),
+          ...(startDate ? { startDate } : {}),
+          ...(finishDate ? { finishDate } : {}),
+          ...(iterationId ? { iterationId } : {}),
+          ...(assigneeId ? { assigneeId } : {}),
+          ...(comment.trim() ? { comment: comment.trim() } : {}),
+        };
+        void onCreate(kind, title, kind === "epic" ? null : parentIssueId || null, draft).then(onClose, (caught) => setError(message(caught)));
       }}
     >
+      <p>
+        Title, description, status, effort, iteration, assignee, and comments are sent to GitHub.
+        Choosing an iteration fills Start and Finish from that iteration. A later iteration keeps Start and sets Finish to the new end date. You can still change the dates.
+        {plansAhead ? " Those dates stay until a task or sub-issue is added under this item, and then they come from those items." : ""} A comment is stored with your name and the date.
+      </p>
       <label>
         Title
-        <input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={256} />
+        <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={200} />
       </label>
-      {kind === "epic" && <p className="copy">This Epic nests under the Workstream issue.</p>}
+      <DescriptionField value={description} expanded={descriptionOpen} onExpanded={setDescriptionOpen} onChange={setDescription} />
+      {kind === "epic" && <p>This Epic nests under the Workstream issue.</p>}
       {kind !== "epic" && (
         <label>
           Parent
-          <select value={parentIssueId} onChange={(event) => setParentIssueId(event.target.value)} required={kind !== "issue"}>
+          <select className="field" value={parentIssueId} onChange={(event) => setParentIssueId(event.target.value)} required={kind !== "issue"}>
             {kind === "issue" && <option value="">Workstream</option>}
             {parents.map((issue) => (
               <option key={issue.issueId} value={issue.issueId}>
@@ -734,6 +856,56 @@ function AddPlanDrawer({
           </select>
         </label>
       )}
+      <label>
+        Status
+        <select className="field" value={status} onChange={(event) => setStatus(event.target.value)} required={columns.length > 0}>
+          {!status && <option value="">No status</option>}
+          {columns.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Effort
+        <input className="field" value={effort} onChange={(event) => setEffort(event.target.value)} inputMode="decimal" placeholder="Unestimated" />
+      </label>
+      <label>
+        Iteration
+        <select className="field" value={iterationId} onChange={(event) => chooseIteration(event.target.value)}>
+          <option value="">No iteration</option>
+          {iterations.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Assignee
+        <select className="field" value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}>
+          <option value="">Unassigned</option>
+          {users.map((person) => (
+            <option key={person.id} value={person.id}>
+              {person.name ? `${person.name} (${person.login})` : person.login}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Start
+        <input className="field" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+      </label>
+      <label>
+        Finish
+        <input className="field" type="date" value={finishDate} onChange={(event) => setFinishDate(event.target.value)} />
+      </label>
+      <label>
+        Comments
+        <textarea className="field" value={comment} onChange={(event) => setComment(event.target.value)} maxLength={2000} placeholder="Add a comment" />
+      </label>
+      {error && <p className="error">{error}</p>}
     </EditDrawer>
   );
 }
@@ -958,13 +1130,13 @@ function usePlan(session: Session | null) {
         setBusy(false);
       }
     },
-    async createPlanItem(kind: Exclude<PlanKind, "workstream">, title: string, parentIssueId: string | null) {
+    async createPlanItem(kind: Exclude<PlanKind, "workstream">, title: string, parentIssueId: string | null, draft: PlanDraft) {
       if (!session) return;
       const before = new Set((data?.issues ?? []).map((issue) => issue.issueId));
       setError(null);
       setBusy(true);
       try {
-        await api(`/projects/${projectId}/plan-items`, session.idToken, { method: "POST", body: { kind, title, parentIssueId } });
+        await api(`/projects/${projectId}/plan-items`, session.idToken, { method: "POST", body: { kind, title, parentIssueId, ...draft } });
         await poll((result) => result.issues.some((issue) => issue.title === title && !before.has(issue.issueId)));
       } catch (caught) {
         setError(message(caught));

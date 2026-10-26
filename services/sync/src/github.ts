@@ -10,7 +10,12 @@ export type GitHubGateway = {
   setDependency(settings: ProjectSettings, issue: PlanIssue, predecessorId: string, action: "add" | "remove"): Promise<PlanIssue>;
   createPlanItem(
     settings: ProjectSettings,
-    input: { kind: "epic" | "feature" | "issue" | "subissue"; title: string; parentIssueId: string | null; workstreamNumber: number | null },
+    input: {
+      kind: "epic" | "feature" | "issue" | "subissue";
+      title: string;
+      parentIssueId: string | null;
+      workstreamNumber: number | null;
+    } & IssueChange,
   ): Promise<void>;
 };
 
@@ -201,15 +206,55 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
         if (!workstreamId) throw new Error(`Workstream issue #${input.workstreamNumber} was not found.`);
       }
       const parentIssueId = needsWorkstream ? workstreamId : input.parentIssueId;
-      const created = await graphql<{ createIssue?: { issue?: { id?: string } | null } | null }>(
+      const created = await graphql<{ createIssue?: { issue?: { id?: string; number?: number } | null } | null }>(
         token,
         issueTypeId ? CREATE_TYPED_ISSUE : CREATE_ISSUE,
         issueTypeId ? { repo: repositoryId, title: input.title, type: issueTypeId } : { repo: repositoryId, title: input.title },
       );
       const issueId = created.createIssue?.issue?.id;
+      const number = created.createIssue?.issue?.number ?? null;
       if (!issueId) throw new Error("GitHub did not create the issue.");
       if (parentIssueId) await graphql(token, ADD_SUB_ISSUE, { parent: parentIssueId, child: issueId });
-      await graphql(token, ADD_PROJECT_ITEM, { project: settings.projectNodeId, content: issueId });
+      const added = await graphql<{ addProjectV2ItemById?: { item?: { id?: string } | null } | null }>(token, ADD_PROJECT_ITEM, {
+        project: settings.projectNodeId,
+        content: issueId,
+      });
+      const change = fieldsOnCreate(input);
+      if (Object.keys(change).length === 0) return;
+      await this.updateIssue(
+        settings,
+        {
+          issueId,
+          itemId: added.addProjectV2ItemById?.item?.id ?? null,
+          projectId: settings.projectId,
+          customerId: settings.customerId,
+          number,
+          title: input.title,
+          description: null,
+          status: "",
+          effort: null,
+          issueState: "open",
+          archived: false,
+          deletedAt: null,
+          parentIssueId,
+          issueType: createdIssueType(input.kind),
+          milestone: null,
+          milestoneId: null,
+          milestoneDueOn: null,
+          startDate: null,
+          finishDate: null,
+          iterationTitle: null,
+          iterationStart: null,
+          iterationDuration: null,
+          iterationId: null,
+          assignees: [],
+          comments: null,
+          predecessorIds: [],
+          inProject: true,
+          updatedAt: now().toISOString(),
+        },
+        change,
+      );
     },
   };
 }
@@ -421,6 +466,19 @@ function assignableUsers(lookup: ProjectLookup): GitHubUser[] {
     if (!id || !login) return [];
     return [{ id, login, name: node?.name?.trim() || null }];
   });
+}
+
+function fieldsOnCreate(input: IssueChange & { kind: "epic" | "feature" | "issue" | "subissue" }): IssueChange {
+  const change: IssueChange = {};
+  if (input.description !== undefined) change.description = input.description;
+  if (input.status) change.status = input.status;
+  if (typeof input.effort === "number") change.effort = input.effort;
+  if (input.startDate !== undefined) change.startDate = input.startDate;
+  if (input.finishDate !== undefined) change.finishDate = input.finishDate;
+  if (input.iterationId !== undefined) change.iterationId = input.iterationId;
+  if (input.assigneeId !== undefined) change.assigneeId = input.assigneeId;
+  if (input.comments !== undefined) change.comments = input.comments;
+  return change;
 }
 
 /** Date fields named Start and Finish that the project does not already have. */

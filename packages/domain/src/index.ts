@@ -275,7 +275,7 @@ export type SyncMessage =
     }
   | { type: "set-dependency"; projectId: string; issueId: string; predecessorId: string; action: "add" | "remove"; idempotencyKey: string }
   | { type: "ensure-date-fields"; projectId: string }
-  | {
+  | ({
       type: "create-plan-item";
       projectId: string;
       idempotencyKey: string;
@@ -284,4 +284,4 @@ export type SyncMessage =
       /** Parent issue node id. Null when the parent is the Workstream issue number. */
       parentIssueId: string | null;
       workstreamNumber: number | null;
-    };
+    } & IssueChange);
