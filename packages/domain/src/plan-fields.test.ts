@@ -29,8 +29,11 @@ describe("stored plan field defaults", () => {
   });
 
   it("keeps complete catalog rows and drops rows that have no id or name", () => {
-    expect(catalogLabelsFromStore([{ id: "L1", name: "Bug" }, { id: " ", name: "Skip" }, "nope"])).toEqual([{ id: "L1", name: "Bug" }]);
-    expect(catalogIssueTypesFromStore([{ id: "T1", name: "Task" }])).toEqual([{ id: "T1", name: "Task" }]);
+    expect(catalogLabelsFromStore([{ id: "L1", name: "Bug" }, { id: " ", name: "Skip" }, "nope"])).toEqual([{ id: "L1", name: "Bug", color: null }]);
+    expect(catalogIssueTypesFromStore([{ id: "T1", name: "Task", color: "olive" }, { id: "T2", name: "Epic", color: "nope" }])).toEqual([
+      { id: "T1", name: "Task", color: "olive" },
+      { id: "T2", name: "Epic", color: null },
+    ]);
     expect(priorityOptionsFromStore([{ id: "P1", name: "High" }])).toEqual([{ id: "P1", name: "High" }]);
     expect(
       catalogMilestonesFromStore([

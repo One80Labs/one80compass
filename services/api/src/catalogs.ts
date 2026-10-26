@@ -1,5 +1,6 @@
 import { adminAccess, type Principal } from "../../../packages/authz/src/index";
 import type { IterationChoice, ProjectCatalogs, ProjectSettings } from "../../../packages/domain/src/index";
+import { catalogColorFromStore } from "../../../packages/domain/src/index";
 import { isIsoDate } from "../../../packages/domain/src/schedule";
 import type { HandlerDeps, HttpResult } from "./router";
 
@@ -105,13 +106,32 @@ function parseCatalogs(body: Record<string, unknown>): ProjectCatalogs | null {
   const doneStatuses = nameList(body.doneStatuses);
   const columns = nameList(body.columns);
   const iterations = iterationRows(body.iterations);
-  const labels = namedRows(body.labels);
-  const issueTypes = namedRows(body.issueTypes);
+  const labels = coloredRows(body.labels);
+  const issueTypes = coloredRows(body.issueTypes);
   const priorityOptions = namedRows(body.priorityOptions);
   const milestones = milestoneRows(body.milestones);
   if (!statusOptions || !doneStatuses || !columns || !iterations || !labels || !issueTypes || !priorityOptions || !milestones) return null;
   if (doneStatuses.some((name) => !statusOptions.some((option) => option.name === name))) return null;
   return { statusOptions, doneStatuses, columns, iterations, labels, issueTypes, priorityOptions, milestones };
+}
+
+function coloredRows(value: unknown): { id: string; name: string; color: string | null }[] | null {
+  if (!Array.isArray(value) || value.length > LIST_MAX) return null;
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
+  const rows: { id: string; name: string; color: string | null }[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") return null;
+    const record = entry as Record<string, unknown>;
+    const id = boundedText(record.id, ID_MAX);
+    const name = boundedText(record.name, NAME_MAX);
+    if (!id || !name || seenIds.has(id) || seenNames.has(name)) return null;
+    if (record.color != null && record.color !== "" && catalogColorFromStore(record.color) == null) return null;
+    seenIds.add(id);
+    seenNames.add(name);
+    rows.push({ id, name, color: catalogColorFromStore(record.color) });
+  }
+  return rows;
 }
 
 function namedRows(value: unknown): { id: string; name: string }[] | null {

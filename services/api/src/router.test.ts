@@ -1754,7 +1754,7 @@ describe("catalogs", () => {
     const saved = await handler(event({ method: "PUT", path: `/projects/${projectId}/catalogs`, claims: adminClaims, body }));
     expect(saved.statusCode).toBe(200);
     const payload = JSON.parse(saved.body);
-    expect(payload.labels).toEqual([{ id: "label-1", name: "Billing" }]);
+    expect(payload.labels).toEqual([{ id: "label-1", name: "Billing", color: null }]);
     expect(payload.iterations).toEqual([{ id: "iter-1", title: "Sprint 1", startDate: "2026-11-02", duration: 14 }]);
     expect(payload.milestones).toEqual([
       { id: "mile-1", title: "Launch", dueOn: "2026-12-01" },
@@ -1765,7 +1765,7 @@ describe("catalogs", () => {
     expect(payload.recordSource).toBe("compass");
     const audit = store.audits.find((row) => row.action === "catalogs.updated");
     expect(audit?.targetType).toBe("project");
-    expect(audit?.after).toMatchObject({ labels: [{ id: "label-1", name: "Billing" }] });
+    expect(audit?.after).toMatchObject({ labels: [{ id: "label-1", name: "Billing", color: null }] });
   });
 });
 

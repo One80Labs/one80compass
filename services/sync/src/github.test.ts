@@ -26,7 +26,7 @@ const settings: ProjectSettings = {
   commentsFieldId: null,
   assignableUsers: [],
   recordSource: "github",
-  labels: [{ id: "L1", name: "Bug" }],
+  labels: [{ id: "L1", name: "Bug", color: null }],
   issueTypes: [],
   priorityOptions: [{ id: "P1", name: "High" }],
   milestones: [],
@@ -120,7 +120,7 @@ describe("readProject", () => {
       relationships: [],
     });
     expect(result.settings.recordSource).toBe("github");
-    expect(result.settings.labels).toEqual([{ id: "L1", name: "Bug" }]);
+    expect(result.settings.labels).toEqual([{ id: "L1", name: "Bug", color: null }]);
     expect(result.settings.priorityOptions).toEqual([{ id: "P1", name: "High" }]);
   });
 });

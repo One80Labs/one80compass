@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
+import { catalogColorHex } from "../../../packages/domain/src/index";
 import type { ProposedShift } from "../../../packages/domain/src/dependencies";
 import { scheduleConflicts } from "../../../packages/domain/src/dependencies";
 import { addDays, barPlacement, chartRanges, datesAfterIterationPick, datesAreDerived, derivedSchedule, iterationFinish, scheduleSpan, scheduleText, type ScheduledRange } from "../../../packages/domain/src/schedule";
@@ -75,8 +76,8 @@ type PlanResponse = {
     recordSource?: "github" | "compass";
     statusOptions?: { id: string; name: string }[];
     doneStatuses?: string[];
-    labels?: { id: string; name: string }[];
-    issueTypes?: { id: string; name: string }[];
+    labels?: { id: string; name: string; color?: string | null }[];
+    issueTypes?: { id: string; name: string; color?: string | null }[];
     priorityOptions?: { id: string; name: string }[];
     milestones?: { id: string; title: string; dueOn: string | null }[];
   } | null;
@@ -126,7 +127,7 @@ export function PlanPage({ session }: { session: Session | null }) {
       {tab === "Timeline view" && (
         <div>
           {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
-          <TimelineChart bands={bands} onEdit={canWrite ? setEditingId : null} />
+          <TimelineChart bands={bands} barColors={barColors(issues, plan.data?.settings?.issueTypes ?? [])} onEdit={canWrite ? setEditingId : null} />
           {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, effort, and dates can be edited from a row after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
@@ -1257,6 +1258,7 @@ function scheduleLabel(issue: Parameters<typeof scheduleText>[0]): string {
 
 function TimelineChart({
   bands,
+  barColors,
   onEdit,
 }: {
   bands: {
@@ -1275,6 +1277,7 @@ function TimelineChart({
       iterationDuration?: number | null;
     }[];
   }[];
+  barColors: Record<string, string | null>;
   onEdit: ((issueId: string) => void) | null;
 }) {
   const rangesByBand = bands.map((band) => chartRanges(band.rows));
@@ -1329,7 +1332,7 @@ function TimelineChart({
               <div className="timeline-status">
                 {epic && <TimelineStatus title={epic.title} status={epic.status} issueId={epic.issueId} onEdit={onEdit} />}
               </div>
-              <ScheduleBar range={header} span={span} summary />
+              <ScheduleBar range={header} span={span} summary color={epic ? barColors[epic.issueId] : null} />
             </div>
             {rows.length > 0 && (
               <div className="phase-tasks">
@@ -1344,7 +1347,7 @@ function TimelineChart({
                     <div className="timeline-status">
                       <TimelineStatus title={row.title} status={row.status} issueId={row.issueId} onEdit={onEdit} />
                     </div>
-                    <ScheduleBar range={range} span={span} summary={row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration)} />
+                    <ScheduleBar range={range} span={span} summary={row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration)} color={barColors[row.issueId]} />
                   </div>
                 ))}
               </div>
@@ -1360,17 +1363,27 @@ function ScheduleBar({
   range,
   span,
   summary,
+  color,
 }: {
   range: ScheduledRange | null;
   span: { origin: string; days: number };
   summary: boolean;
+  color?: string | null;
 }) {
   const label = range ? `${range.start} to ${range.finish}` : "Not scheduled";
+  const placement = range ? barPlacement(range.start, range.finish, span.origin, span.days) : null;
   return (
     <div className="gantt-track" aria-label={label}>
-      {range && <div className={summary ? "gantt-bar rollup" : "gantt-bar"} style={barPlacement(range.start, range.finish, span.origin, span.days)} title={label} />}
+      {range && placement && (
+        <div className={summary ? "gantt-bar rollup" : "gantt-bar"} style={{ ...placement, ...(color ? { background: color } : {}) }} title={label} />
+      )}
     </div>
   );
+}
+
+function barColors(issues: { issueId: string; issueType: string | null }[], issueTypes: { name: string; color?: string | null }[]): Record<string, string | null> {
+  const byName = new Map(issueTypes.map((type) => [type.name, catalogColorHex(type.color)]));
+  return Object.fromEntries(issues.map((issue) => [issue.issueId, (issue.issueType && byName.get(issue.issueType)) || null]));
 }
 
 function unionRange(ranges: (ScheduledRange | null)[]): ScheduledRange | null {

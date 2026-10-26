@@ -1338,6 +1338,67 @@ button.backlink {
   justify-self: start;
 }
 
+.color-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px var(--oc-divider);
+  background: #fff;
+}
+
+.color-swatch.none {
+  width: auto;
+  height: auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--oc-body);
+}
+
+.color-swatch.selected {
+  box-shadow: 0 0 0 2px var(--oc-ink);
+}
+
+.label-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 0;
+  margin: 16px 0 0;
+  padding: 0;
+}
+
+.label-tags legend {
+  width: 100%;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.label-tag {
+  border: 2px solid var(--oc-divider);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--oc-body);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.label-tag.selected {
+  background: var(--oc-accent-wash);
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: 210px minmax(0, 1fr);

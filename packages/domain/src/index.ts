@@ -122,10 +122,40 @@ export const DEFAULT_DONE_STATUSES = ["Done"] as const;
 
 /** Where the plan record was written. Existing GitHub sync rows stay `github`. */
 export type RecordSource = "github" | "compass";
-/** A label in the project catalog. */
-export type CatalogLabel = { id: string; name: string };
-/** An issue type in the project catalog. */
-export type CatalogIssueType = { id: string; name: string };
+/**
+ * Colors an administrator can assign to a label or an issue type.
+ * The ids are stored. The hex values follow the One80Compass palette.
+ */
+export const CATALOG_COLORS = [
+  { id: "terracotta", name: "Terracotta", hex: "#D97757" },
+  { id: "clay", name: "Clay", hex: "#C9683E" },
+  { id: "copper", name: "Copper", hex: "#B05D17" },
+  { id: "orange", name: "Orange", hex: "#F58220" },
+  { id: "gold", name: "Gold", hex: "#C4A35A" },
+  { id: "olive", name: "Olive", hex: "#5E8C3A" },
+  { id: "forest", name: "Forest", hex: "#3E6B45" },
+  { id: "blue", name: "Blue", hex: "#3C7FBE" },
+  { id: "slate", name: "Slate", hex: "#6B6A64" },
+  { id: "ink", name: "Ink", hex: "#3D3D3A" },
+] as const;
+
+/** A stored color id, or null when the row has no color. Unknown ids are dropped. */
+export function catalogColorFromStore(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim();
+  return CATALOG_COLORS.some((color) => color.id === id) ? id : null;
+}
+
+/** Hex for a stored color id. Null when the id is missing or not one of the ten theme colors. */
+export function catalogColorHex(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return CATALOG_COLORS.find((color) => color.id === value)?.hex ?? null;
+}
+
+/** A label in the project catalog. `color` is a `CATALOG_COLORS` id, or null. */
+export type CatalogLabel = { id: string; name: string; color: string | null };
+/** An issue type in the project catalog. `color` is a `CATALOG_COLORS` id, or null. */
+export type CatalogIssueType = { id: string; name: string; color: string | null };
 /** A priority choice in the project catalog. */
 export type PriorityOption = { id: string; name: string };
 /** A milestone in the project catalog. `dueOn` is YYYY-MM-DD, or null when there is no due date. */
@@ -262,12 +292,12 @@ export function recordSourceFromStore(value: unknown): RecordSource {
 
 /** Missing catalogs become an empty list. Rows without an id and a name are dropped. */
 export function catalogLabelsFromStore(value: unknown): CatalogLabel[] {
-  return namedCatalog(value);
+  return coloredCatalog(value);
 }
 
 /** Missing catalogs become an empty list. Rows without an id and a name are dropped. */
 export function catalogIssueTypesFromStore(value: unknown): CatalogIssueType[] {
-  return namedCatalog(value);
+  return coloredCatalog(value);
 }
 
 /** Missing catalogs become an empty list. Rows without an id and a name are dropped. */
@@ -325,6 +355,18 @@ function namedCatalog(value: unknown): { id: string; name: string }[] {
     const name = typeof row.name === "string" ? row.name.trim() : "";
     if (!id || !name) return [];
     return [{ id, name }];
+  });
+}
+
+function coloredCatalog(value: unknown): { id: string; name: string; color: string | null }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as { id?: unknown; name?: unknown; color?: unknown };
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const name = typeof row.name === "string" ? row.name.trim() : "";
+    if (!id || !name) return [];
+    return [{ id, name, color: catalogColorFromStore(row.color) }];
   });
 }
 

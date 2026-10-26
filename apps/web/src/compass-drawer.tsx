@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
+import { catalogColorHex } from "../../../packages/domain/src/index";
 import { datesAfterIterationPick, iterationFinish } from "../../../packages/domain/src/schedule";
 import type { IssueRelationship, IssueSave } from "./api";
 import { EditDrawer } from "./ui";
 
-type Named = { id: string; name: string };
+type Named = { id: string; name: string; color?: string | null };
 type Person = { id: string; login: string; name: string | null };
 type IterationChoice = { id: string; title: string; startDate: string; duration: number };
 
@@ -285,15 +286,25 @@ export function CompassIssueDrawer({
           <input className="field" value={priority} onChange={(event) => setPriority(event.target.value)} maxLength={80} placeholder="No priority" />
         )}
       </label>
-      <fieldset className="choice-list">
+      <fieldset className="label-tags">
         <legend>Labels</legend>
-        {catalogs.labels.length === 0 && <span className="muted small">No labels yet. An administrator can add them.</span>}
-        {catalogs.labels.map((label) => (
-          <label key={label.id}>
-            <input type="checkbox" checked={labels.includes(label.id)} onChange={(event) => setLabels(toggleValue(labels, label.id, event.target.checked))} />
-            {label.name}
-          </label>
-        ))}
+        {catalogs.labels.length === 0 && <span className="muted small">No labels yet. An administrator can add them in Settings.</span>}
+        {catalogs.labels.map((label) => {
+          const selected = labels.includes(label.id);
+          const border = catalogColorHex(label.color);
+          return (
+            <button
+              key={label.id}
+              className={selected ? "label-tag selected" : "label-tag"}
+              type="button"
+              aria-pressed={selected}
+              style={border ? { borderColor: border } : undefined}
+              onClick={() => setLabels(toggleValue(labels, label.id, !selected))}
+            >
+              {label.name}
+            </button>
+          );
+        })}
       </fieldset>
       <fieldset className="choice-list">
         <legend>Assignees</legend>

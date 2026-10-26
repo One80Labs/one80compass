@@ -129,10 +129,10 @@ describe("importCompass", () => {
     expect(imported.settings.columns).toEqual(["Ready", "Done"]);
     expect(imported.settings.doneStatuses).toEqual(["Done"]);
     expect(imported.settings.iterations).toEqual(settings.iterations);
-    expect(imported.settings.issueTypes).toEqual([{ id: "Epic", name: "Epic" }, { id: "Task", name: "Task" }]);
+    expect(imported.settings.issueTypes).toEqual([{ id: "Epic", name: "Epic", color: null }, { id: "Task", name: "Task", color: null }]);
     expect(imported.settings.milestones).toEqual([{ id: "M_1", title: "Phase 1", dueOn: "2026-11-02" }]);
     expect(imported.settings.priorityOptions).toEqual([{ id: "P1", name: "P1" }]);
-    expect(imported.settings.labels).toEqual([{ id: "risk", name: "risk" }]);
+    expect(imported.settings.labels).toEqual([{ id: "risk", name: "risk", color: null }]);
     expect(settings.recordSource).toBe("github");
   });
 });

@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { IterationChoice, ProjectCatalogs } from "../../../packages/domain/src/index";
+import { CATALOG_COLORS } from "../../../packages/domain/src/index";
 import { api, putCatalogs } from "./api";
 import type { Session } from "./auth";
 
 type NamedRow = { id: string; name: string };
+type ColoredRow = { id: string; name: string; color: string | null };
 type IterationRow = { id: string; title: string; startDate: string; duration: string };
 type MilestoneRow = { id: string; title: string; dueOn: string };
 
@@ -42,8 +44,8 @@ export function Catalogs({
       duration: String(iteration.duration),
     })),
   );
-  const [labels, setLabels] = useState<NamedRow[]>(() => catalogs.labels.map(copyNamed));
-  const [issueTypes, setIssueTypes] = useState<NamedRow[]>(() => catalogs.issueTypes.map(copyNamed));
+  const [labels, setLabels] = useState<ColoredRow[]>(() => catalogs.labels.map(copyColored));
+  const [issueTypes, setIssueTypes] = useState<ColoredRow[]>(() => catalogs.issueTypes.map(copyColored));
   const [priorityOptions, setPriorityOptions] = useState<NamedRow[]>(() => catalogs.priorityOptions.map(copyNamed));
   const [milestones, setMilestones] = useState<MilestoneRow[]>(() =>
     catalogs.milestones.map((milestone) => ({ id: milestone.id, title: milestone.title, dueOn: milestone.dueOn ?? "" })),
@@ -62,8 +64,8 @@ export function Catalogs({
       doneStatuses: statusOptions.filter((option) => doneIds.includes(option.id)).map((option) => option.name.trim()),
       columns: statusOptions.map((option) => option.name.trim()),
       iterations: nextIterations,
-      labels: labels.map(copyNamed),
-      issueTypes: issueTypes.map(copyNamed),
+      labels: labels.map(copyColored),
+      issueTypes: issueTypes.map(copyColored),
       priorityOptions: priorityOptions.map(copyNamed),
       milestones: milestones.map((milestone) => ({
         id: milestone.id,
@@ -176,8 +178,8 @@ export function Catalogs({
           Add iteration
         </button>
       </section>
-      <NamedCatalog title="Labels" detail="Names that can be applied to an issue." addLabel="Add label" rows={labels} onChange={setLabels} />
-      <NamedCatalog title="Issue types" detail="Names such as EPIC, Feature, and Task." addLabel="Add issue type" rows={issueTypes} onChange={setIssueTypes} />
+      <ColoredCatalog title="Labels" detail="A color outlines the tag on the issue editor." addLabel="Add label" rows={labels} onChange={setLabels} />
+      <ColoredCatalog title="Issue types" detail="A color fills that type's bar on the timeline." addLabel="Add issue type" rows={issueTypes} onChange={setIssueTypes} />
       <NamedCatalog title="Priorities" detail="Choices stored on an issue." addLabel="Add priority" rows={priorityOptions} onChange={setPriorityOptions} />
       <section className="catalog-section">
         <header>
@@ -267,6 +269,74 @@ function NamedCatalog({
       </button>
     </section>
   );
+}
+
+function ColoredCatalog({
+  title,
+  detail,
+  addLabel,
+  rows,
+  onChange,
+}: {
+  title: string;
+  detail: string;
+  addLabel: string;
+  rows: ColoredRow[];
+  onChange: (rows: ColoredRow[]) => void;
+}) {
+  return (
+    <section className="catalog-section">
+      <header>
+        <h3>{title}</h3>
+        <p className="muted small">{detail}</p>
+      </header>
+      {rows.map((row, index) => (
+        <div className="catalog-row colored" key={row.id}>
+          <label>
+            Name
+            <input
+              className="field"
+              value={row.name}
+              maxLength={80}
+              required
+              onChange={(event) => onChange(replaceAt(rows, index, { ...row, name: event.target.value }))}
+            />
+          </label>
+          <div className="color-choices" role="radiogroup" aria-label={`${title} color`}>
+            <button className={row.color ? "color-swatch none" : "color-swatch none selected"} type="button" aria-pressed={!row.color} onClick={() => onChange(replaceAt(rows, index, { ...row, color: null }))}>
+              None
+            </button>
+            {CATALOG_COLORS.map((color) => (
+              <button
+                key={color.id}
+                className={row.color === color.id ? "color-swatch selected" : "color-swatch"}
+                type="button"
+                style={{ background: color.hex }}
+                aria-label={color.name}
+                title={color.name}
+                aria-pressed={row.color === color.id}
+                onClick={() => onChange(replaceAt(rows, index, { ...row, color: color.id }))}
+              />
+            ))}
+          </div>
+          <button className="btn small" type="button" onClick={() => onChange(rows.filter((item) => item.id !== row.id))}>
+            Remove
+          </button>
+        </div>
+      ))}
+      <button className="btn small" type="button" onClick={() => onChange([...rows, blankColored()])}>
+        {addLabel}
+      </button>
+    </section>
+  );
+}
+
+function copyColored(row: ColoredRow): ColoredRow {
+  return { id: row.id, name: row.name.trim(), color: row.color };
+}
+
+function blankColored(): ColoredRow {
+  return { id: crypto.randomUUID(), name: "", color: null };
 }
 
 function copyNamed(row: NamedRow): NamedRow {

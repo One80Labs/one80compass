@@ -27,7 +27,7 @@ function importSettings(settings: ProjectSettings, issues: PlanIssue[]): Project
     columns: [...settings.columns],
     doneStatuses: [...settings.doneStatuses],
     iterations: settings.iterations.map((iteration) => ({ ...iteration })),
-    issueTypes: namedCatalog(settings.issueTypes, issues.map((issue) => issue.issueType)),
+    issueTypes: coloredCatalog(settings.issueTypes, issues.map((issue) => issue.issueType)),
     milestones: milestoneCatalog(settings.milestones, issues),
     priorityOptions: namedCatalog(settings.priorityOptions, issues.map((issue) => issue.priority)),
     labels: labelCatalog(settings.labels, issues),
@@ -67,7 +67,20 @@ function milestoneCatalog(existing: CatalogMilestone[], issues: PlanIssue[]): Ca
 }
 
 function labelCatalog(existing: CatalogLabel[], issues: PlanIssue[]): CatalogLabel[] {
-  return namedCatalog(existing, issues.flatMap((issue) => issue.labels));
+  return coloredCatalog(existing, issues.flatMap((issue) => issue.labels));
+}
+
+function coloredCatalog(existing: { id: string; name: string; color: string | null }[], values: Array<string | null | undefined>): { id: string; name: string; color: string | null }[] {
+  const rows: { id: string; name: string; color: string | null }[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const name = value?.trim() ?? "";
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const stored = existing.find((row) => row.id === name || row.name === name);
+    rows.push(stored ? { id: stored.id, name: stored.name, color: stored.color } : { id: name, name, color: null });
+  }
+  return rows;
 }
 
 function namedCatalog(existing: { id: string; name: string }[], values: Array<string | null | undefined>): { id: string; name: string }[] {
