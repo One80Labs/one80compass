@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, isIsoDate, iterationFinish, scheduledRange, scheduleSpan, scheduleText, shiftSchedule } from "./schedule";
+import { addDays, chartRanges, isIsoDate, iterationFinish, scheduledRange, scheduleSpan, scheduleText, shiftSchedule } from "./schedule";
 
 describe("schedule", () => {
   it("rejects a calendar date that does not exist", () => {
@@ -27,5 +27,18 @@ describe("schedule", () => {
     expect(scheduleText({ startDate: null, finishDate: null, iterationTitle: "Iteration 1", iterationStart: "2026-10-25", iterationDuration: 14 })).toBe(
       "Iteration 1 · 2026-10-25 – 2026-11-07",
     );
+  });
+
+  it("gives an Epic and a Feature the same bar as the task iteration under them", () => {
+    const ranges = chartRanges([
+      { depth: 0, kind: "epic", startDate: null, finishDate: null },
+      { depth: 1, kind: "feature", startDate: null, finishDate: null },
+      { depth: 2, kind: "issue", startDate: "2026-10-26", finishDate: "2026-11-02", iterationStart: "2026-10-25", iterationDuration: 14 },
+    ]);
+    expect(ranges.map((range) => (range ? `${range.start} ${range.finish}` : null))).toEqual([
+      "2026-10-25 2026-11-07",
+      "2026-10-25 2026-11-07",
+      "2026-10-25 2026-11-07",
+    ]);
   });
 });

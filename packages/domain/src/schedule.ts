@@ -83,3 +83,34 @@ export function scheduleText(issue: {
   const dates = `${range.start} – ${range.finish}`;
   return range.fromIteration && issue.iterationTitle ? `${issue.iterationTitle} · ${dates}` : dates;
 }
+
+type ChartRow = { depth: number; kind?: string } & Parameters<typeof scheduledRange>[0];
+
+/** The same bar the Gantt draws. An Epic or Feature spans its children when it has no schedule of its own. */
+export function chartRanges(rows: ChartRow[]): (ScheduledRange | null)[] {
+  return rows.map((_, index) => chartRange(rows, index));
+}
+
+function chartRange(rows: ChartRow[], index: number): ScheduledRange | null {
+  const row = rows[index];
+  const own = scheduledRange(row);
+  if (row.kind !== "epic" && row.kind !== "feature") return own;
+  let start = own?.start ?? null;
+  let finish = own?.finish ?? null;
+  for (let child = index + 1; child < rows.length && rows[child].depth > row.depth; child += 1) {
+    const range = scheduledRange(rows[child]);
+    if (!range) continue;
+    if (!start || range.start < start) start = range.start;
+    if (!finish || range.finish > finish) finish = range.finish;
+  }
+  if (!start || !finish) return null;
+  const sameAsOwn = own?.start === start && own.finish === finish;
+  return { start, finish, fromIteration: sameAsOwn ? own.fromIteration : false };
+}
+
+export function barPlacement(start: string, finish: string, origin: string, days: number): { left: string; width: string } {
+  const day = 86_400_000;
+  const startOffset = Math.round((Date.parse(start) - Date.parse(origin)) / day);
+  const length = Math.round((Date.parse(finish) - Date.parse(start)) / day) + 1;
+  return { left: `${(Math.max(startOffset, 0) / days) * 100}%`, width: `${(Math.max(length, 1) / days) * 100}%` };
+}

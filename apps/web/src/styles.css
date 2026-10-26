@@ -840,6 +840,28 @@ button.tab.active {
   width: 9.2rem;
 }
 
+.timeline-chart {
+  display: grid;
+  gap: 4px;
+}
+
+.timeline-scale,
+.timeline-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(220px, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.timeline-scale {
+  margin-left: 34px;
+  padding-right: 4px;
+}
+
+.timeline-days {
+  height: 22px;
+}
+
 .phase-head {
   display: flex;
   gap: 18px;

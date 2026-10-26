@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { orderedIssues, planBands, planKind, planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import type { ProposedShift } from "../../../packages/domain/src/dependencies";
 import { scheduleConflicts } from "../../../packages/domain/src/dependencies";
-import { scheduleText, scheduledRange } from "../../../packages/domain/src/schedule";
+import { addDays, barPlacement, chartRanges, scheduleSpan, scheduleText, type ScheduledRange } from "../../../packages/domain/src/schedule";
 import type { MilestoneView } from "../../../packages/domain/src/milestones";
 import { api, ApiError } from "./api";
 import type { Session } from "./auth";
@@ -81,52 +81,11 @@ export function PlanPage({ session }: { session: Session | null }) {
       {tab === "Timeline view" && (
         <div>
           {plan.data && <AddPlanBar onAdd={setAddKind} />}
-          {bands.map((band) => {
-            const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subissue");
-            const bandDone = tasks.filter((row) => row.status === "Done").length;
-            const width = tasks.length === 0 ? 0 : Math.round((bandDone / tasks.length) * 100);
-            const rows = band.key === "outside" ? band.rows : band.rows.filter((row) => row.kind !== "epic");
-            return (
-              <div className="phase active" key={band.key}>
-                <div className="phase-head">
-                  <div>
-                    <strong>{band.title}</strong>
-                    <br />
-                    <small>
-                      {bandDone} of {tasks.length} tasks Done
-                      {bandRange(band.rows)}
-                    </small>
-                  </div>
-                  <div className="phase-score">
-                    <span>
-                      {bandDone} of {tasks.length} tasks
-                    </span>
-                    <div className="progressline">
-                      <span style={{ width: `${width}%` }} />
-                    </div>
-                    <strong>{width}%</strong>
-                  </div>
-                </div>
-                {rows.length > 0 && (
-                  <div className="phase-tasks">
-                    {rows.map((issue) => (
-                      <div className="taskline" key={issue.issueId} style={{ paddingLeft: issue.depth * 16 }}>
-                        <span className={`status-icon ${issue.status === "Done" ? "done" : issue.status === "In Progress" ? "review" : ""}`}>
-                          {issue.status === "Done" ? "●" : issue.status === "In Progress" ? "◐" : "○"}
-                        </span>
-                        {issue.title}
-                        {scheduleText(issue) !== "Not scheduled" && <span className="muted small"> {scheduleText(issue)}</span>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          <TimelineChart bands={bands} />
           {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, and effort can be edited in List view after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
-            The plan is grouped by Epic. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
+            The plan is grouped by Epic. The date bars are the same bars as the Gantt and come from each GitHub issue. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
           </p>
         </div>
       )}
@@ -1009,15 +968,134 @@ function scheduleLabel(issue: Parameters<typeof scheduleText>[0]): string {
   return scheduleText(issue);
 }
 
-function bandRange(rows: Parameters<typeof scheduledRange>[0][]): string {
-  const ranges = rows.flatMap((row) => {
-    const range = scheduledRange(row);
-    return range ? [range] : [];
-  });
-  if (ranges.length === 0) return "";
-  const start = ranges.reduce((earliest, range) => (range.start < earliest ? range.start : earliest), ranges[0].start);
-  const finish = ranges.reduce((latest, range) => (range.finish > latest ? range.finish : latest), ranges[0].finish);
-  return ` · ${start} – ${finish}`;
+function TimelineChart({
+  bands,
+}: {
+  bands: {
+    key: string;
+    title: string;
+    rows: {
+      issueId: string;
+      title: string;
+      status: string;
+      depth: number;
+      kind: PlanKind;
+      startDate: string | null;
+      finishDate: string | null;
+      iterationTitle?: string | null;
+      iterationStart?: string | null;
+      iterationDuration?: number | null;
+    }[];
+  }[];
+}) {
+  const rangesByBand = bands.map((band) => chartRanges(band.rows));
+  const span = scheduleSpan(
+    rangesByBand.flat().map((range) => ({ startDate: range?.start ?? null, finishDate: range?.finish ?? null })),
+    timelineToday(),
+  );
+  const step = span.days > 90 ? 14 : span.days > 28 ? 7 : Math.max(1, Math.round(span.days / 6));
+  const marks: number[] = [];
+  for (let offset = 0; offset < span.days; offset += step) marks.push(offset);
+  return (
+    <div className="timeline-chart">
+      <div className="timeline-scale">
+        <span className="muted small">Schedule</span>
+        <div className="gantt-days timeline-days">
+          {marks.map((offset) => (
+            <span key={offset} style={{ left: `${(offset / span.days) * 100}%` }}>
+              {shortDate(addDays(span.origin, offset))}
+            </span>
+          ))}
+        </div>
+      </div>
+      {bands.map((band, bandIndex) => {
+        const ranges = rangesByBand[bandIndex];
+        const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subissue");
+        const bandDone = tasks.filter((row) => row.status === "Done").length;
+        const width = tasks.length === 0 ? 0 : Math.round((bandDone / tasks.length) * 100);
+        const header = band.rows[0]?.kind === "epic" ? ranges[0] : unionRange(ranges);
+        const rows =
+          band.key === "outside"
+            ? band.rows.map((row, index) => ({ row, range: ranges[index] }))
+            : band.rows.flatMap((row, index) => (row.kind === "epic" ? [] : [{ row, range: ranges[index] }]));
+        return (
+          <div className="phase active" key={band.key}>
+            <div className="timeline-row">
+              <div>
+                <strong>{band.title}</strong>
+                <div className="phase-score">
+                  <span>
+                    {bandDone} of {tasks.length} tasks Done
+                  </span>
+                  <div className="progressline">
+                    <span style={{ width: `${width}%` }} />
+                  </div>
+                  <strong>{width}%</strong>
+                </div>
+              </div>
+              <ScheduleBar range={header} span={span} summary />
+            </div>
+            {rows.length > 0 && (
+              <div className="phase-tasks">
+                {rows.map(({ row, range }) => (
+                  <div className="timeline-row" key={row.issueId}>
+                    <div className="taskline" style={{ paddingLeft: row.depth * 16 }}>
+                      <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
+                        {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
+                      </span>
+                      <span>
+                        {row.title}
+                        {scheduleText(row) !== "Not scheduled" && <span className="muted small"> {scheduleText(row)}</span>}
+                      </span>
+                    </div>
+                    <ScheduleBar range={range} span={span} summary={row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration)} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ScheduleBar({
+  range,
+  span,
+  summary,
+}: {
+  range: ScheduledRange | null;
+  span: { origin: string; days: number };
+  summary: boolean;
+}) {
+  const label = range ? `${range.start} to ${range.finish}` : "Not scheduled";
+  return (
+    <div className="gantt-track" aria-label={label}>
+      {range && <div className={summary ? "gantt-bar rollup" : "gantt-bar"} style={barPlacement(range.start, range.finish, span.origin, span.days)} title={label} />}
+    </div>
+  );
+}
+
+function unionRange(ranges: (ScheduledRange | null)[]): ScheduledRange | null {
+  const present = ranges.flatMap((range) => (range ? [range] : []));
+  if (present.length === 0) return null;
+  return {
+    start: present.reduce((earliest, range) => (range.start < earliest ? range.start : earliest), present[0].start),
+    finish: present.reduce((latest, range) => (range.finish > latest ? range.finish : latest), present[0].finish),
+    fromIteration: false,
+  };
+}
+
+function shortDate(iso: string): string {
+  const [, month, day] = iso.split("-");
+  return `${Number(month)}/${Number(day)}`;
+}
+
+function timelineToday(): string {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
 }
 
 function dependencyIssues(issues: PlanIssue[]) {

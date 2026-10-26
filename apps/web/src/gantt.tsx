@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
-import { addDays, scheduledRange, scheduleSpan, shiftSchedule, type ScheduledRange } from "../../../packages/domain/src/schedule";
+import { addDays, barPlacement, chartRanges, scheduleSpan, shiftSchedule, type ScheduledRange } from "../../../packages/domain/src/schedule";
 
 type GanttIssue = {
   issueId: string;
@@ -44,7 +44,7 @@ export function GanttChart({
     issues.map((issue) => ({ ...issue, number: issue.number ?? null, issueType: issue.issueType ?? null })),
     workstreamNumber,
   );
-  const ranges = rows.map((_, index) => barRange(rows, index));
+  const ranges = chartRanges(rows);
   const span = scheduleSpan(
     ranges.map((range) => ({ startDate: range?.start ?? null, finishDate: range?.finish ?? null })),
     today,
@@ -125,7 +125,7 @@ export function GanttChart({
               {range && (
                 <div
                   className={summary || range.fromIteration ? "gantt-bar rollup" : "gantt-bar"}
-                  style={barStyle(range.start, range.finish, span.origin, span.days)}
+                  style={barPlacement(range.start, range.finish, span.origin, span.days)}
                   role="slider"
                   aria-valuemin={0}
                   aria-valuemax={span.days}
@@ -200,33 +200,10 @@ function DateFields({
   );
 }
 
-function barStyle(start: string, finish: string, origin: string, days: number): { left: string; width: string } {
-  const startOffset = Math.round((Date.parse(start) - Date.parse(origin)) / DAY);
-  const length = Math.round((Date.parse(finish) - Date.parse(start)) / DAY) + 1;
-  return { left: `${(startOffset / days) * 100}%`, width: `${(Math.max(length, 1) / days) * 100}%` };
-}
-
 function localToday(): string {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 10);
-}
-
-function barRange(rows: Array<{ depth: number; kind?: PlanKind } & Parameters<typeof scheduledRange>[0]>, index: number): ScheduledRange | null {
-  const row = rows[index];
-  const own = scheduledRange(row);
-  if (row.kind !== "epic" && row.kind !== "feature") return own;
-  let start = own?.start ?? null;
-  let finish = own?.finish ?? null;
-  for (let child = index + 1; child < rows.length && rows[child].depth > row.depth; child += 1) {
-    const range = scheduledRange(rows[child]);
-    if (!range) continue;
-    if (!start || range.start < start) start = range.start;
-    if (!finish || range.finish > finish) finish = range.finish;
-  }
-  if (!start || !finish) return null;
-  const sameAsOwn = own?.start === start && own.finish === finish;
-  return { start, finish, fromIteration: sameAsOwn ? own.fromIteration : false };
 }
 
 function rangeLabel(issue: { iterationTitle?: string | null }, range: ScheduledRange): string {
