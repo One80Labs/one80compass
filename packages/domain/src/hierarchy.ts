@@ -132,7 +132,17 @@ export type PlanNode = {
 
 const PLAN_INDENT: Record<PlanKind, number> = { workstream: 0, epic: 0, feature: 1, issue: 2, subissue: 3 };
 
-/** Epic, Feature, and Workstream come from the GitHub issue type. The name match ignores capitalization, so EPIC counts as Epic. Issue and Sub-issue do not have one. */
+/** Epic, Feature, Task, and Workstream come from the GitHub issue type. The name match ignores capitalization, so EPIC counts as Epic and Task stays an issue row. A Sub-issue has no type. */
+
+/** GitHub issue type written for a new plan row. Sub-issues are created with no type. */
+export function createdIssueType(kind: PlanKind): "EPIC" | "Feature" | "Task" | null {
+  if (kind === "epic") return "EPIC";
+  if (kind === "feature") return "Feature";
+  if (kind === "issue") return "Task";
+  return null;
+}
+
+/** Epic, Feature, and Workstream come from the GitHub issue type. Task stays an issue row. A Sub-issue is an issue nested under another issue. */
 export function planKind<T extends PlanNode>(issue: T, byId: Map<string, T>, workstreamNumber: number | null, seen = new Set<string>()): PlanKind {
   if (seen.has(issue.issueId)) return "issue";
   seen.add(issue.issueId);

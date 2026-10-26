@@ -183,7 +183,7 @@ export type PlanIssue = {
   archived: boolean;
   deletedAt: string | null;
   parentIssueId: string | null;
-  /** GitHub issue type name. Null when the issue has no type, which makes it an Issue or Sub-issue. */
+  /** GitHub issue type name. A new Epic is EPIC, a new Feature is Feature, and a new Task is Task. Null on a Sub-issue. */
   issueType: string | null;
   /** GitHub milestone title. Null when the issue has no milestone. */
   milestone: string | null;

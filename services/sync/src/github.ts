@@ -1,4 +1,5 @@
 import { createSign } from "node:crypto";
+import { createdIssueType } from "../../../packages/domain/src/hierarchy";
 import type { GitHubUser, IssueChange, IterationChoice, PlanIssue, ProjectSettings } from "../../../packages/domain/src/index";
 
 export type GitHubGateway = {
@@ -178,15 +179,15 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
       const repositoryId = repo.repository?.id;
       if (!repositoryId) throw new Error("The GitHub repository was not found.");
       let issueTypeId: string | null = null;
-      if (input.kind === "epic" || input.kind === "feature") {
-        const name = input.kind === "epic" ? "Epic" : "Feature";
+      const typeName = createdIssueType(input.kind);
+      if (typeName) {
         const types = await graphql<{ organization?: { issueTypes?: { nodes?: ({ id?: string; name?: string } | null)[] | null } | null } | null }>(
           token,
           ORG_ISSUE_TYPES,
           { owner: settings.owner },
         );
-        issueTypeId = types.organization?.issueTypes?.nodes?.find((item) => item?.name === name)?.id ?? null;
-        if (!issueTypeId) throw new Error(`GitHub has no issue type named ${name}.`);
+        issueTypeId = types.organization?.issueTypes?.nodes?.find((item) => item?.name === typeName)?.id ?? null;
+        if (!issueTypeId) throw new Error(`GitHub has no issue type named ${typeName}.`);
       }
       const needsWorkstream = input.kind === "epic" || (input.kind === "issue" && !input.parentIssueId);
       let workstreamId: string | null = null;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderedIssues, parentDoneBlocked, parentStatusChanges, planBands, planKind, rollupTargets, type HierarchyIssue } from "./hierarchy";
+import { createdIssueType, orderedIssues, parentDoneBlocked, parentStatusChanges, planBands, planKind, rollupTargets, type HierarchyIssue } from "./hierarchy";
 
 const done = ["Done"];
 
@@ -115,6 +115,15 @@ describe("orderedIssues", () => {
       ["Parent", 0],
       ["Child", 1],
     ]);
+  });
+});
+
+describe("createdIssueType", () => {
+  it("uses EPIC, Feature, and Task, and leaves a sub-issue untyped", () => {
+    expect(createdIssueType("epic")).toBe("EPIC");
+    expect(createdIssueType("feature")).toBe("Feature");
+    expect(createdIssueType("issue")).toBe("Task");
+    expect(createdIssueType("subissue")).toBeNull();
   });
 });
 
