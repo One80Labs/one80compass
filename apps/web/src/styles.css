@@ -1259,6 +1259,85 @@ button.backlink {
   margin: 18px 0;
 }
 
+.catalog-form {
+  display: grid;
+  gap: 16px;
+}
+
+.catalog-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px 18px;
+  border: 1px solid var(--oc-divider);
+  border-radius: 10px;
+  background: #f7f4f1;
+}
+
+.panel .catalog-section h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.catalog-section header p {
+  margin: 4px 0 0;
+}
+
+.catalog-row {
+  display: grid;
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid var(--oc-divider);
+  border-radius: 8px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.catalog-row .field {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.catalog-row > .btn {
+  justify-self: start;
+}
+
+.catalog-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  justify-self: start;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.catalog-done input {
+  width: auto;
+  max-width: none;
+}
+
+@media (min-width: 900px) {
+  .catalog-row.named {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .catalog-row.status,
+  .catalog-row.milestone {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .catalog-row.iteration {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.8fr) auto;
+  }
+}
+
+.catalog-save {
+  justify-self: start;
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: 210px minmax(0, 1fr);

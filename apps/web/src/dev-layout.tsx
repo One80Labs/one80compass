@@ -3,6 +3,8 @@ import { useParams } from "react-router-dom";
 import { Shell } from "./shell";
 import type { Session } from "./auth";
 import { PageHead, Pill, Tabs } from "./ui";
+import { Catalogs } from "./catalogs";
+import type { ProjectCatalogs } from "../../../packages/domain/src/index";
 
 const session: Session = { email: "alex.chen@example.com", idToken: "", adminGroup: false, mfa: true };
 
@@ -245,42 +247,48 @@ function ReportPreview() {
   );
 }
 
+const previewCatalogs: ProjectCatalogs = {
+  statusOptions: [
+    { id: "backlog", name: "Backlog" },
+    { id: "ready", name: "Ready" },
+    { id: "done", name: "Done" },
+  ],
+  doneStatuses: ["Done"],
+  columns: ["Backlog", "Ready", "Done"],
+  iterations: [{ id: "iter-1", title: "Iteration 1", startDate: "2026-10-01", duration: 14 }],
+  labels: [{ id: "billing", name: "Billing" }],
+  issueTypes: [
+    { id: "epic", name: "EPIC" },
+    { id: "feature", name: "Feature" },
+    { id: "task", name: "Task" },
+  ],
+  priorityOptions: [{ id: "high", name: "High" }],
+  milestones: [{ id: "pour", title: "Pour", dueOn: "2026-11-01" }],
+};
+
 function SettingsPreview() {
   return (
     <>
       <PageHead title="Settings." subtitle="Manage project access and preferences." />
       <div className="settings-grid">
         <section className="panel settings-menu">
-          <button className="active" type="button">Project access</button>
+          <button type="button">Project access</button>
           <button type="button">General</button>
+          <button className="active" type="button">Catalog</button>
           <button type="button">Notifications</button>
           <button type="button">GitHub integration</button>
         </section>
         <section className="panel">
-          <h3>Project access</h3>
-          <p className="small muted">A Contributor can edit, add, and upload. View can open the screens and cannot change data.</p>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>Alex Chen</td>
-                  <td>alex.chen@example.com</td>
-                  <td>Contributor</td>
-                  <td>
-                    <Pill tone="good">Active</Pill>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <h3>Catalog</h3>
+          <Catalogs
+            projectId="preview"
+            session={session}
+            projectName="Bridge"
+            catalogs={previewCatalogs}
+            onSaved={async () => undefined}
+            onError={() => undefined}
+            persist={async () => undefined}
+          />
         </section>
       </div>
     </>

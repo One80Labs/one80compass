@@ -10,6 +10,7 @@ import { ReportDetailPage, ReportsPage } from "./reports";
 import { DevLayout } from "./dev-layout";
 import { MembersPage } from "./members";
 import { displayName, ModuleTiles, Shell, usePortal, type PortalActivity } from "./shell";
+import { CatalogSettings } from "./catalogs";
 
 type Customer = { customerId: string; name: string };
 type Project = { projectId: string; customerId: string; name: string };
@@ -401,7 +402,7 @@ function SettingsPage({ session }: { session: Session | null }) {
       </header>
       <div className="settings-grid">
         <section className="panel settings-menu">
-          {["Project access", "General", "Notifications", "GitHub integration"].map((item) => (
+          {["Project access", "General", "Catalog", "Notifications", "GitHub integration"].map((item) => (
             <button key={item} className={tab === item ? "active" : undefined} type="button" onClick={() => setTab(item)}>
               {item}
             </button>
@@ -446,6 +447,12 @@ function SettingsPage({ session }: { session: Session | null }) {
             <p className="copy">
               Customer: {customer?.name ?? "None selected"}. Project: {project?.name ?? "None selected"}.
             </p>
+          </section>
+        )}
+        {tab === "Catalog" && (
+          <section className="panel">
+            <h3>Catalog</h3>
+            <CatalogSettings session={session} projectId={portal.projectId} projectName={project?.name ?? null} />
           </section>
         )}
         {tab === "Notifications" && (

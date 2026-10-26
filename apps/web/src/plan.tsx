@@ -9,7 +9,6 @@ import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import { BaselinesPanel } from "./baselines";
-import { Catalogs } from "./catalogs";
 import { CompassIssueDrawer } from "./compass-drawer";
 import { usePortal } from "./shell";
 import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs } from "./ui";
@@ -503,25 +502,6 @@ function PlanStatus({ plan, session, canWrite }: { plan: ReturnType<typeof usePl
       )}
       {plan.data && session?.adminGroup && plan.data.settings?.recordSource !== "compass" && (
         <GithubForm projectId={projectId} session={session} settings={plan.data.settings} onSaved={plan.reload} onError={plan.setError} />
-      )}
-      {plan.data?.settings?.recordSource === "compass" && session?.adminGroup && session && (
-        <Catalogs
-          key={projectId}
-          projectId={projectId}
-          session={session}
-          catalogs={{
-            statusOptions: plan.data.settings.statusOptions ?? [],
-            doneStatuses: plan.data.settings.doneStatuses ?? [],
-            columns: plan.data.settings.columns,
-            iterations: plan.data.settings.iterations ?? [],
-            labels: plan.data.settings.labels ?? [],
-            issueTypes: plan.data.settings.issueTypes ?? [],
-            priorityOptions: plan.data.settings.priorityOptions ?? [],
-            milestones: plan.data.settings.milestones ?? [],
-          }}
-          onSaved={plan.reload}
-          onError={plan.setError}
-        />
       )}
       {canWrite && session && plan.data && (
         <form

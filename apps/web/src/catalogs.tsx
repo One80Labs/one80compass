@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { IterationChoice, ProjectCatalogs } from "../../../packages/domain/src/index";
-import { putCatalogs } from "./api";
+import { api, putCatalogs } from "./api";
 import type { Session } from "./auth";
 
 type NamedRow = { id: string; name: string };
@@ -16,14 +16,19 @@ export function Catalogs({
   projectId,
   session,
   catalogs,
+  projectName,
   onSaved,
   onError,
+  persist = putCatalogs,
 }: {
   projectId: string;
   session: Session;
   catalogs: ProjectCatalogs;
+  projectName?: string | null;
   onSaved: () => Promise<void>;
   onError: (message: string | null) => void;
+  /** Replaces the API save. The layout preview uses this so the sample does not call the server. */
+  persist?: (projectId: string, idToken: string, catalogs: ProjectCatalogs) => Promise<unknown>;
 }) {
   const [statusOptions, setStatusOptions] = useState<NamedRow[]>(() => catalogs.statusOptions.map(copyNamed));
   const [doneIds, setDoneIds] = useState<string[]>(() =>
@@ -73,7 +78,7 @@ export function Catalogs({
     onError(null);
     setSaving(true);
     try {
-      await putCatalogs(projectId, session.idToken, next);
+      await persist(projectId, session.idToken, next);
       await onSaved();
     } catch (caught) {
       onError(caught instanceof Error ? caught.message : "Request failed.");
@@ -83,15 +88,17 @@ export function Catalogs({
   }
 
   return (
-    <form onSubmit={onSubmit}>
-      <h2>Catalogs</h2>
+    <form className="catalog-form" onSubmit={onSubmit}>
       <p className="muted small">
-        These lists belong to this Compass project. Add a row and edit its name. Mark a status Done when work in that status is finished. Saving replaces the catalogs.
+        These lists belong to {projectName?.trim() || "this project"}. Add a row, edit it, and save. Saving replaces the catalogs for this project.
       </p>
-      <section>
-        <h3 className="section-title">Status</h3>
+      <section className="catalog-section">
+        <header>
+          <h3>Status</h3>
+          <p className="muted small">Board columns. Mark Done when work in that status is finished.</p>
+        </header>
         {statusOptions.map((row, index) => (
-          <div className="row" key={row.id}>
+          <div className="catalog-row status" key={row.id}>
             <label>
               Name
               <input
@@ -102,7 +109,7 @@ export function Catalogs({
                 onChange={(event) => setStatusOptions(replaceAt(statusOptions, index, { ...row, name: event.target.value }))}
               />
             </label>
-            <label className="row">
+            <label className="catalog-done">
               <input
                 type="checkbox"
                 checked={doneIds.includes(row.id)}
@@ -119,10 +126,13 @@ export function Catalogs({
           Add status
         </button>
       </section>
-      <section>
-        <h3 className="section-title">Iterations</h3>
+      <section className="catalog-section">
+        <header>
+          <h3>Iterations</h3>
+          <p className="muted small">Each iteration needs a name, a start date, and a length in days.</p>
+        </header>
         {iterations.map((row, index) => (
-          <div className="row" key={row.id}>
+          <div className="catalog-row iteration" key={row.id}>
             <label>
               Name
               <input
@@ -166,13 +176,16 @@ export function Catalogs({
           Add iteration
         </button>
       </section>
-      <NamedCatalog title="Labels" addLabel="Add label" rows={labels} onChange={setLabels} />
-      <NamedCatalog title="Issue types" addLabel="Add issue type" rows={issueTypes} onChange={setIssueTypes} />
-      <NamedCatalog title="Priorities" addLabel="Add priority" rows={priorityOptions} onChange={setPriorityOptions} />
-      <section>
-        <h3 className="section-title">Milestones</h3>
+      <NamedCatalog title="Labels" detail="Names that can be applied to an issue." addLabel="Add label" rows={labels} onChange={setLabels} />
+      <NamedCatalog title="Issue types" detail="Names such as EPIC, Feature, and Task." addLabel="Add issue type" rows={issueTypes} onChange={setIssueTypes} />
+      <NamedCatalog title="Priorities" detail="Choices stored on an issue." addLabel="Add priority" rows={priorityOptions} onChange={setPriorityOptions} />
+      <section className="catalog-section">
+        <header>
+          <h3>Milestones</h3>
+          <p className="muted small">A name and an optional due date.</p>
+        </header>
         {milestones.map((row, index) => (
-          <div className="row" key={row.id}>
+          <div className="catalog-row milestone" key={row.id}>
             <label>
               Name
               <input
@@ -201,7 +214,7 @@ export function Catalogs({
           Add milestone
         </button>
       </section>
-      <button className="btn" type="submit" disabled={saving}>
+      <button className="btn primary catalog-save" type="submit" disabled={saving}>
         {saving ? "Saving…" : "Save catalogs"}
       </button>
     </form>
@@ -215,20 +228,25 @@ export function Catalogs({
 
 function NamedCatalog({
   title,
+  detail,
   addLabel,
   rows,
   onChange,
 }: {
   title: string;
+  detail: string;
   addLabel: string;
   rows: NamedRow[];
   onChange: (rows: NamedRow[]) => void;
 }) {
   return (
-    <section>
-      <h3 className="section-title">{title}</h3>
+    <section className="catalog-section">
+      <header>
+        <h3>{title}</h3>
+        <p className="muted small">{detail}</p>
+      </header>
       {rows.map((row, index) => (
-        <div className="row" key={row.id}>
+        <div className="catalog-row named" key={row.id}>
           <label>
             Name
             <input
@@ -284,4 +302,70 @@ function uniqueNames(catalogs: ProjectCatalogs): boolean {
     catalogs.milestones.map((row) => row.title),
   ];
   return lists.every((names) => new Set(names).size === names.length && names.every((name) => name.length > 0));
+}
+
+type PlanCatalogResponse = {
+  settings: (ProjectCatalogs & { recordSource?: "github" | "compass" }) | null;
+};
+
+/** Settings category for the active Compass project. An administrator edits the lists here. */
+export function CatalogSettings({ session, projectId, projectName }: { session: Session; projectId: string | null; projectName: string | null }) {
+  const [catalogs, setCatalogs] = useState<ProjectCatalogs | null>(null);
+  const [recordSource, setRecordSource] = useState<"github" | "compass" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    api<PlanCatalogResponse>(`/projects/${projectId}/plan`, session.idToken)
+      .then((plan) => {
+        if (cancelled || !plan.settings) return;
+        setRecordSource(plan.settings.recordSource ?? "github");
+        setCatalogs({
+          statusOptions: plan.settings.statusOptions ?? [],
+          doneStatuses: plan.settings.doneStatuses ?? [],
+          columns: plan.settings.columns ?? [],
+          iterations: plan.settings.iterations ?? [],
+          labels: plan.settings.labels ?? [],
+          issueTypes: plan.settings.issueTypes ?? [],
+          priorityOptions: plan.settings.priorityOptions ?? [],
+          milestones: plan.settings.milestones ?? [],
+        });
+        setRevision((current) => current + 1);
+      })
+      .catch((caught) => {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : "Request failed.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, session.idToken]);
+
+  if (!session.adminGroup) return <p className="copy">An administrator maintains the catalogs for this project.</p>;
+  if (!projectId) return <p className="copy">Select a project before editing its catalogs.</p>;
+  if (loading && !catalogs) return <p className="copy">Loading catalogs.</p>;
+  if (recordSource !== "compass" || !catalogs) {
+    return error ? <p className="error">{error}</p> : <p className="copy">Catalogs are available when this project is stored in Compass.</p>;
+  }
+  return (
+    <>
+      {error && <p className="error">{error}</p>}
+      <Catalogs
+        key={revision}
+        projectId={projectId}
+        session={session}
+        projectName={projectName}
+        catalogs={catalogs}
+        onSaved={async () => setError(null)}
+        onError={setError}
+      />
+    </>
+  );
 }
