@@ -65,6 +65,12 @@ function PlanPreview() {
   return (
     <>
       <PageHead title="Project plan." subtitle="Milestones, phases, and tasks for Amur." action={<button className="btn primary" type="button">Add milestone</button>} />
+      <div className="toolbar plan-search">
+        <label className="plan-search-field">
+          <span className="sr-only">Search plan</span>
+          <input type="search" placeholder="Search plan (3+ characters)…" aria-label="Search plan" defaultValue="" />
+        </label>
+      </div>
       <div className="phase active">
         <div className="phase-head">
           <div>

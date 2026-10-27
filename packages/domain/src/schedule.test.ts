@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { addDays, chartRanges, datesAfterIterationPick, isIsoDate, iterationFinish, scheduleRollups, scheduledRange, scheduleSpan, scheduleText, shiftSchedule } from "./schedule";
+import {
+  addDays,
+  chartRanges,
+  datesAfterIterationPick,
+  isIsoDate,
+  iterationFinish,
+  iterationForDates,
+  scheduleRollups,
+  scheduledRange,
+  scheduleSpan,
+  scheduleText,
+  shiftSchedule,
+} from "./schedule";
 
 describe("schedule", () => {
   it("rejects a calendar date that does not exist", () => {
@@ -12,6 +24,17 @@ describe("schedule", () => {
     expect(shiftSchedule("2026-10-01", "2026-10-05", "move", 2)).toEqual({ startDate: "2026-10-03", finishDate: "2026-10-07" });
     expect(shiftSchedule("2026-10-01", "2026-10-05", "start", 10)).toEqual({ startDate: "2026-10-05", finishDate: "2026-10-05" });
     expect(shiftSchedule("2026-10-01", "2026-10-05", "finish", -10)).toEqual({ startDate: "2026-10-01", finishDate: "2026-10-01" });
+  });
+
+  it("picks the iteration that contains the new Finish date after a bar drag", () => {
+    const iterations = [
+      { id: "i1", startDate: "2026-10-24", duration: 14 },
+      { id: "i2", startDate: "2026-11-07", duration: 14 },
+    ];
+    expect(iterationForDates(iterations, "2026-10-27", "2026-11-02")).toBe("i1");
+    expect(iterationForDates(iterations, "2026-11-08", "2026-11-14")).toBe("i2");
+    expect(iterationForDates(iterations, "2026-10-20", "2026-10-22")).toBeNull();
+    expect(iterationForDates(iterations, "2026-10-30", "2026-11-10")).toBe("i2");
   });
 
   it("gives an unscheduled plan a two-week scale and pads a scheduled one", () => {

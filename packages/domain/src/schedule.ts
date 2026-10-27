@@ -32,10 +32,12 @@ export function scheduleSpan(dates: { startDate: string | null; finishDate: stri
   return { origin, days };
 }
 
+export type ScheduleEdge = "move" | "start" | "finish";
+
 export function shiftSchedule(
   start: string,
   finish: string,
-  edge: "move" | "start" | "finish",
+  edge: ScheduleEdge,
   days: number,
 ): { startDate: string; finishDate: string } {
   if (edge === "move") return { startDate: addDays(start, days), finishDate: addDays(finish, days) };
@@ -51,6 +53,34 @@ export function shiftSchedule(
 export function iterationFinish(start: string, duration: number): string | null {
   if (!isIsoDate(start) || !Number.isInteger(duration) || duration < 1) return null;
   return addDays(start, duration - 1);
+}
+
+export type IterationWindow = { id: string; startDate: string; duration: number };
+
+/**
+ * Iteration that fits a Start/Finish range after a Timeline drag.
+ * Prefers the iteration that contains Finish, then Start, then the largest overlap. Null when none overlap.
+ */
+export function iterationForDates(iterations: IterationWindow[], startDate: string, finishDate: string): string | null {
+  if (!isIsoDate(startDate) || !isIsoDate(finishDate) || finishDate < startDate) return null;
+  const windows = iterations.flatMap((item) => {
+    const end = iterationFinish(item.startDate, item.duration);
+    if (!end || !item.id) return [];
+    return [{ id: item.id, start: item.startDate, end }];
+  });
+  const containingFinish = windows.find((window) => finishDate >= window.start && finishDate <= window.end);
+  if (containingFinish) return containingFinish.id;
+  const containingStart = windows.find((window) => startDate >= window.start && startDate <= window.end);
+  if (containingStart) return containingStart.id;
+  let best: { id: string; overlap: number } | null = null;
+  for (const window of windows) {
+    const overlapStart = startDate > window.start ? startDate : window.start;
+    const overlapEnd = finishDate < window.end ? finishDate : window.end;
+    if (overlapEnd < overlapStart) continue;
+    const overlap = Math.round((Date.parse(overlapEnd) - Date.parse(overlapStart)) / 86_400_000) + 1;
+    if (!best || overlap > best.overlap) best = { id: window.id, overlap };
+  }
+  return best?.id ?? null;
 }
 
 export type ScheduledRange = { start: string; finish: string; fromIteration: boolean };

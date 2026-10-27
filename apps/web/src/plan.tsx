@@ -1,17 +1,33 @@
-import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useParams } from "react-router-dom";
 import { orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { catalogColorHex } from "../../../packages/domain/src/index";
 import type { ProposedShift } from "../../../packages/domain/src/dependencies";
 import { scheduleConflicts } from "../../../packages/domain/src/dependencies";
-import { addDays, barPlacement, chartRanges, datesAfterIterationPick, datesAreDerived, derivedSchedule, iterationFinish, scheduleSpan, scheduleText, type ScheduledRange } from "../../../packages/domain/src/schedule";
+import {
+  addDays,
+  barPlacement,
+  chartRanges,
+  datesAfterIterationPick,
+  datesAreDerived,
+  derivedSchedule,
+  iterationFinish,
+  iterationForDates,
+  scheduleSpan,
+  scheduleText,
+  shiftSchedule,
+  type ScheduleEdge,
+  type ScheduledRange,
+} from "../../../packages/domain/src/schedule";
 import type { MilestoneView } from "../../../packages/domain/src/milestones";
 import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import { BaselinesPanel } from "./baselines";
 import { CompassIssueDrawer } from "./compass-drawer";
+import { dayDeltaFromPointer } from "./gantt-drag";
 import { usePortal } from "./shell";
+import { matchPlanIssues, planSearchKeepIds, PLAN_SEARCH_MIN } from "./plan-search";
 import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs } from "./ui";
 
 type PlanIssue = {
@@ -42,10 +58,10 @@ type PlanIssue = {
   deletedAt?: string | null;
 };
 type IssueEdit = {
-  title: string;
+  title?: string;
   description?: string | null;
-  status: string;
-  effort: number | null;
+  status?: string;
+  effort?: number | null;
   startDate?: string | null;
   finishDate?: string | null;
   iterationId?: string | null;
@@ -100,10 +116,14 @@ export function PlanPage({ session }: { session: Session | null }) {
   const name = portal.projects.find((item) => item.projectId === projectId)?.name ?? "this project";
   const [tab, setTab] = useState("Timeline view");
   const [notice, setNotice] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
   const issues = plan.data?.issues ?? [];
   const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
-  const bands = planBands(issues.map(planNode), workstreamNumber);
+  const searchActive = searchQuery.trim().length >= PLAN_SEARCH_MIN;
+  const searchMatches = searchActive ? matchPlanIssues(issues, searchQuery) : [];
+  const searchKeepIds = searchActive ? planSearchKeepIds(issues, searchMatches) : null;
+  const bands = filterPlanBands(planBands(issues.map(planNode), workstreamNumber), searchKeepIds);
   const [addKind, setAddKind] = useState<Exclude<PlanKind, "workstream"> | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editing = issues.find((issue) => issue.issueId === editingId) ?? null;
@@ -126,12 +146,43 @@ export function PlanPage({ session }: { session: Session | null }) {
       <Tabs label="Plan" tabs={["Timeline view", "Dependencies", "Baselines"]} value={tab} onChange={setTab} />
       {tab === "Timeline view" && (
         <div>
+          <PlanTypeaheadSearch
+            query={searchQuery}
+            issues={issues}
+            matches={searchMatches}
+            onQueryChange={setSearchQuery}
+            onPick={(issueId) => {
+              const issue = issues.find((item) => item.issueId === issueId);
+              if (canWrite) {
+                setEditingId(issueId);
+                setSearchQuery("");
+                return;
+              }
+              if (issue) setSearchQuery(issue.title);
+            }}
+          />
           {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
-          <TimelineChart bands={bands} barColors={barColors(issues, plan.data?.settings?.issueTypes ?? [])} onEdit={canWrite ? setEditingId : null} />
+          <TimelineChart
+            bands={bands}
+            barColors={barColors(issues, plan.data?.settings?.issueTypes ?? [])}
+            matchIds={searchActive ? new Set(searchMatches.map((issue) => issue.issueId)) : null}
+            canWrite={canWrite}
+            busy={plan.busy}
+            onEdit={canWrite ? setEditingId : null}
+            onSchedule={
+              canWrite
+                ? async (issueId, startDate, finishDate) => {
+                    const iterationId = iterationForDates(plan.data?.settings?.iterations ?? [], startDate, finishDate);
+                    await plan.saveIssue(issueId, { startDate, finishDate, iterationId });
+                  }
+                : null
+            }
+          />
+          {searchActive && searchMatches.length === 0 && <p className="muted small">No plan items match that search.</p>}
           {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, effort, and dates can be edited from a row after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
-            The plan is grouped by Epic. Date bars use the Start and Finish fields. An Epic or Feature can keep its own dates until a task or sub-issue is added, and then those dates come from the tasks under it. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
+            The plan is grouped by Epic. Date bars use the Start and Finish fields. Drag the middle of a bar to move both dates, or drag either end to change Start or Finish. That write also updates the Iteration field when the new dates fall in an iteration. An Epic or Feature can keep its own dates until a task or sub-issue is added, and then those dates come from the tasks under it. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
           </p>
         </div>
       )}
@@ -1128,12 +1179,15 @@ function usePlan(session: Session | null) {
         setError(text);
         throw new Error(text);
       }
+      setBusy(true);
       try {
         await patchIssue(issueId, change, []);
       } catch (caught) {
         if (openReview(caught, issueId, change)) return;
         setError(message(caught));
         throw caught;
+      } finally {
+        setBusy(false);
       }
     },
     async move(issueId: string, status: string) {
@@ -1256,10 +1310,147 @@ function scheduleLabel(issue: Parameters<typeof scheduleText>[0]): string {
   return scheduleText(issue);
 }
 
+function PlanTypeaheadSearch({
+  query,
+  issues,
+  matches,
+  onQueryChange,
+  onPick,
+}: {
+  query: string;
+  issues: PlanIssue[];
+  matches: PlanIssue[];
+  onQueryChange: (value: string) => void;
+  onPick: (issueId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const active = query.trim().length >= PLAN_SEARCH_MIN;
+  const suggestions = matches.slice(0, 12);
+  const showList = open && active;
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query]);
+
+  useEffect(() => {
+    function onPointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, []);
+
+  return (
+    <div className="toolbar plan-search" ref={rootRef}>
+      <label className="plan-search-field">
+        <span className="sr-only">Search plan</span>
+        <input
+          type="search"
+          value={query}
+          placeholder="Search plan (3+ characters)…"
+          aria-label="Search plan"
+          aria-autocomplete="list"
+          aria-expanded={showList}
+          aria-controls="plan-search-suggestions"
+          aria-activedescendant={showList && suggestions[activeIndex] ? `plan-search-option-${suggestions[activeIndex].issueId}` : undefined}
+          role="combobox"
+          autoComplete="off"
+          onChange={(event) => {
+            onQueryChange(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(event) => {
+            if (!active || suggestions.length === 0) {
+              if (event.key === "Escape") {
+                onQueryChange("");
+                setOpen(false);
+              }
+              return;
+            }
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setOpen(true);
+              setActiveIndex((index) => (index + 1) % suggestions.length);
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setOpen(true);
+              setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              const picked = suggestions[activeIndex];
+              if (picked) {
+                onPick(picked.issueId);
+                setOpen(false);
+              }
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              onQueryChange("");
+              setOpen(false);
+            }
+          }}
+        />
+      </label>
+      {!active && query.trim().length > 0 && <p className="muted small plan-search-hint">Type at least 3 characters to search.</p>}
+      {showList && (
+        <ul className="plan-search-suggestions" id="plan-search-suggestions" role="listbox" aria-label="Matching plan items">
+          {suggestions.length === 0 ? (
+            <li className="plan-search-empty" role="presentation">
+              No matching plan items.
+            </li>
+          ) : (
+            suggestions.map((issue, index) => (
+              <li key={issue.issueId} role="presentation">
+                <button
+                  id={`plan-search-option-${issue.issueId}`}
+                  className={index === activeIndex ? "plan-search-option active" : "plan-search-option"}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => {
+                    onPick(issue.issueId);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="plan-search-title">{issue.title}</span>
+                  <span className="muted small">
+                    {[issue.issueType, issue.status, issue.number != null ? `#${issue.number}` : null].filter(Boolean).join(" · ")}
+                  </span>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+      {active && matches.length > 0 && (
+        <p className="muted small plan-search-count">
+          {matches.length} match{matches.length === 1 ? "" : "es"}
+          {matches.length > suggestions.length ? ` · showing ${suggestions.length}` : ""}
+          {issues.length ? ` of ${issues.length}` : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function filterPlanBands<T extends { key: string; rows: { issueId: string }[] }>(bands: T[], keepIds: Set<string> | null): T[] {
+  if (!keepIds) return bands;
+  return bands
+    .map((band) => ({ ...band, rows: band.rows.filter((row) => keepIds.has(row.issueId)) }))
+    .filter((band) => band.rows.length > 0);
+}
+
 function TimelineChart({
   bands,
   barColors,
+  matchIds,
+  canWrite,
+  busy,
   onEdit,
+  onSchedule,
 }: {
   bands: {
     key: string;
@@ -1278,7 +1469,11 @@ function TimelineChart({
     }[];
   }[];
   barColors: Record<string, string | null>;
+  matchIds: Set<string> | null;
+  canWrite: boolean;
+  busy: boolean;
   onEdit: ((issueId: string) => void) | null;
+  onSchedule: ((issueId: string, startDate: string, finishDate: string) => Promise<void>) | null;
 }) {
   const rangesByBand = bands.map((band) => chartRanges(band.rows));
   const span = scheduleSpan(
@@ -1332,24 +1527,41 @@ function TimelineChart({
               <div className="timeline-status">
                 {epic && <TimelineStatus title={epic.title} status={epic.status} issueId={epic.issueId} onEdit={onEdit} />}
               </div>
-              <ScheduleBar range={header} span={span} summary color={epic ? barColors[epic.issueId] : null} />
+              <ScheduleBar range={header} span={span} summary color={epic ? barColors[epic.issueId] : null} editable={false} busy={busy} onCommit={null} />
             </div>
             {rows.length > 0 && (
               <div className="phase-tasks">
-                {rows.map(({ row, range }) => (
-                  <div className="timeline-row" key={row.issueId}>
-                    <div className="taskline" style={{ paddingLeft: row.depth * 16 }}>
-                      <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
-                        {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
-                      </span>
-                      <span>{row.title}</span>
+                {rows.map(({ row, range }) => {
+                  const rollup = row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration);
+                  const ownDates = Boolean(range && row.startDate === range.start && row.finishDate === range.finish);
+                  const editable = Boolean(canWrite && onSchedule && range && (!rollup || ownDates));
+                  return (
+                    <div className={matchIds?.has(row.issueId) ? "timeline-row search-match" : "timeline-row"} key={row.issueId}>
+                      <div className="taskline" style={{ paddingLeft: row.depth * 16 }}>
+                        <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
+                          {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
+                        </span>
+                        <span>{row.title}</span>
+                      </div>
+                      <div className="timeline-status">
+                        <TimelineStatus title={row.title} status={row.status} issueId={row.issueId} onEdit={onEdit} />
+                      </div>
+                      <ScheduleBar
+                        range={range}
+                        span={span}
+                        summary={rollup && !ownDates}
+                        color={barColors[row.issueId]}
+                        editable={editable}
+                        busy={busy}
+                        onCommit={
+                          editable && onSchedule
+                            ? (startDate, finishDate) => onSchedule(row.issueId, startDate, finishDate)
+                            : null
+                        }
+                      />
                     </div>
-                    <div className="timeline-status">
-                      <TimelineStatus title={row.title} status={row.status} issueId={row.issueId} onEdit={onEdit} />
-                    </div>
-                    <ScheduleBar range={range} span={span} summary={row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration)} color={barColors[row.issueId]} />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1364,18 +1576,123 @@ function ScheduleBar({
   span,
   summary,
   color,
+  editable,
+  busy,
+  onCommit,
 }: {
   range: ScheduledRange | null;
   span: { origin: string; days: number };
   summary: boolean;
   color?: string | null;
+  editable: boolean;
+  busy: boolean;
+  onCommit: ((startDate: string, finishDate: string) => Promise<void>) | null;
 }) {
-  const label = range ? `${range.start} to ${range.finish}` : "Not scheduled";
-  const placement = range ? barPlacement(range.start, range.finish, span.origin, span.days) : null;
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    edge: ScheduleEdge;
+    pointerId: number;
+    originX: number;
+    start: string;
+    finish: string;
+  } | null>(null);
+  const previewRef = useRef<{ start: string; finish: string } | null>(null);
+  const [preview, setPreview] = useState<{ start: string; finish: string } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const shown = preview ?? (range ? { start: range.start, finish: range.finish } : null);
+  const label = shown ? `${shown.start} to ${shown.finish}` : "Not scheduled";
+  const placement = shown ? barPlacement(shown.start, shown.finish, span.origin, span.days) : null;
+  const interactive = Boolean(editable && onCommit && range && !busy);
+
+  function showPreview(next: { start: string; finish: string } | null) {
+    previewRef.current = next;
+    setPreview(next);
+  }
+
+  function beginDrag(edge: ScheduleEdge, event: ReactPointerEvent<HTMLElement>) {
+    if (!interactive || !range || !trackRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    trackRef.current.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      edge,
+      pointerId: event.pointerId,
+      originX: event.clientX,
+      start: range.start,
+      finish: range.finish,
+    };
+    showPreview({ start: range.start, finish: range.finish });
+    setDragging(true);
+  }
+
+  function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    const track = trackRef.current;
+    if (!drag || !track || event.pointerId !== drag.pointerId) return;
+    const delta = dayDeltaFromPointer(track.getBoundingClientRect().width, span.days, event.clientX - drag.originX);
+    const next = shiftSchedule(drag.start, drag.finish, drag.edge, delta);
+    showPreview({ start: next.startDate, finish: next.finishDate });
+  }
+
+  async function endDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    dragRef.current = null;
+    setDragging(false);
+    if (trackRef.current?.hasPointerCapture(event.pointerId)) {
+      trackRef.current.releasePointerCapture(event.pointerId);
+    }
+    const next = previewRef.current ?? { start: drag.start, finish: drag.finish };
+    showPreview(null);
+    if (!onCommit || (next.start === drag.start && next.finish === drag.finish)) return;
+    try {
+      await onCommit(next.start, next.finish);
+    } catch {
+      // saveIssue already surfaces the error on the plan page
+    }
+  }
+
   return (
-    <div className="gantt-track" aria-label={label}>
-      {range && placement && (
-        <div className={summary ? "gantt-bar rollup" : "gantt-bar"} style={{ ...placement, ...(color ? { background: color } : {}) }} title={label} />
+    <div
+      className="gantt-track"
+      ref={trackRef}
+      aria-label={label}
+      onPointerMove={onPointerMove}
+      onPointerUp={(event) => void endDrag(event)}
+      onPointerCancel={(event) => void endDrag(event)}
+    >
+      {shown && placement && (
+        <div
+          className={[
+            summary ? "gantt-bar rollup" : "gantt-bar",
+            interactive ? "interactive" : "",
+            dragging ? "dragging" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          style={{ ...placement, ...(color ? { background: color } : {}) }}
+          title={interactive ? `${label}. Drag to move, or drag an end to resize.` : label}
+          onPointerDown={interactive ? (event) => beginDrag("move", event) : undefined}
+        >
+          {interactive && (
+            <>
+              <span
+                className="gantt-handle start"
+                role="slider"
+                aria-label="Adjust start date"
+                aria-valuetext={shown.start}
+                onPointerDown={(event) => beginDrag("start", event)}
+              />
+              <span
+                className="gantt-handle finish"
+                role="slider"
+                aria-label="Adjust finish date"
+                aria-valuetext={shown.finish}
+                onPointerDown={(event) => beginDrag("finish", event)}
+              />
+            </>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1538,7 +1855,7 @@ function PredecessorForm({
 
 const milestoneLabel = { open: "Open", ready: "Ready for confirmation", confirmed: "Confirmed" };
 
-/** GitHub milestones on this project, with confirmation once every task on the milestone is Done. */
+/** GitHub milestones on this project, with confirmation once every task on the milestone is Done. Collapsed by default. */
 export function MilestonePanel({
   session,
   projectId,
@@ -1552,9 +1869,23 @@ export function MilestonePanel({
   milestones: MilestoneView[];
   onReload: () => Promise<void>;
 }) {
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [explanation, setExplanation] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+
+  const readyCount = milestones.filter((item) => item.state === "ready").length;
+  const lateCount = milestones.filter((item) => item.late).length;
+  const collapsedSummary =
+    milestones.length === 0
+      ? "None yet"
+      : [
+          `${milestones.length} milestone${milestones.length === 1 ? "" : "s"}`,
+          readyCount > 0 ? `${readyCount} ready` : null,
+          lateCount > 0 ? `${lateCount} late` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
 
   async function confirm(key: string) {
     if (!session) return;
@@ -1589,50 +1920,70 @@ export function MilestonePanel({
   }
 
   return (
-    <section className="panel">
-      <h3>Milestones</h3>
-      <p className="copy">
-        A milestone is created in GitHub. It is ready for confirmation when every task on it is Done. The target date is the GitHub due date. The forecast is the latest finish date, and only when every task on the milestone has one.
-      </p>
-      {error && <p className="error">{error}</p>}
-      {milestones.length === 0 && <p className="copy">No GitHub milestones on this project yet.</p>}
-      {milestones.map((milestone) => (
-        <article className="milestone" key={milestone.key}>
-          <div className="milestone-head">
-            <strong>{milestone.title}</strong>
-            <Pill tone={milestone.state === "confirmed" ? "good" : milestone.late ? "orange" : "blue"}>{milestone.late ? "Late" : milestoneLabel[milestone.state]}</Pill>
-          </div>
-          <p className="small muted">
-            Target {milestone.targetDate ?? "not set"}. Forecast {milestone.forecastDate ?? "not set"}. {milestone.doneCount} done, {milestone.openCount} open.
-            {milestone.confirmedAt ? ` Confirmed ${milestone.confirmedAt.slice(0, 10)}.` : ""}
+    <section className="panel milestone-panel">
+      <button
+        type="button"
+        className="milestone-panel-toggle"
+        aria-expanded={open}
+        aria-controls="milestone-panel-body"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="milestone-panel-heading">
+          <h3>Milestones</h3>
+          <span className="muted small">{collapsedSummary}</span>
+        </span>
+        <ExpandIcon expanded={open} />
+      </button>
+      {open && (
+        <div id="milestone-panel-body" className="milestone-panel-body">
+          <p className="copy">
+            A milestone is created in GitHub. It is ready for confirmation when every task on it is Done. The target date is the GitHub due date. The
+            forecast is the latest finish date, and only when every task on the milestone has one.
           </p>
-          {milestone.state === "confirmed" && milestone.workOpen && (
-            <p className="copy">A task on this milestone is open again. Reopen the confirmation and include the reason.</p>
-          )}
-          {canWrite && session && milestone.state === "ready" && (
-            <button className="btn small" type="button" disabled={pending === milestone.key} onClick={() => confirm(milestone.key)}>
-              Confirm milestone
-            </button>
-          )}
-          {canWrite && session && milestone.state === "confirmed" && (
-            <form
-              className="row"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void reopen(milestone.key);
-              }}
-            >
-              <label>
-                Reason to reopen
-                <input value={explanation} onChange={(event) => setExplanation(event.target.value)} required maxLength={500} />
-              </label>
-              <button className="btn small" type="submit" disabled={pending === milestone.key}>
-                Reopen milestone
-              </button>
-            </form>
-          )}
-        </article>
-      ))}
+          {error && <p className="error">{error}</p>}
+          {milestones.length === 0 && <p className="copy">No GitHub milestones on this project yet.</p>}
+          {milestones.map((milestone) => (
+            <article className="milestone" key={milestone.key}>
+              <div className="milestone-head">
+                <strong>{milestone.title}</strong>
+                <Pill tone={milestone.state === "confirmed" ? "good" : milestone.late ? "orange" : "blue"}>
+                  {milestone.late ? "Late" : milestoneLabel[milestone.state]}
+                </Pill>
+              </div>
+              <p className="small muted">
+                Target {milestone.targetDate ?? "not set"}. Forecast {milestone.forecastDate ?? "not set"}. {milestone.doneCount} done,{" "}
+                {milestone.openCount} open.
+                {milestone.confirmedAt ? ` Confirmed ${milestone.confirmedAt.slice(0, 10)}.` : ""}
+              </p>
+              {milestone.state === "confirmed" && milestone.workOpen && (
+                <p className="copy">A task on this milestone is open again. Reopen the confirmation and include the reason.</p>
+              )}
+              {canWrite && session && milestone.state === "ready" && (
+                <button className="btn small" type="button" disabled={pending === milestone.key} onClick={() => confirm(milestone.key)}>
+                  Confirm milestone
+                </button>
+              )}
+              {canWrite && session && milestone.state === "confirmed" && (
+                <form
+                  className="row"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void reopen(milestone.key);
+                  }}
+                >
+                  <label>
+                    Reason to reopen
+                    <input value={explanation} onChange={(event) => setExplanation(event.target.value)} required maxLength={500} />
+                  </label>
+                  <button className="btn small" type="submit" disabled={pending === milestone.key}>
+                    Reopen milestone
+                  </button>
+                </form>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
