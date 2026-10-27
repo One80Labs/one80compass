@@ -847,6 +847,12 @@ button.tab.active {
   line-height: 1.5;
 }
 
+.timeline-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 4px;
+}
+
 .timeline-chart {
   display: grid;
   gap: 4px;
@@ -858,6 +864,29 @@ button.tab.active {
   grid-template-columns: minmax(140px, 220px) 7.25rem minmax(180px, 1fr);
   gap: 8px 10px;
   align-items: center;
+}
+
+.gantt-today {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #2f6f8f;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.gantt-today-label {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: #2f6f8f;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
 }
 
 .timeline-status {
@@ -1010,6 +1039,28 @@ button.tab.active {
 .toolbar input {
   margin-left: auto;
   min-width: 220px;
+}
+
+.kanban-filters {
+  align-items: flex-end;
+}
+
+.kanban-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--oc-muted, #667085);
+}
+
+.kanban-filter .field {
+  min-width: 160px;
+}
+
+.kanban-type-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .plan-search {

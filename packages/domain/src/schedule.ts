@@ -21,15 +21,42 @@ export function addDays(iso: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** Inclusive day count from origin through the last day shown. At least a week, so an empty plan still has a scale. */
+/** Inclusive day count from origin through the last day shown. At least a week, so an empty plan still has a scale. Always includes today so the Today marker has a home. */
 export function scheduleSpan(dates: { startDate: string | null; finishDate: string | null }[], today: string): { origin: string; days: number } {
-  const stamps = dates.flatMap((item) => [item.startDate, item.finishDate].filter((value): value is string => Boolean(value && isIsoDate(value))));
-  if (stamps.length === 0) return { origin: isIsoDate(today) ? today : "2026-01-01", days: 14 };
+  const taskStamps = dates.flatMap((item) => [item.startDate, item.finishDate].filter((value): value is string => Boolean(value && isIsoDate(value))));
+  if (taskStamps.length === 0) {
+    const origin = isIsoDate(today) ? addDays(today, -1) : "2026-01-01";
+    return { origin, days: 14 };
+  }
+  const stamps = [...taskStamps, ...(isIsoDate(today) ? [today] : [])];
   const sorted = [...stamps].sort();
   const origin = addDays(sorted[0], -1);
   const end = addDays(sorted[sorted.length - 1], 2);
   const days = Math.max(7, Math.round((Date.parse(end) - Date.parse(origin)) / 86_400_000));
   return { origin, days };
+}
+
+/** Widen a Timeline span so a dragged bar (plus padding) stays on the chart. */
+export function expandSpanToFit(
+  span: { origin: string; days: number },
+  range: { startDate: string; finishDate: string },
+  padDays = 3,
+): { origin: string; days: number } {
+  if (!isIsoDate(span.origin) || !(span.days > 0) || !isIsoDate(range.startDate) || !isIsoDate(range.finishDate) || range.finishDate < range.startDate) {
+    return span;
+  }
+  let origin = span.origin;
+  let last = addDays(span.origin, span.days - 1);
+  if (range.startDate < origin) origin = addDays(range.startDate, -padDays);
+  if (range.finishDate > last) last = addDays(range.finishDate, padDays);
+  const days = Math.max(span.days, Math.round((Date.parse(last) - Date.parse(origin)) / 86_400_000) + 1);
+  return { origin, days };
+}
+
+/** Whole days from origin to date. Null when either value is not an ISO date. */
+export function dayOffset(date: string, origin: string): number | null {
+  if (!isIsoDate(date) || !isIsoDate(origin)) return null;
+  return Math.round((Date.parse(date) - Date.parse(origin)) / 86_400_000);
 }
 
 export type ScheduleEdge = "move" | "start" | "finish";
@@ -56,6 +83,17 @@ export function iterationFinish(start: string, duration: number): string | null 
 }
 
 export type IterationWindow = { id: string; startDate: string; duration: number };
+
+/** Iteration whose inclusive window contains today. Null when none match. */
+export function currentIterationId(iterations: IterationWindow[], today: string): string | null {
+  if (!isIsoDate(today)) return null;
+  for (const item of iterations) {
+    const end = iterationFinish(item.startDate, item.duration);
+    if (!end || !item.id) continue;
+    if (today >= item.startDate && today <= end) return item.id;
+  }
+  return null;
+}
 
 /**
  * Iteration that fits a Start/Finish range after a Timeline drag.

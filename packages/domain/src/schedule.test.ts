@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   addDays,
   chartRanges,
+  currentIterationId,
   datesAfterIterationPick,
+  dayOffset,
+  expandSpanToFit,
   isIsoDate,
   iterationFinish,
   iterationForDates,
@@ -37,9 +40,29 @@ describe("schedule", () => {
     expect(iterationForDates(iterations, "2026-10-30", "2026-11-10")).toBe("i2");
   });
 
-  it("gives an unscheduled plan a two-week scale and pads a scheduled one", () => {
-    expect(scheduleSpan([{ startDate: null, finishDate: null }], "2026-10-26")).toEqual({ origin: "2026-10-26", days: 14 });
-    expect(scheduleSpan([{ startDate: "2026-10-10", finishDate: "2026-10-12" }], "2026-10-26").origin).toBe("2026-10-09");
+  it("finds the iteration that contains today", () => {
+    const iterations = [
+      { id: "i1", startDate: "2026-10-24", duration: 14 },
+      { id: "i2", startDate: "2026-11-07", duration: 14 },
+    ];
+    expect(currentIterationId(iterations, "2026-10-27")).toBe("i1");
+    expect(currentIterationId(iterations, "2026-11-07")).toBe("i2");
+    expect(currentIterationId(iterations, "2026-12-01")).toBeNull();
+  });
+
+  it("gives an unscheduled plan a two-week scale and pads a scheduled one, keeping today on the chart", () => {
+    expect(scheduleSpan([{ startDate: null, finishDate: null }], "2026-10-26")).toEqual({ origin: "2026-10-25", days: 14 });
+    const spanned = scheduleSpan([{ startDate: "2026-10-10", finishDate: "2026-10-12" }], "2026-10-26");
+    expect(spanned.origin).toBe("2026-10-09");
+    expect(spanned.days).toBe(19);
+    expect(dayOffset("2026-10-26", spanned.origin)).toBe(17);
+  });
+
+  it("expands the Timeline span when a dragged bar moves past the edges", () => {
+    const base = { origin: "2026-10-20", days: 14 };
+    expect(expandSpanToFit(base, { startDate: "2026-10-22", finishDate: "2026-10-25" })).toEqual(base);
+    expect(expandSpanToFit(base, { startDate: "2026-11-01", finishDate: "2026-11-05" }).days).toBeGreaterThan(base.days);
+    expect(expandSpanToFit(base, { startDate: "2026-10-10", finishDate: "2026-10-12" }).origin).toBe("2026-10-07");
   });
 
   it("draws the bar from Start and Finish, and copies iteration dates when an iteration is chosen", () => {

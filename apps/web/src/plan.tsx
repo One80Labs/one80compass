@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useParams } from "react-router-dom";
 import { orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { catalogColorHex } from "../../../packages/domain/src/index";
@@ -10,7 +10,9 @@ import {
   chartRanges,
   datesAfterIterationPick,
   datesAreDerived,
+  dayOffset,
   derivedSchedule,
+  expandSpanToFit,
   iterationFinish,
   iterationForDates,
   scheduleSpan,
@@ -25,8 +27,22 @@ import type { Session } from "./auth";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import { BaselinesPanel } from "./baselines";
 import { CompassIssueDrawer } from "./compass-drawer";
-import { dayDeltaFromPointer } from "./gantt-drag";
+import { dayDeltaFromDayWidth, nudgeScrollForDrag } from "./gantt-drag";
 import { usePortal } from "./shell";
+
+const GANTT_PX_PER_DAY = 16;
+import {
+  KANBAN_ASSIGNEE_ALL,
+  KANBAN_ASSIGNEE_UNASSIGNED,
+  KANBAN_DEFAULT_ISSUE_TYPES,
+  KANBAN_ISSUE_TYPE_OPTIONS,
+  KANBAN_ITERATION_ALL,
+  KANBAN_ITERATION_CURRENT,
+  KANBAN_ITERATION_NONE,
+  matchesKanbanFilters,
+  toggleIssueType,
+  type KanbanIssueTypeFilter,
+} from "./kanban-filters";
 import { matchPlanIssues, planSearchKeepIds, PLAN_SEARCH_MIN } from "./plan-search";
 import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs } from "./ui";
 
@@ -115,7 +131,6 @@ export function PlanPage({ session }: { session: Session | null }) {
   const canWrite = portal.canWrite;
   const name = portal.projects.find((item) => item.projectId === projectId)?.name ?? "this project";
   const [tab, setTab] = useState("Timeline view");
-  const [notice, setNotice] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
   const issues = plan.data?.issues ?? [];
@@ -130,17 +145,7 @@ export function PlanPage({ session }: { session: Session | null }) {
   const done = issues.filter((issue) => issue.status === "Done").length;
   return (
     <>
-      <PageHead
-        title="Project plan."
-        subtitle={`Milestones, phases, and tasks for ${name}.`}
-        action={
-          canWrite ? (
-            <button className="btn primary" type="button" onClick={() => setNotice(true)}>
-              Add milestone
-            </button>
-          ) : undefined
-        }
-      />
+      <PageHead title="Project plan." subtitle={`Milestones, phases, and tasks for ${name}.`} />
       <PlanStatus plan={plan} session={session} canWrite={canWrite} />
       {plan.data && <MilestonePanel session={session} projectId={projectId} canWrite={canWrite} milestones={plan.data.milestones ?? []} onReload={plan.reload} />}
       <Tabs label="Plan" tabs={["Timeline view", "Dependencies", "Baselines"]} value={tab} onChange={setTab} />
@@ -182,7 +187,7 @@ export function PlanPage({ session }: { session: Session | null }) {
           {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, effort, and dates can be edited from a row after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
-            The plan is grouped by Epic. Date bars use the Start and Finish fields. Drag the middle of a bar to move both dates, or drag either end to change Start or Finish. That write also updates the Iteration field when the new dates fall in an iteration. An Epic or Feature can keep its own dates until a task or sub-issue is added, and then those dates come from the tasks under it. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
+            The plan is grouped by Epic. Date bars use the Start and Finish fields. Drag the middle of a bar to move both dates, or drag either end to change Start or Finish. Dragging past either edge expands and scrolls the Timeline so you can move work into the past or future. The vertical Today line marks the current day. That write also updates the Iteration field when the new dates fall in an iteration. An Epic or Feature can keep its own dates until a task or sub-issue is added, and then those dates come from the tasks under it. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
           </p>
         </div>
       )}
@@ -290,13 +295,6 @@ export function PlanPage({ session }: { session: Session | null }) {
           }}
         />
       )}
-      {notice && (
-        <Notice
-          title="Add milestone"
-          body="Milestones are created in GitHub. After every task on a milestone is Done, confirm it here. Reopening a confirmation requires an explanation."
-          onClose={() => setNotice(false)}
-        />
-      )}
     </>
   );
 }
@@ -307,17 +305,34 @@ export function KanbanPage({ session }: { session: Session | null }) {
   const portal = usePortal();
   const canWrite = portal.canWrite;
   const name = portal.projects.find((item) => item.projectId === projectId)?.name ?? "this project";
-  const [filter, setFilter] = useState("All tasks");
+  const [iterationFilter, setIterationFilter] = useState(KANBAN_ITERATION_CURRENT);
+  const [assigneeFilter, setAssigneeFilter] = useState(KANBAN_ASSIGNEE_ALL);
+  const [issueTypes, setIssueTypes] = useState<KanbanIssueTypeFilter[]>(KANBAN_DEFAULT_ISSUE_TYPES);
   const [query, setQuery] = useState("");
-  const [notice, setNotice] = useState(false);
+  const [addKind, setAddKind] = useState<Exclude<PlanKind, "workstream"> | null>(null);
   const [editing, setEditing] = useState<PlanIssue | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overColumn, setOverColumn] = useState<string | null>(null);
   const [pending, setPending] = useState<Record<string, string>>({});
   const attempts = useRef<Record<string, number>>({});
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
-  let issues = plan.data?.issues.filter((issue) => issue.title.toLowerCase().includes(query.toLowerCase())) ?? [];
-  if (filter !== "All tasks") issues = [];
+  const iterations = plan.data?.settings?.iterations ?? [];
+  const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
+  const allIssues = plan.data?.issues ?? [];
+  const assignableUsers = assigneeOptions(plan.data?.settings?.assignableUsers ?? [], allIssues.flatMap((issue) => issue.assignees ?? []));
+  const today = new Date().toISOString().slice(0, 10);
+  const issues = matchesKanbanFilters(
+    allIssues,
+    {
+      iteration: iterationFilter,
+      assignee: assigneeFilter,
+      issueTypes,
+      query,
+      today,
+    },
+    iterations,
+    workstreamNumber,
+  );
 
   function shownStatus(issue: PlanIssue): string {
     return pending[issue.issueId] ?? issue.status;
@@ -405,28 +420,53 @@ export function KanbanPage({ session }: { session: Session | null }) {
 
   return (
     <>
-      <PageHead
-        title="Kanban board."
-        subtitle={`Track and manage project work for ${name}.`}
-        action={
-          canWrite ? (
-            <button className="btn primary" type="button" onClick={() => setNotice(true)}>
-              Add task
-            </button>
-          ) : undefined
-        }
-      />
+      <PageHead title="Kanban board." subtitle={`Track and manage project work for ${name}.`} />
       <PlanStatus plan={plan} session={session} canWrite={canWrite} />
-      <div className="toolbar">
-        {["All tasks", "My tasks", "Due this week"].map((item) => (
-          <button key={item} className={filter === item ? "btn small primary" : "btn small"} type="button" onClick={() => setFilter(item)}>
-            {item}
-          </button>
-        ))}
+      {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
+      <div className="toolbar kanban-filters">
+        <label className="kanban-filter">
+          <span>Iteration</span>
+          <select className="field" value={iterationFilter} aria-label="Filter by iteration" onChange={(event) => setIterationFilter(event.target.value)}>
+            <option value={KANBAN_ITERATION_CURRENT}>Current</option>
+            <option value={KANBAN_ITERATION_ALL}>All iterations</option>
+            <option value={KANBAN_ITERATION_NONE}>No iteration</option>
+            {iterations.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="kanban-filter">
+          <span>Assignee</span>
+          <select className="field" value={assigneeFilter} aria-label="Filter by assignee" onChange={(event) => setAssigneeFilter(event.target.value)}>
+            <option value={KANBAN_ASSIGNEE_ALL}>All assignees</option>
+            <option value={KANBAN_ASSIGNEE_UNASSIGNED}>Unassigned</option>
+            {assignableUsers.map((person) => (
+              <option key={person.id} value={person.id}>
+                {person.name ?? person.login}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="kanban-filter" role="group" aria-label="Filter by issue type">
+          <span>Issue type</span>
+          <div className="kanban-type-toggles">
+            {KANBAN_ISSUE_TYPE_OPTIONS.map((type) => (
+              <button
+                key={type}
+                className={issueTypes.includes(type) ? "btn small primary" : "btn small"}
+                type="button"
+                aria-pressed={issueTypes.includes(type)}
+                onClick={() => setIssueTypes((current) => toggleIssueType(current, type))}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+        </div>
         <input type="search" value={query} placeholder="Search tasks…" aria-label="Search tasks" onChange={(event) => setQuery(event.target.value)} />
       </div>
-      {filter === "My tasks" && <p className="muted small">Assignees are not stored on tasks yet, so My tasks has nothing to show.</p>}
-      {filter === "Due this week" && <p className="muted small">Due dates are not stored on tasks yet, so Due this week has nothing to show.</p>}
       <div className="kanban">
         {columns.map((column) => {
           const rows = issues.filter((issue) => shownStatus(issue) === column);
@@ -476,18 +516,24 @@ export function KanbanPage({ session }: { session: Session | null }) {
           );
         })}
       </div>
-      {notice && (
-        <Notice
-          title="Add task"
-          body="Tasks are created in the connected GitHub project. This board can change status, title, and effort for issues that already exist. It does not add a local-only task."
-          onClose={() => setNotice(false)}
+      {addKind && (
+        <AddPlanDrawer
+          kind={addKind}
+          issues={allIssues}
+          columns={columns}
+          iterations={iterations}
+          users={plan.data?.settings?.assignableUsers ?? []}
+          workstreamNumber={workstreamNumber}
+          busy={plan.busy}
+          onClose={() => setAddKind(null)}
+          onCreate={(kind, title, parentIssueId, draft) => plan.createPlanItem(kind, title, parentIssueId, draft)}
         />
       )}
       {editing && canWrite && plan.data?.settings?.recordSource === "compass" && (
         <CompassIssueDrawer
           key={editing.issueId}
           issue={editing}
-          issues={plan.data?.issues ?? []}
+          issues={allIssues}
           catalogs={{
             statusOptions: plan.data.settings.statusOptions ?? [],
             labels: plan.data.settings.labels ?? [],
@@ -499,10 +545,10 @@ export function KanbanPage({ session }: { session: Session | null }) {
           columns={columns}
           iterations={plan.data.settings.iterations ?? []}
           users={plan.data.settings.assignableUsers ?? []}
-          datesDerived={derivedDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)}
-          summary={summaryIssue(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)}
-          derivedStart={rolledDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)?.startDate ?? null}
-          derivedFinish={rolledDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)?.finishDate ?? null}
+          datesDerived={derivedDates(editing, allIssues, workstreamNumber)}
+          summary={summaryIssue(editing, allIssues, workstreamNumber)}
+          derivedStart={rolledDates(editing, allIssues, workstreamNumber)?.startDate ?? null}
+          derivedFinish={rolledDates(editing, allIssues, workstreamNumber)?.finishDate ?? null}
           onClose={() => setEditing(null)}
           onSave={async (issueId, change) => {
             await plan.saveIssue(issueId, change);
@@ -517,10 +563,10 @@ export function KanbanPage({ session }: { session: Session | null }) {
           columns={columns}
           iterations={plan.data?.settings?.iterations ?? []}
           users={plan.data?.settings?.assignableUsers ?? []}
-          datesDerived={derivedDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)}
-          summary={summaryIssue(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)}
-          derivedStart={rolledDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)?.startDate ?? null}
-          derivedFinish={rolledDates(editing, plan.data?.issues ?? [], plan.data?.settings?.workstreamNumber ?? null)?.finishDate ?? null}
+          datesDerived={derivedDates(editing, allIssues, workstreamNumber)}
+          summary={summaryIssue(editing, allIssues, workstreamNumber)}
+          derivedStart={rolledDates(editing, allIssues, workstreamNumber)?.startDate ?? null}
+          derivedFinish={rolledDates(editing, allIssues, workstreamNumber)?.finishDate ?? null}
           onClose={() => setEditing(null)}
           onSave={async (issueId, change) => {
             await plan.saveIssue(issueId, change);
@@ -1475,98 +1521,148 @@ function TimelineChart({
   onEdit: ((issueId: string) => void) | null;
   onSchedule: ((issueId: string, startDate: string, finishDate: string) => Promise<void>) | null;
 }) {
+  const today = timelineToday();
   const rangesByBand = bands.map((band) => chartRanges(band.rows));
-  const span = scheduleSpan(
-    rangesByBand.flat().map((range) => ({ startDate: range?.start ?? null, finishDate: range?.finish ?? null })),
-    timelineToday(),
+  const baseSpan = useMemo(
+    () =>
+      scheduleSpan(
+        rangesByBand.flat().map((range) => ({ startDate: range?.start ?? null, finishDate: range?.finish ?? null })),
+        today,
+      ),
+    [bands, today],
   );
+  const [dragSpan, setDragSpan] = useState<{ origin: string; days: number } | null>(null);
+  const span = dragSpan ?? baseSpan;
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const chartMinWidth = 220 + 116 + Math.max(280, span.days * GANTT_PX_PER_DAY);
+
+  useEffect(() => {
+    setDragSpan(null);
+  }, [baseSpan.origin, baseSpan.days]);
+
+  function onBarPreview(next: { start: string; finish: string } | null) {
+    if (!next) {
+      setDragSpan(null);
+      return;
+    }
+    setDragSpan(expandSpanToFit(baseSpan, { startDate: next.start, finishDate: next.finish }));
+  }
+
+  function onBarDragMove(clientX: number) {
+    if (scrollRef.current) nudgeScrollForDrag(scrollRef.current, clientX);
+  }
+
   const step = span.days > 90 ? 14 : span.days > 28 ? 7 : Math.max(1, Math.round(span.days / 6));
   const marks: number[] = [];
   for (let offset = 0; offset < span.days; offset += step) marks.push(offset);
+  const todayLeft = todayMarkerLeft(today, span);
+
   return (
-    <div className="timeline-chart">
-      <div className="timeline-scale">
-        <span className="muted small">Schedule</span>
-        <span />
-        <div className="gantt-days timeline-days">
-          {marks.map((offset) => (
-            <span key={offset} style={{ left: `${(offset / span.days) * 100}%` }}>
-              {shortDate(addDays(span.origin, offset))}
-            </span>
-          ))}
-        </div>
-      </div>
-      {bands.map((band, bandIndex) => {
-        const ranges = rangesByBand[bandIndex];
-        const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subissue");
-        const bandDone = tasks.filter((row) => row.status === "Done").length;
-        const width = tasks.length === 0 ? 0 : Math.round((bandDone / tasks.length) * 100);
-        const epic = band.rows[0]?.kind === "epic" ? band.rows[0] : null;
-        const header = epic ? ranges[0] : unionRange(ranges);
-        const rows =
-          band.key === "outside"
-            ? band.rows.map((row, index) => ({ row, range: ranges[index] }))
-            : band.rows.flatMap((row, index) => (row.kind === "epic" ? [] : [{ row, range: ranges[index] }]));
-        return (
-          <div className="phase active" key={band.key}>
-            <div className="timeline-row">
-              <div>
-                <div className="taskline">
-                  <strong>{band.title}</strong>
-                </div>
-                <div className="phase-score">
-                  <span>
-                    {bandDone} of {tasks.length} tasks Done
-                  </span>
-                  <div className="progressline">
-                    <span style={{ width: `${width}%` }} />
-                  </div>
-                  <strong>{width}%</strong>
-                </div>
-              </div>
-              <div className="timeline-status">
-                {epic && <TimelineStatus title={epic.title} status={epic.status} issueId={epic.issueId} onEdit={onEdit} />}
-              </div>
-              <ScheduleBar range={header} span={span} summary color={epic ? barColors[epic.issueId] : null} editable={false} busy={busy} onCommit={null} />
-            </div>
-            {rows.length > 0 && (
-              <div className="phase-tasks">
-                {rows.map(({ row, range }) => {
-                  const rollup = row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration);
-                  const ownDates = Boolean(range && row.startDate === range.start && row.finishDate === range.finish);
-                  const editable = Boolean(canWrite && onSchedule && range && (!rollup || ownDates));
-                  return (
-                    <div className={matchIds?.has(row.issueId) ? "timeline-row search-match" : "timeline-row"} key={row.issueId}>
-                      <div className="taskline" style={{ paddingLeft: row.depth * 16 }}>
-                        <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
-                          {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
-                        </span>
-                        <span>{row.title}</span>
-                      </div>
-                      <div className="timeline-status">
-                        <TimelineStatus title={row.title} status={row.status} issueId={row.issueId} onEdit={onEdit} />
-                      </div>
-                      <ScheduleBar
-                        range={range}
-                        span={span}
-                        summary={rollup && !ownDates}
-                        color={barColors[row.issueId]}
-                        editable={editable}
-                        busy={busy}
-                        onCommit={
-                          editable && onSchedule
-                            ? (startDate, finishDate) => onSchedule(row.issueId, startDate, finishDate)
-                            : null
-                        }
-                      />
-                    </div>
-                  );
-                })}
-              </div>
+    <div className="timeline-scroll" ref={scrollRef}>
+      <div className="timeline-chart" style={{ minWidth: chartMinWidth }}>
+        <div className="timeline-scale">
+          <span className="muted small">Schedule</span>
+          <span />
+          <div className="gantt-days timeline-days">
+            {marks.map((offset) => (
+              <span key={offset} style={{ left: `${(offset / span.days) * 100}%` }}>
+                {shortDate(addDays(span.origin, offset))}
+              </span>
+            ))}
+            {todayLeft != null && (
+              <span className="gantt-today-label" style={{ left: todayLeft }} title={`Today ${today}`}>
+                Today
+              </span>
             )}
+            {todayLeft != null && <div className="gantt-today" style={{ left: todayLeft }} aria-hidden="true" />}
           </div>
-        );
-      })}
+        </div>
+        {bands.map((band, bandIndex) => {
+          const ranges = rangesByBand[bandIndex];
+          const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subissue");
+          const bandDone = tasks.filter((row) => row.status === "Done").length;
+          const width = tasks.length === 0 ? 0 : Math.round((bandDone / tasks.length) * 100);
+          const epic = band.rows[0]?.kind === "epic" ? band.rows[0] : null;
+          const header = epic ? ranges[0] : unionRange(ranges);
+          const rows =
+            band.key === "outside"
+              ? band.rows.map((row, index) => ({ row, range: ranges[index] }))
+              : band.rows.flatMap((row, index) => (row.kind === "epic" ? [] : [{ row, range: ranges[index] }]));
+          return (
+            <div className="phase active" key={band.key}>
+              <div className="timeline-row">
+                <div>
+                  <div className="taskline">
+                    <strong>{band.title}</strong>
+                  </div>
+                  <div className="phase-score">
+                    <span>
+                      {bandDone} of {tasks.length} tasks Done
+                    </span>
+                    <div className="progressline">
+                      <span style={{ width: `${width}%` }} />
+                    </div>
+                    <strong>{width}%</strong>
+                  </div>
+                </div>
+                <div className="timeline-status">
+                  {epic && <TimelineStatus title={epic.title} status={epic.status} issueId={epic.issueId} onEdit={onEdit} />}
+                </div>
+                <ScheduleBar
+                  range={header}
+                  span={span}
+                  today={today}
+                  summary
+                  color={epic ? barColors[epic.issueId] : null}
+                  editable={false}
+                  busy={busy}
+                  onCommit={null}
+                  onPreview={null}
+                  onDragMove={null}
+                />
+              </div>
+              {rows.length > 0 && (
+                <div className="phase-tasks">
+                  {rows.map(({ row, range }) => {
+                    const rollup = row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration);
+                    const ownDates = Boolean(range && row.startDate === range.start && row.finishDate === range.finish);
+                    const editable = Boolean(canWrite && onSchedule && range && (!rollup || ownDates));
+                    return (
+                      <div className={matchIds?.has(row.issueId) ? "timeline-row search-match" : "timeline-row"} key={row.issueId}>
+                        <div className="taskline" style={{ paddingLeft: row.depth * 16 }}>
+                          <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
+                            {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
+                          </span>
+                          <span>{row.title}</span>
+                        </div>
+                        <div className="timeline-status">
+                          <TimelineStatus title={row.title} status={row.status} issueId={row.issueId} onEdit={onEdit} />
+                        </div>
+                        <ScheduleBar
+                          range={range}
+                          span={span}
+                          today={today}
+                          summary={rollup && !ownDates}
+                          color={barColors[row.issueId]}
+                          editable={editable}
+                          busy={busy}
+                          onCommit={
+                            editable && onSchedule
+                              ? (startDate, finishDate) => onSchedule(row.issueId, startDate, finishDate)
+                              : null
+                          }
+                          onPreview={editable ? onBarPreview : null}
+                          onDragMove={editable ? onBarDragMove : null}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1574,19 +1670,25 @@ function TimelineChart({
 function ScheduleBar({
   range,
   span,
+  today,
   summary,
   color,
   editable,
   busy,
   onCommit,
+  onPreview,
+  onDragMove,
 }: {
   range: ScheduledRange | null;
   span: { origin: string; days: number };
+  today: string;
   summary: boolean;
   color?: string | null;
   editable: boolean;
   busy: boolean;
   onCommit: ((startDate: string, finishDate: string) => Promise<void>) | null;
+  onPreview: ((next: { start: string; finish: string } | null) => void) | null;
+  onDragMove: ((clientX: number) => void) | null;
 }) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
@@ -1595,6 +1697,7 @@ function ScheduleBar({
     originX: number;
     start: string;
     finish: string;
+    dayWidth: number;
   } | null>(null);
   const previewRef = useRef<{ start: string; finish: string } | null>(null);
   const [preview, setPreview] = useState<{ start: string; finish: string } | null>(null);
@@ -1603,16 +1706,19 @@ function ScheduleBar({
   const label = shown ? `${shown.start} to ${shown.finish}` : "Not scheduled";
   const placement = shown ? barPlacement(shown.start, shown.finish, span.origin, span.days) : null;
   const interactive = Boolean(editable && onCommit && range && !busy);
+  const todayLeft = todayMarkerLeft(today, span);
 
   function showPreview(next: { start: string; finish: string } | null) {
     previewRef.current = next;
     setPreview(next);
+    onPreview?.(next);
   }
 
   function beginDrag(edge: ScheduleEdge, event: ReactPointerEvent<HTMLElement>) {
     if (!interactive || !range || !trackRef.current) return;
     event.preventDefault();
     event.stopPropagation();
+    const width = trackRef.current.getBoundingClientRect().width;
     trackRef.current.setPointerCapture(event.pointerId);
     dragRef.current = {
       edge,
@@ -1620,6 +1726,7 @@ function ScheduleBar({
       originX: event.clientX,
       start: range.start,
       finish: range.finish,
+      dayWidth: width > 0 && span.days > 0 ? width / span.days : GANTT_PX_PER_DAY,
     };
     showPreview({ start: range.start, finish: range.finish });
     setDragging(true);
@@ -1627,9 +1734,9 @@ function ScheduleBar({
 
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     const drag = dragRef.current;
-    const track = trackRef.current;
-    if (!drag || !track || event.pointerId !== drag.pointerId) return;
-    const delta = dayDeltaFromPointer(track.getBoundingClientRect().width, span.days, event.clientX - drag.originX);
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    onDragMove?.(event.clientX);
+    const delta = dayDeltaFromDayWidth(drag.dayWidth, event.clientX - drag.originX);
     const next = shiftSchedule(drag.start, drag.finish, drag.edge, delta);
     showPreview({ start: next.startDate, finish: next.finishDate });
   }
@@ -1661,6 +1768,7 @@ function ScheduleBar({
       onPointerUp={(event) => void endDrag(event)}
       onPointerCancel={(event) => void endDrag(event)}
     >
+      {todayLeft != null && <div className="gantt-today" style={{ left: todayLeft }} aria-hidden="true" />}
       {shown && placement && (
         <div
           className={[
@@ -1696,6 +1804,12 @@ function ScheduleBar({
       )}
     </div>
   );
+}
+
+function todayMarkerLeft(today: string, span: { origin: string; days: number }): string | null {
+  const offset = dayOffset(today, span.origin);
+  if (offset == null || offset < 0 || offset >= span.days) return null;
+  return `${(offset / span.days) * 100}%`;
 }
 
 function barColors(issues: { issueId: string; issueType: string | null }[], issueTypes: { name: string; color?: string | null }[]): Record<string, string | null> {
@@ -1855,7 +1969,7 @@ function PredecessorForm({
 
 const milestoneLabel = { open: "Open", ready: "Ready for confirmation", confirmed: "Confirmed" };
 
-/** GitHub milestones on this project, with confirmation once every task on the milestone is Done. Collapsed by default. */
+/** GitHub milestones on this project, with confirmation once every task on the milestone is Done. Collapsed by default; Add milestone lives in the expanded body. */
 export function MilestonePanel({
   session,
   projectId,
@@ -1873,6 +1987,7 @@ export function MilestonePanel({
   const [error, setError] = useState<string | null>(null);
   const [explanation, setExplanation] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  const [addNotice, setAddNotice] = useState(false);
 
   const readyCount = milestones.filter((item) => item.state === "ready").length;
   const lateCount = milestones.filter((item) => item.late).length;
@@ -1940,6 +2055,11 @@ export function MilestonePanel({
             A milestone is created in GitHub. It is ready for confirmation when every task on it is Done. The target date is the GitHub due date. The
             forecast is the latest finish date, and only when every task on the milestone has one.
           </p>
+          {canWrite && (
+            <button className="btn primary" type="button" onClick={() => setAddNotice(true)}>
+              Add milestone
+            </button>
+          )}
           {error && <p className="error">{error}</p>}
           {milestones.length === 0 && <p className="copy">No GitHub milestones on this project yet.</p>}
           {milestones.map((milestone) => (
@@ -1983,6 +2103,13 @@ export function MilestonePanel({
             </article>
           ))}
         </div>
+      )}
+      {addNotice && (
+        <Notice
+          title="Add milestone"
+          body="Milestones are created in GitHub. After every task on a milestone is Done, confirm it here. Reopening a confirmation requires an explanation."
+          onClose={() => setAddNotice(false)}
+        />
       )}
     </section>
   );
