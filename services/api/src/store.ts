@@ -30,6 +30,7 @@ import {
 } from "../../../packages/domain/src/index";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import type { MilestoneRecord } from "../../../packages/domain/src/milestones";
+import { riskSeverityFromStore, type RiskRecord } from "../../../packages/domain/src/risks";
 
 export interface Store {
   createCustomer(customer: Customer): Promise<void>;
@@ -70,6 +71,8 @@ export interface Store {
   putMilestone(record: MilestoneRecord): Promise<void>;
   listBaselines(projectId: string): Promise<BaselineRecord[]>;
   putBaseline(record: BaselineRecord): Promise<void>;
+  listRisks(projectId: string): Promise<RiskRecord[]>;
+  putRisk(record: RiskRecord): Promise<void>;
   getOverride(projectId: string): Promise<ProgressOverride | null>;
   putOverride(override: ProgressOverride): Promise<void>;
   getSync(projectId: string): Promise<SyncState | null>;
@@ -482,6 +485,26 @@ export class DynamoStore implements Store {
     );
   }
 
+  async listRisks(projectId: string): Promise<RiskRecord[]> {
+    const result = await this.doc.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "RISK#" },
+      }),
+    );
+    return (result.Items ?? []).map(asRisk);
+  }
+
+  async putRisk(record: RiskRecord): Promise<void> {
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: { pk: proj(record.projectId), sk: `RISK#${record.riskId}`, entity: "risk", ...record },
+      }),
+    );
+  }
+
   async getOverride(projectId: string): Promise<ProgressOverride | null> {
     const result = await this.doc.send(new GetCommand({ TableName: this.tableName, Key: { pk: proj(projectId), sk: "OVERRIDE" } }));
     return result.Item ? asOverride(result.Item) : null;
@@ -848,6 +871,24 @@ function asIssue(item: Item): PlanIssue {
     relationships: relationshipsFromStore(item.relationships),
     inProject: item.inProject !== false,
     updatedAt: String(item.updatedAt),
+  };
+}
+
+function asRisk(item: Item): RiskRecord {
+  const dateCleared = typeof item.dateCleared === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.dateCleared) ? item.dateCleared : null;
+  return {
+    riskId: String(item.riskId),
+    projectId: String(item.projectId),
+    customerId: String(item.customerId),
+    title: String(item.title ?? ""),
+    severity: riskSeverityFromStore(item.severity),
+    description: String(item.description ?? ""),
+    dateCleared,
+    notes: String(item.notes ?? ""),
+    issueId: item.issueId == null || item.issueId === "" ? null : String(item.issueId),
+    predecessorId: item.predecessorId == null || item.predecessorId === "" ? null : String(item.predecessorId),
+    updatedAt: String(item.updatedAt ?? ""),
+    updatedBy: String(item.updatedBy ?? ""),
   };
 }
 

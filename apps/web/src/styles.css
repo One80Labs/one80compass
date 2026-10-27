@@ -907,6 +907,14 @@ button.tab.active {
   stroke-width: 4;
 }
 
+.gantt-risk {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 .gantt-risk-icon {
   display: inline-grid;
   width: 14px;
@@ -918,6 +926,33 @@ button.tab.active {
   line-height: 1;
   background: #dc2626;
   clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.gantt-risk-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  width: max-content;
+  max-width: 280px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #2f2a24;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
+  box-shadow: 0 4px 12px rgba(47, 42, 36, 0.2);
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.gantt-risk:hover .gantt-risk-tip,
+.gantt-risk:focus-visible .gantt-risk-tip {
+  opacity: 1;
 }
 
 .timeline-dep-toolbar {
@@ -949,6 +984,40 @@ button.tab.active {
   align-items: center;
   gap: 6px;
   cursor: pointer;
+}
+
+.risk-register-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.risk-register-table th,
+.risk-register-table td {
+  vertical-align: top;
+  padding: 10px 8px;
+  border-bottom: 1px solid #e6e1d8;
+}
+
+.risk-register-table th {
+  text-align: left;
+  font-size: 12px;
+  color: var(--oc-muted);
+  font-weight: 600;
+}
+
+.risk-register-table input,
+.risk-register-table select,
+.risk-register-table textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.risk-register-table textarea {
+  resize: vertical;
+}
+
+.risk-row.cleared {
+  opacity: 0.78;
 }
 
 .gantt-link-preview {

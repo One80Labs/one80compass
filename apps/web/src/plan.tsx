@@ -38,6 +38,7 @@ import type { MilestoneView } from "../../../packages/domain/src/milestones";
 import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
+import type { RiskRegisterRow, RiskSeverity } from "../../../packages/domain/src/risks";
 import { BaselinesPanel } from "./baselines";
 import { CompassIssueDrawer } from "./compass-drawer";
 import {
@@ -50,6 +51,7 @@ import {
   type GanttBarHit,
   type GanttLinkAnchor,
 } from "./gantt-drag";
+import { RiskRegisterPanel } from "./risk-register";
 import { usePortal } from "./shell";
 
 const GANTT_PX_PER_DAY = 16;
@@ -141,6 +143,7 @@ type PlanResponse = {
   override: { percent: number; explanation: string; calculatedPercent: number | null } | null;
   milestones: MilestoneView[];
   baselines: BaselineRecord[];
+  risks?: RiskRegisterRow[];
   members?: { id: string; login: string; name: string | null }[];
 };
 
@@ -179,7 +182,7 @@ export function PlanPage({ session }: { session: Session | null }) {
           onReload={plan.reload}
         />
       )}
-      <Tabs label="Plan" tabs={["Timeline view", "Dependencies", "Baselines"]} value={tab} onChange={setTab} />
+      <Tabs label="Plan" tabs={["Timeline view", "Dependencies", "Baselines", "Risk Register"]} value={tab} onChange={setTab} />
       {tab === "Timeline view" && (
         <div>
           <PlanTypeaheadSearch
@@ -251,6 +254,14 @@ export function PlanPage({ session }: { session: Session | null }) {
           busy={plan.busy}
           onCreate={(explanation) => plan.createBaseline(explanation)}
           onDecide={(baselineId, action, explanation) => plan.decideBaseline(baselineId, action, explanation)}
+        />
+      )}
+      {tab === "Risk Register" && (
+        <RiskRegisterPanel
+          admin={Boolean(session?.adminGroup)}
+          risks={plan.data?.risks ?? []}
+          busy={plan.busy}
+          onSave={(riskId, body) => plan.saveRisk(riskId, body)}
         />
       )}
       {plan.review && (
@@ -1389,6 +1400,31 @@ function usePlan(session: Session | null) {
         setBusy(false);
       }
     },
+    async saveRisk(
+      riskId: string,
+      body: {
+        title: string;
+        severity: RiskSeverity | null;
+        description: string;
+        dateCleared: string | null;
+        notes: string;
+        issueId: string | null;
+        predecessorId: string | null;
+      },
+    ) {
+      if (!session) return;
+      setError(null);
+      setBusy(true);
+      try {
+        await api(`/projects/${projectId}/risks/${encodeURIComponent(riskId)}`, session.idToken, { method: "PUT", body });
+        await reload();
+      } catch (caught) {
+        setError(message(caught));
+        throw caught;
+      } finally {
+        setBusy(false);
+      }
+    },
     async createPlanItem(kind: Exclude<PlanKind, "workstream">, title: string, parentIssueId: string | null, draft: PlanDraft) {
       if (!session) return;
       const before = new Set((data?.issues ?? []).map((issue) => issue.issueId));
@@ -1919,13 +1955,35 @@ function TimelineChart({
   for (let offset = 0; offset < span.days; offset += step) marks.push(offset);
   const todayLeft = todayMarkerLeft(today, span);
 
-  function riskIcon(issueId: string) {
+  function riskExplanation(issueId: string): string | null {
     const conflict = conflictById.get(issueId);
     if (!conflict) return null;
-    const text = conflict.reason === "overlap" ? `Starts before ${conflict.predecessorTitle} finishes` : `Not scheduled after ${conflict.predecessorTitle}`;
+    const successor = issueById.get(issueId);
+    const predecessor = issueById.get(conflict.predecessorId);
+    const predFinish = predecessor?.finishDate ? shortDate(predecessor.finishDate) : null;
+    if (conflict.reason === "unscheduled") {
+      return predFinish
+        ? `At risk: blocked by “${conflict.predecessorTitle}” (finishes ${predFinish}), but this task has no start and finish dates.`
+        : `At risk: blocked by “${conflict.predecessorTitle}”, but this task has no start and finish dates.`;
+    }
+    const start = successor?.startDate ? shortDate(successor.startDate) : null;
+    if (start && predFinish) {
+      return `At risk: blocked by “${conflict.predecessorTitle}”. Starts ${start}, which overlaps that finish on ${predFinish}; it should start the next day.`;
+    }
+    return `At risk: blocked by “${conflict.predecessorTitle}”. Start date overlaps that predecessor’s finish.`;
+  }
+
+  function riskIcon(issueId: string) {
+    const text = riskExplanation(issueId);
+    if (!text) return null;
     return (
-      <span className="gantt-risk-icon" role="img" aria-label={`At risk: ${text}`} title={`At risk: ${text}`}>
-        !
+      <span className="gantt-risk" tabIndex={0} aria-label={text}>
+        <span className="gantt-risk-icon" aria-hidden="true">
+          !
+        </span>
+        <span className="gantt-risk-tip" role="tooltip">
+          {text}
+        </span>
       </span>
     );
   }
@@ -1975,7 +2033,12 @@ function TimelineChart({
             type="button"
             disabled={riskIds.length === 0}
             onClick={focusNextRisk}
-            aria-label={`${riskIds.length} at risk. Jump to next at-risk task`}
+            title={
+              riskIds.length === 0
+                ? "No blocker date conflicts"
+                : riskIds.map((id, index) => `${index + 1}. ${issueById.get(id)?.title ?? id}: ${riskExplanation(id)?.replace(/^At risk: /, "") ?? ""}`).join("\n")
+            }
+            aria-label={`${riskIds.length} at risk from blocker date conflicts. Jump to next at-risk task`}
           >
             {riskIds.length} at risk
           </button>

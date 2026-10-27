@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import type { ApplicationLink, AuditEvent, Customer, DocumentFolder, DocumentVersion, Membership, PlanIssue, PortalDocument, ProgressOverride, Project, ProjectOverview, ProjectSettings, ReportVersion, StatusReport, SyncState } from "../../../packages/domain/src/index";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import type { MilestoneRecord } from "../../../packages/domain/src/milestones";
+import type { RiskRecord } from "../../../packages/domain/src/risks";
 import { createHandler, type HandlerDeps, type HttpEvent } from "./router";
 import type { Store } from "./store";
 
@@ -25,6 +26,7 @@ function memoryStore(): Store & {
   reportVersions: ReportVersion[];
   milestones: MilestoneRecord[];
   baselines: BaselineRecord[];
+  risks: RiskRecord[];
 } {
   const customers: Customer[] = [];
   const projects: Project[] = [];
@@ -44,6 +46,7 @@ function memoryStore(): Store & {
   const reportVersions: ReportVersion[] = [];
   const milestones: MilestoneRecord[] = [];
   const baselines: BaselineRecord[] = [];
+  const risks: RiskRecord[] = [];
   return {
     customers,
     projects,
@@ -224,6 +227,14 @@ function memoryStore(): Store & {
       if (index >= 0) baselines[index] = record;
       else baselines.push(record);
     },
+    async listRisks(projectId) {
+      return risks.filter((record) => record.projectId === projectId);
+    },
+    async putRisk(record) {
+      const index = risks.findIndex((item) => item.riskId === record.riskId && item.projectId === record.projectId);
+      if (index >= 0) risks[index] = record;
+      else risks.push(record);
+    },
     documents,
     folders,
     versions,
@@ -237,6 +248,7 @@ function memoryStore(): Store & {
     reportVersions,
     milestones,
     baselines,
+    risks,
   };
 }
 
@@ -1235,6 +1247,72 @@ describe("plan and webhooks", () => {
     );
     expect(JSON.parse(rejected.body).baseline.state).toBe("rejected");
     expect(store.audits.some((row) => row.action === "baseline.established")).toBe(true);
+  });
+
+  it("lists schedule risks on the plan and lets an administrator edit them", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    const base = {
+      itemId: null,
+      projectId,
+      customerId,
+      description: null as string | null,
+      effort: 1,
+      issueState: "open" as const,
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      issueType: "Task",
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      iterationTitle: null,
+      iterationStart: null,
+      iterationDuration: null,
+      iterationId: null,
+      assignees: [],
+      comments: null,
+      priority: null,
+      labels: [],
+      relationships: [],
+      inProject: true,
+      updatedAt: "2026-10-27T00:00:00.000Z",
+    };
+    store.issues.push(
+      { ...base, issueId: "A", number: 1, title: "Deck", status: "Ready", startDate: "2026-10-01", finishDate: "2026-10-10", predecessorIds: [] },
+      { ...base, issueId: "B", number: 2, title: "Rail", status: "Ready", startDate: "2026-10-06", finishDate: "2026-10-08", predecessorIds: ["A"] },
+    );
+    const plan = await handler(event({ method: "GET", path: `/projects/${projectId}/plan`, claims: employeeClaims }));
+    expect(plan.statusCode).toBe(200);
+    const risks = JSON.parse(plan.body).risks as { riskId: string; title: string; status: string; conflictReason: string }[];
+    expect(risks.some((row) => row.riskId === "schedule:B:A" && row.status === "open" && row.conflictReason === "overlap")).toBe(true);
+    const denied = await handler(
+      event({
+        method: "PUT",
+        path: `/projects/${projectId}/risks/schedule:B:A`,
+        claims: employeeClaims,
+        body: { title: "Rail slip", severity: "high", description: "Move Rail.", dateCleared: null, notes: "Watch it." },
+      }),
+    );
+    expect(denied.statusCode).toBe(403);
+    const saved = await handler(
+      event({
+        method: "PUT",
+        path: `/projects/${projectId}/risks/schedule:B:A`,
+        claims: adminClaims,
+        body: { title: "Rail slip", severity: "high", description: "Move Rail.", dateCleared: null, notes: "Watch it.", issueId: "B", predecessorId: "A" },
+      }),
+    );
+    expect(saved.statusCode).toBe(200);
+    expect(JSON.parse(saved.body).risk).toMatchObject({ title: "Rail slip", severity: "high", notes: "Watch it." });
+    const again = await handler(event({ method: "GET", path: `/projects/${projectId}/plan`, claims: employeeClaims }));
+    expect(JSON.parse(again.body).risks.find((row: { riskId: string }) => row.riskId === "schedule:B:A")).toMatchObject({
+      title: "Rail slip",
+      severity: "high",
+      notes: "Watch it.",
+    });
   });
 
   it("stores Compass plan edits without queueing GitHub", async () => {

@@ -10,12 +10,13 @@ import {
   type SyncState,
 } from "../../../packages/domain/src/index";
 import { createdIssueType, parentDoneBlocked, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
-import { dependencyCycle, dependencyReview } from "../../../packages/domain/src/dependencies";
+import { dependencyCycle, dependencyReview, scheduleConflicts } from "../../../packages/domain/src/dependencies";
 import { baselineSnapshot, type BaselineRecord } from "../../../packages/domain/src/baselines";
 import { tracedComment } from "../../../packages/domain/src/comments";
 import { derivedSchedule, isIsoDate } from "../../../packages/domain/src/schedule";
 import { milestoneViews } from "../../../packages/domain/src/milestones";
 import { projectProgress } from "../../../packages/domain/src/progress";
+import { mergeRiskRegister, riskSeverityFromStore, type RiskRecord } from "../../../packages/domain/src/risks";
 import { importCompass } from "../../sync/src/import-compass";
 import type { HandlerDeps, HttpResult } from "./router";
 
@@ -60,6 +61,8 @@ export async function handlePlan(ctx: PlanCtx): Promise<HttpResult | null> {
   if (baselineApprove && ctx.method === "POST") return decideBaseline(ctx, decodeURIComponent(baselineApprove[1]), decodeURIComponent(baselineApprove[2]), "approved");
   const baselines = ctx.path.match(/^\/projects\/([^/]+)\/baselines$/);
   if (baselines && ctx.method === "POST") return createBaseline(ctx, decodeURIComponent(baselines[1]));
+  const risk = ctx.path.match(/^\/projects\/([^/]+)\/risks\/([^/]+)$/);
+  if (risk && ctx.method === "PUT") return saveRisk(ctx, decodeURIComponent(risk[1]), decodeURIComponent(risk[2]));
   return null;
 }
 
@@ -74,7 +77,22 @@ async function getPlan(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
   const milestones = milestoneViews(issues, await ctx.deps.store.listMilestones(projectId), doneStatuses, ctx.deps.now().toISOString().slice(0, 10));
   const baselines = (await ctx.deps.store.listBaselines(projectId)).sort(baselineOrder);
   const members = settings?.recordSource === "compass" ? await compassMembers(ctx, project.customerId, projectId) : [];
-  return json(200, { settings, sync: await visibleSync(ctx, projectId, project.customerId, settings), issues, progress, override, milestones, baselines, members }, ctx.correlationId);
+  const risks = mergeRiskRegister(
+    await ctx.deps.store.listRisks(projectId),
+    scheduleConflicts(
+      issues.map((issue) => ({
+        issueId: issue.issueId,
+        title: issue.title,
+        startDate: issue.startDate,
+        finishDate: issue.finishDate,
+        predecessorIds: issue.predecessorIds ?? [],
+        inProject: issue.inProject,
+        archived: issue.archived,
+        deletedAt: issue.deletedAt,
+      })),
+    ),
+  ).map((row) => ({ ...row, projectId: row.projectId || projectId, customerId: row.customerId || project.customerId }));
+  return json(200, { settings, sync: await visibleSync(ctx, projectId, project.customerId, settings), issues, progress, override, milestones, baselines, risks, members }, ctx.correlationId);
 }
 
 async function compassMembers(ctx: PlanCtx, customerId: string, projectId: string) {
@@ -654,6 +672,79 @@ async function decideBaseline(ctx: PlanCtx, projectId: string, baselineId: strin
   await ctx.deps.store.putBaseline(baseline);
   await auditBaseline(ctx, project.customerId, projectId, state === "approved" ? "baseline.approved" : "baseline.rejected", baselineId, existing, baseline);
   return json(200, { baseline }, ctx.correlationId);
+}
+
+/** Administrators edit risk register fields. Schedule-linked ids are accepted before the first save. */
+async function saveRisk(ctx: PlanCtx, projectId: string, riskId: string): Promise<HttpResult> {
+  if (adminAccess(ctx.principal) !== "ok") {
+    return json(403, { code: "FORBIDDEN", message: "Administrator access is required.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  if (!riskId || riskId.length > 200) {
+    return json(400, { code: "VALIDATION", message: "Check the risk id.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const project = await ctx.deps.store.getProject(projectId);
+  if (!project) return notFound(ctx.correlationId);
+  const title = typeof ctx.body.title === "string" ? ctx.body.title.trim() : "";
+  if (!title || title.length > 200) {
+    return json(400, { code: "VALIDATION", message: "A risk name is required.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const severity = ctx.body.severity === null || ctx.body.severity === "" ? null : riskSeverityFromStore(ctx.body.severity);
+  if (ctx.body.severity != null && ctx.body.severity !== "" && severity == null) {
+    return json(400, { code: "VALIDATION", message: "Choose a severity.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const description = typeof ctx.body.description === "string" ? ctx.body.description.trim() : "";
+  const notes = typeof ctx.body.notes === "string" ? ctx.body.notes.trim() : "";
+  if (description.length > 4000 || notes.length > 4000) {
+    return json(400, { code: "VALIDATION", message: "Description and notes must stay under 4000 characters.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const dateClearedRaw = ctx.body.dateCleared;
+  const dateCleared =
+    dateClearedRaw == null || dateClearedRaw === ""
+      ? null
+      : typeof dateClearedRaw === "string" && isIsoDate(dateClearedRaw)
+        ? dateClearedRaw
+        : "invalid";
+  if (dateCleared === "invalid") {
+    return json(400, { code: "VALIDATION", message: "Date cleared must be YYYY-MM-DD.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const existing = (await ctx.deps.store.listRisks(projectId)).find((row) => row.riskId === riskId) ?? null;
+  const issueId =
+    typeof ctx.body.issueId === "string" && ctx.body.issueId
+      ? ctx.body.issueId
+      : existing?.issueId ?? (riskId.startsWith("schedule:") ? riskId.split(":")[1] ?? null : null);
+  const predecessorId =
+    typeof ctx.body.predecessorId === "string" && ctx.body.predecessorId
+      ? ctx.body.predecessorId
+      : existing?.predecessorId ?? (riskId.startsWith("schedule:") ? riskId.split(":")[2] ?? null : null);
+  const record: RiskRecord = {
+    riskId,
+    projectId,
+    customerId: project.customerId,
+    title,
+    severity,
+    description,
+    dateCleared,
+    notes,
+    issueId: issueId || null,
+    predecessorId: predecessorId || null,
+    updatedAt: ctx.deps.now().toISOString(),
+    updatedBy: ctx.principal.userId,
+  };
+  await ctx.deps.store.putRisk(record);
+  await ctx.deps.store.putAudit({
+    eventId: ctx.deps.newId(),
+    customerId: project.customerId,
+    projectId,
+    actorUserId: ctx.principal.userId,
+    action: "risk.updated",
+    targetType: "risk",
+    targetId: riskId,
+    before: existing,
+    after: record,
+    at: record.updatedAt,
+    correlationId: ctx.correlationId,
+  });
+  return json(200, { risk: record }, ctx.correlationId);
 }
 
 function baselineRecord(
