@@ -11,6 +11,7 @@ import {
   iterationFinish,
   iterationForDates,
   iterationOptionLabel,
+  localIsoDate,
   scheduleRollups,
   scheduledRange,
   scheduleSpan,
@@ -42,14 +43,30 @@ describe("schedule", () => {
     expect(iterationForDates(iterations, "2026-10-30", "2026-11-10")).toBe("i2");
   });
 
-  it("finds the iteration that contains today", () => {
+  it("finds the iteration that contains today between Start and Finish", () => {
+    // I1: 2026-10-24 .. 2026-11-06. I2: 2026-11-07 .. 2026-11-20.
     const iterations = [
       { id: "i1", startDate: "2026-10-24", duration: 14 },
       { id: "i2", startDate: "2026-11-07", duration: 14 },
     ];
+    expect(iterationFinish("2026-10-24", 14)).toBe("2026-11-06");
     expect(currentIterationId(iterations, "2026-10-27")).toBe("i1");
+    expect(currentIterationId(iterations, "2026-10-24")).toBe("i1");
+    expect(currentIterationId(iterations, "2026-11-06")).toBe("i1");
     expect(currentIterationId(iterations, "2026-11-07")).toBe("i2");
     expect(currentIterationId(iterations, "2026-12-01")).toBeNull();
+  });
+
+  it("prefers the later Start when two iterations cover today", () => {
+    const iterations = [
+      { id: "wide", startDate: "2026-10-01", duration: 60 },
+      { id: "i1", startDate: "2026-10-24", duration: 14 },
+    ];
+    expect(currentIterationId(iterations, "2026-10-27")).toBe("i1");
+  });
+
+  it("formats the local calendar day without shifting to UTC", () => {
+    expect(localIsoDate(new Date("2026-10-27T15:00:00.000-05:00"))).toBe("2026-10-27");
   });
 
   it("labels an iteration with name and start–finish dates", () => {

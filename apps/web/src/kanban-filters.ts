@@ -3,12 +3,14 @@
 import { planKind, type PlanKind, type PlanNode } from "../../../packages/domain/src/hierarchy";
 import { currentIterationId, type IterationWindow } from "../../../packages/domain/src/schedule";
 
-/** Sentinel: resolve to the iteration that contains today. */
+/** Sentinel: resolve to the iteration whose Start–Finish window contains today. */
 export const KANBAN_ITERATION_CURRENT = "current";
 /** Sentinel: show every iteration, including unassigned. */
 export const KANBAN_ITERATION_ALL = "all";
 /** Sentinel: issues with no iteration. */
 export const KANBAN_ITERATION_NONE = "none";
+/** Internal: Current was selected but no iteration window contains today. Match nothing. */
+export const KANBAN_ITERATION_UNMATCHED = "__unmatched__";
 
 export const KANBAN_ASSIGNEE_ALL = "all";
 export const KANBAN_ASSIGNEE_UNASSIGNED = "unassigned";
@@ -43,10 +45,16 @@ export type KanbanFilters = {
   today: string;
 };
 
-export function resolveIterationFilter(iteration: string, iterations: IterationWindow[], today: string): string | null | typeof KANBAN_ITERATION_ALL {
+export function resolveIterationFilter(
+  iteration: string,
+  iterations: IterationWindow[],
+  today: string,
+): string | null | typeof KANBAN_ITERATION_ALL | typeof KANBAN_ITERATION_UNMATCHED {
   if (iteration === KANBAN_ITERATION_ALL) return KANBAN_ITERATION_ALL;
   if (iteration === KANBAN_ITERATION_NONE) return null;
-  if (iteration === KANBAN_ITERATION_CURRENT) return currentIterationId(iterations, today);
+  if (iteration === KANBAN_ITERATION_CURRENT) {
+    return currentIterationId(iterations, today) ?? KANBAN_ITERATION_UNMATCHED;
+  }
   return iteration;
 }
 
@@ -67,6 +75,7 @@ export function matchesKanbanFilters<T extends KanbanFilterIssue>(
     const typeLabel = KIND_TO_FILTER[kind];
     if (!typeSet.has(typeLabel)) return false;
 
+    if (iterationMatch === KANBAN_ITERATION_UNMATCHED) return false;
     if (iterationMatch !== KANBAN_ITERATION_ALL) {
       const issueIteration = issue.iterationId ?? null;
       if (issueIteration !== iterationMatch) return false;

@@ -1,13 +1,24 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useParams } from "react-router-dom";
 import { orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { catalogColorHex } from "../../../packages/domain/src/index";
-import type { ProposedShift } from "../../../packages/domain/src/dependencies";
-import { scheduleConflicts } from "../../../packages/domain/src/dependencies";
+import type { LinkType, ProposedShift } from "../../../packages/domain/src/dependencies";
+import {
+  addSoftDependencyRelationship,
+  convertPlanLink,
+  datesOverlapForBlocker,
+  dependencyCycle,
+  hasSoftDependency,
+  removeSoftDependencyRelationship,
+  scheduleConflicts,
+  softDependencyEdges,
+  softDependencyPredecessorIds,
+} from "../../../packages/domain/src/dependencies";
 import {
   addDays,
   barPlacement,
   chartRanges,
+  currentIterationId,
   datesAfterIterationPick,
   datesAreDerived,
   dayOffset,
@@ -16,6 +27,7 @@ import {
   iterationFinish,
   iterationForDates,
   iterationOptionLabel,
+  localIsoDate,
   scheduleSpan,
   scheduleText,
   shiftSchedule,
@@ -28,7 +40,16 @@ import type { Session } from "./auth";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import { BaselinesPanel } from "./baselines";
 import { CompassIssueDrawer } from "./compass-drawer";
-import { dayDeltaFromDayWidth, nudgeScrollForDrag } from "./gantt-drag";
+import {
+  dayDeltaFromDayWidth,
+  dependencyLinkPath,
+  hitTestGanttBar,
+  nudgeScrollForDrag,
+  readShowDependencyLines,
+  writeShowDependencyLines,
+  type GanttBarHit,
+  type GanttLinkAnchor,
+} from "./gantt-drag";
 import { usePortal } from "./shell";
 
 const GANTT_PX_PER_DAY = 16;
@@ -183,6 +204,9 @@ export function PlanPage({ session }: { session: Session | null }) {
             matchIds={searchActive ? new Set(searchMatches.map((issue) => issue.issueId)) : null}
             canWrite={canWrite}
             busy={plan.busy}
+            issues={issues}
+            onLinkPredecessor={plan.linkPredecessor}
+            onSaveRelationships={canWrite ? (issueId, relationships) => plan.saveIssue(issueId, { relationships }) : null}
             onEdit={canWrite ? setEditingId : null}
             onSchedule={
               canWrite
@@ -201,7 +225,15 @@ export function PlanPage({ session }: { session: Session | null }) {
           </p>
         </div>
       )}
-      {tab === "Dependencies" && <DependenciesPanel issues={issues} busy={plan.busy} readOnly={!canWrite} onLink={plan.linkPredecessor} />}
+      {tab === "Dependencies" && (
+        <DependenciesPanel
+          issues={issues}
+          busy={plan.busy}
+          readOnly={!canWrite}
+          onLink={plan.linkPredecessor}
+          onSoftLink={canWrite ? (issueId, relationships) => plan.saveIssue(issueId, { relationships }) : null}
+        />
+      )}
       {tab === "Baselines" && (
         <BaselinesPanel
           admin={Boolean(session?.adminGroup)}
@@ -331,7 +363,8 @@ export function KanbanPage({ session }: { session: Session | null }) {
   const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
   const allIssues = plan.data?.issues ?? [];
   const assignableUsers = assigneeOptions(plan.data?.settings?.assignableUsers ?? [], allIssues.flatMap((issue) => issue.assignees ?? []));
-  const today = new Date().toISOString().slice(0, 10);
+  /** Local calendar day so Current matches Start–Finish the way the team sees dates. */
+  const today = localIsoDate();
   const issues = matchesKanbanFilters(
     allIssues,
     {
@@ -467,7 +500,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
                   <option value={KANBAN_ITERATION_NONE}>No iteration</option>
                   {iterations.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.title}
+                      {iterationOptionLabel(item)}
                     </option>
                   ))}
                 </select>
@@ -931,9 +964,13 @@ function kanbanFilterSummary(input: {
   iterations: IterationChoice[];
   assignableUsers: GitHubUser[];
 }): string {
+  const currentId = currentIterationId(input.iterations, localIsoDate());
+  const currentTitle = currentId ? input.iterations.find((item) => item.id === currentId)?.title : null;
   const iterationLabel =
     input.iteration === KANBAN_ITERATION_CURRENT
-      ? "Current"
+      ? currentTitle
+        ? `Current · ${currentTitle}`
+        : "Current · none"
       : input.iteration === KANBAN_ITERATION_ALL
         ? "All iterations"
         : input.iteration === KANBAN_ITERATION_NONE
@@ -1316,6 +1353,7 @@ function usePlan(session: Session | null) {
         });
       } catch (caught) {
         setError(message(caught));
+        throw caught;
       } finally {
         setBusy(false);
       }
@@ -1521,12 +1559,44 @@ function filterPlanBands<T extends { key: string; rows: { issueId: string }[] }>
     .filter((band) => band.rows.length > 0);
 }
 
+type LinkEdge = { type: LinkType; predecessorId: string; successorId: string };
+type LinkDragState = { fromId: string; x: number; y: number; overId: string | null };
+type BarAnchor = { left: number; right: number; y: number };
+
+const BLOCKER_COLOR = "#dc2626";
+const DEPENDENCY_COLOR = "#2563eb";
+
+/** Why a proposed predecessor → successor link is not allowed, or null when it is. */
+/** Shared checks for Gantt drop and the Dependencies tab. Soft links skip the hard-cycle rule. */
+function linkProblem(
+  issues: PlanIssue[],
+  predecessorId: string,
+  successorId: string,
+  type: LinkType | "drop" = "drop",
+): string | null {
+  if (predecessorId === successorId) return "A task cannot be linked to itself.";
+  const successor = issues.find((issue) => issue.issueId === successorId);
+  if (!successor || !issues.some((issue) => issue.issueId === predecessorId)) return "That task is no longer on the plan.";
+  if ((successor.predecessorIds ?? []).includes(predecessorId) || hasSoftDependency(successor.relationships, predecessorId)) {
+    return "Those tasks are already linked.";
+  }
+  // Soft dependencies never participate in the schedule graph; only Blocker create must refuse loops.
+  if (type === "blocker") {
+    const graph = issues.map((issue) => ({ issueId: issue.issueId, predecessorIds: issue.predecessorIds ?? [] }));
+    if (dependencyCycle(graph, successorId, predecessorId)) return "That link would create a blocker loop.";
+  }
+  return null;
+}
+
 function TimelineChart({
   bands,
   barColors,
   matchIds,
   canWrite,
   busy,
+  issues,
+  onLinkPredecessor,
+  onSaveRelationships,
   onEdit,
   onSchedule,
 }: {
@@ -1550,6 +1620,9 @@ function TimelineChart({
   matchIds: Set<string> | null;
   canWrite: boolean;
   busy: boolean;
+  issues: PlanIssue[];
+  onLinkPredecessor: (issueId: string, predecessorId: string, action: "add" | "remove") => Promise<void>;
+  onSaveRelationships: ((issueId: string, relationships: { id: string; kind: string; otherIssueId: string }[]) => Promise<void>) | null;
   onEdit: ((issueId: string) => void) | null;
   onSchedule: ((issueId: string, startDate: string, finishDate: string) => Promise<void>) | null;
 }) {
@@ -1566,11 +1639,39 @@ function TimelineChart({
   const [dragSpan, setDragSpan] = useState<{ origin: string; days: number } | null>(null);
   const span = dragSpan ?? baseSpan;
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<HTMLDivElement | null>(null);
   const chartMinWidth = 220 + 116 + Math.max(280, span.days * GANTT_PX_PER_DAY);
+
+  // Dependency-link state. Lines default hidden; risk icons are independent of this toggle.
+  const [showLines, setShowLines] = useState(readShowDependencyLines);
+  const [linkDrag, setLinkDrag] = useState<LinkDragState | null>(null);
+  const [pendingLink, setPendingLink] = useState<{ predecessorId: string; successorId: string } | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<LinkEdge | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [focusedRiskId, setFocusedRiskId] = useState<string | null>(null);
+  const [anchors, setAnchors] = useState<Record<string, BarAnchor>>({});
+  const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+  const anchorSignature = useRef("");
+  const issuesRef = useRef(issues);
+  issuesRef.current = issues;
+  const riskCursor = useRef(-1);
+  const linkStart = useRef({ x: 0, y: 0, moved: false }); // pointer origin of the active link drag
 
   useEffect(() => {
     setDragSpan(null);
   }, [baseSpan.origin, baseSpan.days]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    if (!focusedRiskId) return;
+    const timer = window.setTimeout(() => setFocusedRiskId(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [focusedRiskId]);
 
   function onBarPreview(next: { start: string; finish: string } | null) {
     if (!next) {
@@ -1584,116 +1685,648 @@ function TimelineChart({
     if (scrollRef.current) nudgeScrollForDrag(scrollRef.current, clientX);
   }
 
+  /** Measure every rendered bar relative to the chart so SVG connectors only use rows that are in the DOM. */
+  function measureBars() {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const origin = chart.getBoundingClientRect();
+    const next: Record<string, BarAnchor> = {};
+    chart.querySelectorAll<HTMLElement>(".gantt-bar[data-issue-id]").forEach((bar) => {
+      const rect = bar.getBoundingClientRect();
+      next[bar.dataset.issueId as string] = {
+        left: Math.round(rect.left - origin.left),
+        right: Math.round(rect.right - origin.left),
+        y: Math.round(rect.top - origin.top + rect.height / 2),
+      };
+    });
+    const size = { width: Math.round(origin.width), height: Math.round(origin.height) };
+    const signature = JSON.stringify([next, size]);
+    if (signature === anchorSignature.current) return; // avoid a render loop when nothing moved
+    anchorSignature.current = signature;
+    setAnchors(next);
+    setChartSize(size);
+  }
+  const measureRef = useRef(measureBars);
+  measureRef.current = measureBars;
+
+  // Re-measure after every render (bar previews, expanded spans, search filtering) and when the chart resizes.
+  useLayoutEffect(() => {
+    measureRef.current();
+  });
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => measureRef.current());
+    observer.observe(chart);
+    return () => observer.disconnect();
+  }, []);
+
+  /** Client-coordinate bounds of rendered bars, slightly padded so the drop target is forgiving. */
+  function barHits(): GanttBarHit[] {
+    const hits: GanttBarHit[] = [];
+    chartRef.current?.querySelectorAll<HTMLElement>(".gantt-bar[data-issue-id]").forEach((bar) => {
+      const rect = bar.getBoundingClientRect();
+      hits.push({ issueId: bar.dataset.issueId as string, left: rect.left, right: rect.right, top: rect.top - 4, bottom: rect.bottom + 4 });
+    });
+    return hits;
+  }
+
+  function beginLink(issueId: string, event: ReactPointerEvent<HTMLElement>) {
+    const chart = chartRef.current;
+    if (!canWrite || busy || !chart) return;
+    const rect = chart.getBoundingClientRect();
+    linkStart.current = { x: event.clientX, y: event.clientY, moved: false };
+    setSelectedEdge(null);
+    setLinkDrag({ fromId: issueId, x: event.clientX - rect.left, y: event.clientY - rect.top, overId: null });
+  }
+
+  // While a link drag is active, track the pointer on window so it works across rows. Esc cancels.
+  const draggingFrom = linkDrag?.fromId ?? null;
+  useEffect(() => {
+    if (!draggingFrom) return;
+    const fromId = draggingFrom;
+    function move(event: PointerEvent) {
+      const chart = chartRef.current;
+      if (!chart) return;
+      if (Math.abs(event.clientX - linkStart.current.x) + Math.abs(event.clientY - linkStart.current.y) > 4) linkStart.current.moved = true;
+      if (scrollRef.current) nudgeScrollForDrag(scrollRef.current, event.clientX);
+      const rect = chart.getBoundingClientRect();
+      const overId = hitTestGanttBar(event.clientX, event.clientY, barHits());
+      setLinkDrag({ fromId, x: event.clientX - rect.left, y: event.clientY - rect.top, overId });
+    }
+    function up(event: PointerEvent) {
+      const overId = hitTestGanttBar(event.clientX, event.clientY, barHits());
+      const moved = linkStart.current.moved;
+      setLinkDrag(null);
+      // A press on the handle with no drag, or a release over empty space, creates nothing.
+      if (!moved || !overId) return;
+      const problem = linkProblem(issuesRef.current, fromId, overId);
+      if (problem) {
+        setToast(problem);
+        return;
+      }
+      setPendingLink({ predecessorId: fromId, successorId: overId });
+    }
+    function key(event: KeyboardEvent) {
+      if (event.key === "Escape") setLinkDrag(null);
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    function cancel() {
+      setLinkDrag(null);
+    }
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", key);
+    };
+  }, [draggingFrom]);
+
+  const issueById = useMemo(() => new Map(issues.map((issue) => [issue.issueId, issue])), [issues]);
+  // Hard conflicts only; icons render on the successor row whether or not lines are shown.
+  const conflictById = useMemo(
+    () => new Map(scheduleConflicts(dependencyIssues(issues)).map((conflict) => [conflict.issueId, conflict])),
+    [issues],
+  );
+  const edges = useMemo<LinkEdge[]>(
+    () => [
+      ...issues.flatMap((issue) =>
+        (issue.predecessorIds ?? []).map((predecessorId) => ({ type: "blocker" as const, predecessorId, successorId: issue.issueId })),
+      ),
+      ...softDependencyEdges(issues).map((edge) => ({
+        type: "dependency" as const,
+        predecessorId: edge.predecessorId,
+        successorId: edge.successorId,
+      })),
+    ],
+    [issues],
+  );
+
+  // Rows in render order that carry a risk icon, so the toolbar count can step through them.
+  const riskIds = bands.flatMap((band) => [
+    ...(band.rows[0]?.kind === "epic" ? [band.rows[0].issueId] : []),
+    ...band.rows.filter((row) => row.kind !== "epic").map((row) => row.issueId),
+  ]).filter((id) => conflictById.has(id));
+
+  function focusNextRisk() {
+    if (riskIds.length === 0) return;
+    riskCursor.current = (riskCursor.current + 1) % riskIds.length;
+    const id = riskIds[riskCursor.current];
+    setFocusedRiskId(id);
+    const row = chartRef.current?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(id)}"]`);
+    row?.scrollIntoView({ block: "center", behavior: "smooth" });
+    row?.focus({ preventScroll: true });
+  }
+
+  function toggleLines() {
+    const next = !showLines;
+    setShowLines(next);
+    writeShowDependencyLines(next);
+  }
+
+  /** Bar class while a link drag is hovering a candidate target. */
+  function linkClassFor(issueId: string | null): string {
+    if (!issueId || !linkDrag) return "";
+    if (issueId === linkDrag.fromId) return "linking";
+    if (issueId !== linkDrag.overId) return "";
+    return linkProblem(issues, linkDrag.fromId, issueId) ? "link-target-invalid" : "link-target-valid";
+  }
+
+  async function runLinkAction(action: () => Promise<void>): Promise<string | null> {
+    try {
+      await action();
+      return null;
+    } catch (caught) {
+      return message(caught);
+    }
+  }
+
+  /** Create a link after the popup choice. Blocker uses the predecessor API; dependency PATCHes relationships. No dates move. */
+  async function createLink(type: LinkType) {
+    if (!pendingLink) return null;
+    const { predecessorId, successorId } = pendingLink;
+    const problem = linkProblem(issues, predecessorId, successorId, type);
+    if (problem) return problem;
+    const successor = issueById.get(successorId);
+    const failure = await runLinkAction(async () => {
+      if (type === "blocker") {
+        await onLinkPredecessor(successorId, predecessorId, "add");
+      } else if (onSaveRelationships) {
+        await onSaveRelationships(successorId, addSoftDependencyRelationship(successor?.relationships, successorId, predecessorId));
+      }
+    });
+    if (!failure) setPendingLink(null);
+    return failure;
+  }
+
+  async function changeLinkType(edge: LinkEdge, to: LinkType) {
+    const successor = issueById.get(edge.successorId);
+    if (!successor) return "That task is no longer on the plan.";
+    const converted = convertPlanLink({
+      successorId: edge.successorId,
+      predecessorId: edge.predecessorId,
+      from: edge.type,
+      to,
+      predecessorIds: successor.predecessorIds ?? [],
+      relationships: successor.relationships ?? [],
+    });
+    if ("error" in converted) return converted.error === "noop" ? null : "That link no longer exists.";
+    const graph = issues.map((issue) => ({ issueId: issue.issueId, predecessorIds: issue.predecessorIds ?? [] }));
+    if (to === "blocker" && dependencyCycle(graph, edge.successorId, edge.predecessorId)) return "That link would create a blocker loop.";
+    if (!onSaveRelationships) return "Editing links is not available.";
+    const failure = await runLinkAction(async () => {
+      // Add the new link before dropping the old one so a failure never loses the relationship.
+      if (to === "blocker") {
+        await onLinkPredecessor(edge.successorId, edge.predecessorId, "add");
+        await onSaveRelationships(edge.successorId, converted.relationships);
+      } else {
+        await onSaveRelationships(edge.successorId, converted.relationships);
+        await onLinkPredecessor(edge.successorId, edge.predecessorId, "remove");
+      }
+    });
+    if (!failure) setSelectedEdge({ ...edge, type: to });
+    return failure;
+  }
+
+  async function removeLink(edge: LinkEdge) {
+    const successor = issueById.get(edge.successorId);
+    const failure = await runLinkAction(async () => {
+      if (edge.type === "blocker") {
+        await onLinkPredecessor(edge.successorId, edge.predecessorId, "remove");
+      } else if (onSaveRelationships) {
+        await onSaveRelationships(edge.successorId, removeSoftDependencyRelationship(successor?.relationships, edge.predecessorId));
+      }
+    });
+    if (!failure) setSelectedEdge(null);
+    return failure;
+  }
+
+  // Close the edit popup if the selected link disappears after a reload.
+  const selectedStillExists =
+    selectedEdge != null && edges.some((edge) => edge.type === selectedEdge.type && edge.predecessorId === selectedEdge.predecessorId && edge.successorId === selectedEdge.successorId);
+  useEffect(() => {
+    if (selectedEdge && !selectedStillExists) setSelectedEdge(null);
+  }, [selectedEdge, selectedStillExists]);
+
   const step = span.days > 90 ? 14 : span.days > 28 ? 7 : Math.max(1, Math.round(span.days / 6));
   const marks: number[] = [];
   for (let offset = 0; offset < span.days; offset += step) marks.push(offset);
   const todayLeft = todayMarkerLeft(today, span);
 
+  function riskIcon(issueId: string) {
+    const conflict = conflictById.get(issueId);
+    if (!conflict) return null;
+    const text = conflict.reason === "overlap" ? `Starts before ${conflict.predecessorTitle} finishes` : `Not scheduled after ${conflict.predecessorTitle}`;
+    return (
+      <span className="gantt-risk-icon" role="img" aria-label={`At risk: ${text}`} title={`At risk: ${text}`}>
+        !
+      </span>
+    );
+  }
+
+  const rowFocusStyle = (issueId: string) =>
+    focusedRiskId === issueId ? { outline: `2px solid ${BLOCKER_COLOR}`, outlineOffset: 2, borderRadius: 6 } : undefined;
+
+  /** Chart-local anchor points for a predecessor finish and a successor start. */
+  function edgePath(edge: LinkEdge): string | null {
+    const from = anchors[edge.predecessorId];
+    const to = anchors[edge.successorId];
+    if (!from || !to) return null; // an endpoint row is not rendered (filtered out or collapsed)
+    return dependencyLinkPath({ x: from.right, y: from.y }, { x: to.left, y: to.y });
+  }
+
+  const sourceAnchor = linkDrag ? anchors[linkDrag.fromId] : null;
+  const previewPath =
+    linkDrag && sourceAnchor
+      ? dependencyLinkPath({ x: sourceAnchor.right, y: sourceAnchor.y } satisfies GanttLinkAnchor, { x: linkDrag.x, y: linkDrag.y })
+      : null;
+
+  const pendingPredecessor = pendingLink ? issueById.get(pendingLink.predecessorId) : null;
+  const pendingSuccessor = pendingLink ? issueById.get(pendingLink.successorId) : null;
+  const selectedPredecessor = selectedEdge ? issueById.get(selectedEdge.predecessorId) : null;
+  const selectedSuccessor = selectedEdge ? issueById.get(selectedEdge.successorId) : null;
+
   return (
-    <div className="timeline-scroll" ref={scrollRef}>
-      <div className="timeline-chart" style={{ minWidth: chartMinWidth }}>
-        <div className="timeline-scale">
-          <span className="muted small">Schedule</span>
-          <span />
-          <div className="gantt-days timeline-days">
-            {marks.map((offset) => (
-              <span key={offset} style={{ left: `${(offset / span.days) * 100}%` }}>
-                {shortDate(addDays(span.origin, offset))}
-              </span>
-            ))}
-            {todayLeft != null && (
-              <span className="gantt-today-label" style={{ left: todayLeft }} title={`Today ${today}`}>
-                Today
-              </span>
-            )}
-            {todayLeft != null && <div className="gantt-today" style={{ left: todayLeft }} aria-hidden="true" />}
-          </div>
-        </div>
-        {bands.map((band, bandIndex) => {
-          const ranges = rangesByBand[bandIndex];
-          const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subtask");
-          const bandDone = tasks.filter((row) => row.status === "Done").length;
-          const width = tasks.length === 0 ? 0 : Math.round((bandDone / tasks.length) * 100);
-          const epic = band.rows[0]?.kind === "epic" ? band.rows[0] : null;
-          const header = epic ? ranges[0] : unionRange(ranges);
-          const rows =
-            band.key === "outside"
-              ? band.rows.map((row, index) => ({ row, range: ranges[index] }))
-              : band.rows.flatMap((row, index) => (row.kind === "epic" ? [] : [{ row, range: ranges[index] }]));
-          return (
-            <div className="phase active" key={band.key}>
-              <div className="timeline-row">
-                <div>
-                  <div className="taskline">
-                    <strong>{band.title}</strong>
-                  </div>
-                  <div className="phase-score">
-                    <span>
-                      {bandDone} of {tasks.length} tasks Done
-                    </span>
-                    <div className="progressline">
-                      <span style={{ width: `${width}%` }} />
-                    </div>
-                    <strong>{width}%</strong>
-                  </div>
-                </div>
-                <div className="timeline-status">
-                  {epic && <TimelineStatus title={epic.title} status={epic.status} issueId={epic.issueId} onEdit={onEdit} />}
-                </div>
-                <ScheduleBar
-                  range={header}
-                  span={span}
-                  today={today}
-                  summary
-                  color={epic ? barColors[epic.issueId] : null}
-                  editable={false}
-                  busy={busy}
-                  onCommit={null}
-                  onPreview={null}
-                  onDragMove={null}
-                />
-              </div>
-              {rows.length > 0 && (
-                <div className="phase-tasks">
-                  {rows.map(({ row, range }) => {
-                    const rollup = row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration);
-                    const ownDates = Boolean(range && row.startDate === range.start && row.finishDate === range.finish);
-                    const editable = Boolean(canWrite && onSchedule && range && (!rollup || ownDates));
-                    return (
-                      <div className={matchIds?.has(row.issueId) ? "timeline-row search-match" : "timeline-row"} key={row.issueId}>
-                        <div className="taskline" style={{ paddingLeft: row.depth * 16 }}>
-                          <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
-                            {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
-                          </span>
-                          <span>{row.title}</span>
-                        </div>
-                        <div className="timeline-status">
-                          <TimelineStatus title={row.title} status={row.status} issueId={row.issueId} onEdit={onEdit} />
-                        </div>
-                        <ScheduleBar
-                          range={range}
-                          span={span}
-                          today={today}
-                          summary={rollup && !ownDates}
-                          color={barColors[row.issueId]}
-                          editable={editable}
-                          busy={busy}
-                          onCommit={
-                            editable && onSchedule
-                              ? (startDate, finishDate) => onSchedule(row.issueId, startDate, finishDate)
-                              : null
-                          }
-                          onPreview={editable ? onBarPreview : null}
-                          onDragMove={editable ? onBarDragMove : null}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
+    <>
+      <div className="timeline-dep-toolbar">
+        {toast && (
+          <span className="error small" role="alert">
+            {toast}
+          </span>
+        )}
+        {showLines && (
+          <span className="muted small" aria-label="Line legend">
+            <span aria-hidden="true" style={{ display: "inline-block", width: 14, height: 3, background: DEPENDENCY_COLOR, marginRight: 4, verticalAlign: "middle" }} />
+            Dependency{" "}
+            <span aria-hidden="true" style={{ display: "inline-block", width: 14, height: 3, background: BLOCKER_COLOR, margin: "0 4px 0 8px", verticalAlign: "middle" }} />
+            Blocker
+          </span>
+        )}
+        <button
+          className="btn small"
+          type="button"
+          disabled={riskIds.length === 0}
+          onClick={focusNextRisk}
+          aria-label={`${riskIds.length} at risk. Jump to next at-risk task`}
+        >
+          {riskIds.length} at risk
+        </button>
+        <button className={showLines ? "btn small primary" : "btn small"} type="button" aria-pressed={showLines} onClick={toggleLines}>
+          Dependency lines
+        </button>
+      </div>
+      <div className="timeline-scroll" ref={scrollRef}>
+        <div className="timeline-chart" ref={chartRef} style={{ minWidth: chartMinWidth, position: "relative" }}>
+          <div className="timeline-scale">
+            <span className="muted small">Schedule</span>
+            <span />
+            <div className="gantt-days timeline-days">
+              {marks.map((offset) => (
+                <span key={offset} style={{ left: `${(offset / span.days) * 100}%` }}>
+                  {shortDate(addDays(span.origin, offset))}
+                </span>
+              ))}
+              {todayLeft != null && (
+                <span className="gantt-today-label" style={{ left: todayLeft }} title={`Today ${today}`}>
+                  Today
+                </span>
               )}
+              {todayLeft != null && <div className="gantt-today" style={{ left: todayLeft }} aria-hidden="true" />}
             </div>
-          );
-        })}
+          </div>
+          {bands.map((band, bandIndex) => {
+            const ranges = rangesByBand[bandIndex];
+            const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subtask");
+            const bandDone = tasks.filter((row) => row.status === "Done").length;
+            const width = tasks.length === 0 ? 0 : Math.round((bandDone / tasks.length) * 100);
+            const epic = band.rows[0]?.kind === "epic" ? band.rows[0] : null;
+            const header = epic ? ranges[0] : unionRange(ranges);
+            const rows =
+              band.key === "outside"
+                ? band.rows.map((row, index) => ({ row, range: ranges[index] }))
+                : band.rows.flatMap((row, index) => (row.kind === "epic" ? [] : [{ row, range: ranges[index] }]));
+            return (
+              <div className="phase active" key={band.key}>
+                <div
+                  className="timeline-row"
+                  data-row-id={epic?.issueId}
+                  tabIndex={epic ? -1 : undefined}
+                  style={epic ? rowFocusStyle(epic.issueId) : undefined}
+                >
+                  <div>
+                    <div className="taskline">
+                      <strong>{band.title}</strong>
+                      {epic && riskIcon(epic.issueId)}
+                    </div>
+                    <div className="phase-score">
+                      <span>
+                        {bandDone} of {tasks.length} tasks Done
+                      </span>
+                      <div className="progressline">
+                        <span style={{ width: `${width}%` }} />
+                      </div>
+                      <strong>{width}%</strong>
+                    </div>
+                  </div>
+                  <div className="timeline-status">
+                    {epic && <TimelineStatus title={epic.title} status={epic.status} issueId={epic.issueId} onEdit={onEdit} />}
+                  </div>
+                  <ScheduleBar
+                    range={header}
+                    span={span}
+                    today={today}
+                    summary
+                    color={epic ? barColors[epic.issueId] : null}
+                    editable={false}
+                    busy={busy}
+                    onCommit={null}
+                    onPreview={null}
+                    onDragMove={null}
+                    issueId={epic?.issueId ?? null}
+                    linkable={Boolean(canWrite && epic)}
+                    linkClass={linkClassFor(epic?.issueId ?? null)}
+                    onLinkStart={beginLink}
+                  />
+                </div>
+                {rows.length > 0 && (
+                  <div className="phase-tasks">
+                    {rows.map(({ row, range }) => {
+                      const rollup = row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration);
+                      const ownDates = Boolean(range && row.startDate === range.start && row.finishDate === range.finish);
+                      const editable = Boolean(canWrite && onSchedule && range && (!rollup || ownDates));
+                      return (
+                        <div
+                          className={matchIds?.has(row.issueId) ? "timeline-row search-match" : "timeline-row"}
+                          key={row.issueId}
+                          data-row-id={row.issueId}
+                          tabIndex={-1}
+                          style={rowFocusStyle(row.issueId)}
+                        >
+                          <div className="taskline" style={{ paddingLeft: row.depth * 16 }}>
+                            <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
+                              {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
+                            </span>
+                            <span>{row.title}</span>
+                            {riskIcon(row.issueId)}
+                          </div>
+                          <div className="timeline-status">
+                            <TimelineStatus title={row.title} status={row.status} issueId={row.issueId} onEdit={onEdit} />
+                          </div>
+                          <ScheduleBar
+                            range={range}
+                            span={span}
+                            today={today}
+                            summary={rollup && !ownDates}
+                            color={barColors[row.issueId]}
+                            editable={editable}
+                            busy={busy}
+                            onCommit={
+                              editable && onSchedule
+                                ? (startDate, finishDate) => onSchedule(row.issueId, startDate, finishDate)
+                                : null
+                            }
+                            onPreview={editable ? onBarPreview : null}
+                            onDragMove={editable ? onBarDragMove : null}
+                            issueId={row.issueId}
+                            linkable={canWrite}
+                            linkClass={linkClassFor(row.issueId)}
+                            onLinkStart={beginLink}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {(showLines || linkDrag) && chartSize.width > 0 && (
+            <svg className="gantt-dep-overlay" width={chartSize.width} height={chartSize.height} role="group" aria-label="Dependency lines">
+              <defs>
+                {([["blocker", BLOCKER_COLOR], ["dependency", DEPENDENCY_COLOR]] as const).map(([name, color]) => (
+                  <marker key={name} id={`gantt-arrow-${name}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                    <path d="M0 0 L8 4 L0 8 z" fill={color} />
+                  </marker>
+                ))}
+              </defs>
+              {showLines &&
+                edges.map((edge) => {
+                  const path = edgePath(edge);
+                  if (!path) return null;
+                  const selected =
+                    selectedEdge?.type === edge.type &&
+                    selectedEdge.predecessorId === edge.predecessorId &&
+                    selectedEdge.successorId === edge.successorId;
+                  const key = `${edge.type}:${edge.predecessorId}:${edge.successorId}`;
+                  const predecessorTitle = issueById.get(edge.predecessorId)?.title ?? "task";
+                  const successorTitle = issueById.get(edge.successorId)?.title ?? "task";
+                  const open = () => setSelectedEdge(edge);
+                  return (
+                    <g key={key}>
+                      <path
+                        className={`gantt-dep-line ${edge.type}${selected ? " selected" : ""}`}
+                        d={path}
+                        markerEnd={`url(#gantt-arrow-${edge.type})`}
+                      />
+                      {/* Wide transparent stroke so thin lines are easy to click. */}
+                      <path
+                        className="gantt-dep-hit"
+                        d={path}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${edge.type === "blocker" ? "Blocker" : "Dependency"}: ${predecessorTitle} to ${successorTitle}`}
+                        style={linkDrag ? { pointerEvents: "none" } : undefined}
+                        onClick={open}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            open();
+                          }
+                        }}
+                      />
+                    </g>
+                  );
+                })}
+              {previewPath && <path className="gantt-link-preview" d={previewPath} />}
+            </svg>
+          )}
+        </div>
+      </div>
+      {pendingLink && pendingPredecessor && pendingSuccessor && (
+        <LinkDialog
+          key={`new:${pendingLink.predecessorId}:${pendingLink.successorId}`}
+          mode="create"
+          predecessor={pendingPredecessor}
+          successor={pendingSuccessor}
+          currentType={null}
+          canWrite={canWrite}
+          busy={busy}
+          onSave={createLink}
+          onRemove={null}
+          onClose={() => setPendingLink(null)}
+        />
+      )}
+      {selectedEdge && selectedStillExists && selectedPredecessor && selectedSuccessor && (
+        <LinkDialog
+          key={`edit:${selectedEdge.type}:${selectedEdge.predecessorId}:${selectedEdge.successorId}`}
+          mode="edit"
+          predecessor={selectedPredecessor}
+          successor={selectedSuccessor}
+          currentType={selectedEdge.type}
+          canWrite={canWrite && Boolean(onSaveRelationships)}
+          busy={busy}
+          onSave={(type) => changeLinkType(selectedEdge, type)}
+          onRemove={() => removeLink(selectedEdge)}
+          onClose={() => setSelectedEdge(null)}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * Popup for choosing or editing a link's type. Create mode forces a Dependency/Blocker choice;
+ * Cancel/Esc creates nothing. Read-only users see the details without any actions.
+ */
+function LinkDialog({
+  mode,
+  predecessor,
+  successor,
+  currentType,
+  canWrite,
+  busy,
+  onSave,
+  onRemove,
+  onClose,
+}: {
+  mode: "create" | "edit";
+  predecessor: PlanIssue;
+  successor: PlanIssue;
+  currentType: LinkType | null;
+  canWrite: boolean;
+  busy: boolean;
+  onSave: (type: LinkType) => Promise<string | null>;
+  onRemove: (() => Promise<string | null>) | null;
+  onClose: () => void;
+}) {
+  const [choice, setChoice] = useState<LinkType | null>(currentType);
+  const [error, setError] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+  const disabled = busy || working;
+  // Warn only when Blocker is selected (or being chosen). Soft dependencies have no schedule impact; dates never auto-adjust.
+  const overlap = choice === "blocker" && datesOverlapForBlocker(predecessor, successor);
+
+  useEffect(() => {
+    function key(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onClose]);
+
+  async function run(action: () => Promise<string | null>) {
+    setWorking(true);
+    setError(null);
+    const failure = await action();
+    setWorking(false);
+    if (failure) setError(failure);
+    else if (mode === "create") onClose();
+  }
+
+  const copy = (type: LinkType) =>
+    type === "blocker"
+      ? `${predecessor.title} blocks ${successor.title}`
+      : `${predecessor.title} relates to ${successor.title} (no schedule impact)`;
+
+  return (
+    <div className="dialog-layer">
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="link-dialog-title">
+        <h2 id="link-dialog-title">{mode === "create" ? "Link these tasks" : "Task link"}</h2>
+        <p>
+          <strong>{predecessor.title}</strong> → <strong>{successor.title}</strong>
+        </p>
+        {canWrite && mode === "create" ? (
+          <div className="dialog-actions" role="group" aria-label="Link type">
+            <button
+              className="btn primary"
+              type="button"
+              disabled={disabled}
+              onMouseEnter={() => setChoice("dependency")}
+              onFocus={() => setChoice("dependency")}
+              onClick={() => {
+                setChoice("dependency");
+                void run(() => onSave("dependency"));
+              }}
+              style={{ background: DEPENDENCY_COLOR, borderColor: DEPENDENCY_COLOR }}
+            >
+              Dependency
+            </button>
+            <button
+              className="btn primary"
+              type="button"
+              disabled={disabled}
+              onMouseEnter={() => setChoice("blocker")}
+              onFocus={() => setChoice("blocker")}
+              onClick={() => {
+                setChoice("blocker");
+                void run(() => onSave("blocker"));
+              }}
+              style={{ background: BLOCKER_COLOR, borderColor: BLOCKER_COLOR }}
+            >
+              Blocker
+            </button>
+          </div>
+        ) : (
+          <fieldset disabled={!canWrite || disabled} style={{ border: 0, padding: 0, margin: "0 0 8px" }}>
+            {(["dependency", "blocker"] as const).map((type) => (
+              <label key={type} style={{ display: "block" }}>
+                <input type="radio" name="link-type" checked={choice === type} onChange={() => setChoice(type)} /> {type === "blocker" ? "Blocker (red)" : "Dependency (blue)"}
+              </label>
+            ))}
+          </fieldset>
+        )}
+        <p className="small muted">
+          {mode === "create" && canWrite
+            ? `Dependency: ${copy("dependency")}. Blocker: ${copy("blocker")}.`
+            : choice
+              ? `${copy(choice)}.`
+              : ""}
+        </p>
+        {overlap && (
+          <p className="error small" role="alert">
+            Dates overlap: {successor.title} starts before {predecessor.title} finishes. Dates are not changed automatically.
+          </p>
+        )}
+        {error && (
+          <p className="error small" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="dialog-actions">
+          {canWrite && mode === "edit" && (
+            <>
+              <button
+                className="btn primary"
+                type="button"
+                disabled={disabled || !choice || choice === currentType}
+                onClick={() => choice && void run(() => onSave(choice))}
+              >
+                Save type
+              </button>
+              {onRemove && (
+                <button className="btn" type="button" disabled={disabled} onClick={() => void run(onRemove)}>
+                  Remove link
+                </button>
+              )}
+            </>
+          )}
+          <button className="btn" type="button" onClick={onClose}>
+            {mode === "create" ? "Cancel" : "Close"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1710,6 +2343,10 @@ function ScheduleBar({
   onCommit,
   onPreview,
   onDragMove,
+  issueId,
+  linkable,
+  linkClass,
+  onLinkStart,
 }: {
   range: ScheduledRange | null;
   span: { origin: string; days: number };
@@ -1721,6 +2358,12 @@ function ScheduleBar({
   onCommit: ((startDate: string, finishDate: string) => Promise<void>) | null;
   onPreview: ((next: { start: string; finish: string } | null) => void) | null;
   onDragMove: ((clientX: number) => void) | null;
+  /** Issue this bar belongs to; lets the chart measure it and use it as a link source or target. */
+  issueId: string | null;
+  linkable: boolean;
+  /** "linking" for the drag source, "link-target-valid|invalid" while hovered as a drop target. */
+  linkClass: string;
+  onLinkStart: (issueId: string, event: ReactPointerEvent<HTMLElement>) => void;
 }) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
@@ -1738,6 +2381,8 @@ function ScheduleBar({
   const label = shown ? `${shown.start} to ${shown.finish}` : "Not scheduled";
   const placement = shown ? barPlacement(shown.start, shown.finish, span.origin, span.days) : null;
   const interactive = Boolean(editable && onCommit && range && !busy);
+  // Rollup/epic bars can link too, so the link handle does not depend on the bar being draggable.
+  const canLink = Boolean(linkable && issueId && shown && !busy);
   const todayLeft = todayMarkerLeft(today, span);
 
   function showPreview(next: { start: string; finish: string } | null) {
@@ -1806,10 +2451,13 @@ function ScheduleBar({
           className={[
             summary ? "gantt-bar rollup" : "gantt-bar",
             interactive ? "interactive" : "",
+            canLink ? "linkable" : "",
+            linkClass,
             dragging ? "dragging" : "",
           ]
             .filter(Boolean)
             .join(" ")}
+          data-issue-id={issueId ?? undefined}
           style={{ ...placement, ...(color ? { background: color } : {}) }}
           title={interactive ? `${label}. Drag to move, or drag an end to resize.` : label}
           onPointerDown={interactive ? (event) => beginDrag("move", event) : undefined}
@@ -1831,6 +2479,20 @@ function ScheduleBar({
                 onPointerDown={(event) => beginDrag("finish", event)}
               />
             </>
+          )}
+          {canLink && issueId && (
+            // Distinct from the resize handles: drag this to another bar to make this task precede it.
+            <span
+              className="gantt-link-handle"
+              role="button"
+              aria-label="Drag to another task to link"
+              title="Drag to another bar to link tasks"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onLinkStart(issueId, event);
+              }}
+            />
           )}
         </div>
       )}
@@ -1872,9 +2534,7 @@ function shortDate(iso: string): string {
 }
 
 function timelineToday(): string {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 10);
+  return localIsoDate();
 }
 
 function dependencyIssues(issues: PlanIssue[]) {
@@ -1915,34 +2575,100 @@ function DependenciesPanel({
   busy,
   readOnly,
   onLink,
+  onSoftLink,
 }: {
   issues: PlanIssue[];
   busy: boolean;
   readOnly: boolean;
   onLink: (issueId: string, predecessorId: string, action: "add" | "remove") => Promise<void>;
+  /** Saves the successor's full relationship list (soft links) through the issue PATCH. Null when read-only. */
+  onSoftLink: ((issueId: string, relationships: { id: string; kind: string; otherIssueId: string }[]) => Promise<void>) | null;
 }) {
   const rows = orderedIssues(issues).map((issue) => ({ ...issue, predecessorIds: issue.predecessorIds ?? [] }));
+  // Overlap/unscheduled conflicts are hard-link only; soft dependencies never affect the schedule.
   const conflicts = scheduleConflicts(dependencyIssues(rows));
+  const [formError, setFormError] = useState<string | null>(null);
+
+  /** Add either link type after the same validation the Gantt drop uses. */
+  async function addLink(issue: PlanIssue, predecessorId: string, type: LinkType) {
+    const problem = linkProblem(issues, predecessorId, issue.issueId, type);
+    if (problem) {
+      setFormError(problem);
+      return;
+    }
+    setFormError(null);
+    if (type === "blocker") await onLink(issue.issueId, predecessorId, "add");
+    else if (onSoftLink) await onSoftLink(issue.issueId, addSoftDependencyRelationship(issue.relationships, issue.issueId, predecessorId));
+  }
+
   return (
     <section className="panel">
       <h3>Dependencies</h3>
       <p className="copy">
-        A later task is blocked by an earlier task in GitHub. It starts the day after that task finishes. A date change asks before those later tasks move.
+        A blocker means a later task is blocked by an earlier task in GitHub. It starts the day after that task finishes. A dependency is a softer link that has no schedule impact. A date change asks before blocked tasks move.
       </p>
+      {formError && <p className="error small" role="alert">{formError}</p>}
       {rows.length === 0 && <p className="copy">No issues yet. Connect the GitHub project.</p>}
       {rows.map((issue) => {
-        const predecessors = rows.filter((item) => issue.predecessorIds.includes(item.issueId));
-        const choices = rows.filter((item) => item.issueId !== issue.issueId && !issue.predecessorIds.includes(item.issueId));
+        const blockedBy = rows.filter((item) => issue.predecessorIds.includes(item.issueId));
+        const blocks = rows.filter((item) => item.predecessorIds.includes(issue.issueId));
+        const softIds = softDependencyPredecessorIds(issue.relationships);
+        const dependsOn = rows.filter((item) => softIds.includes(item.issueId));
+        const related = rows.filter((item) => softDependencyPredecessorIds(item.relationships).includes(issue.issueId));
+        const choices = rows.filter(
+          (item) => item.issueId !== issue.issueId && !issue.predecessorIds.includes(item.issueId) && !softIds.includes(item.issueId),
+        );
         const notes = conflicts.filter((conflict) => conflict.issueId === issue.issueId);
+        const none = blockedBy.length + blocks.length + dependsOn.length + related.length === 0;
         return (
           <article className="milestone" key={issue.issueId}>
             <strong>{issue.title}</strong>
-            {predecessors.length === 0 && <p className="small muted">No predecessor.</p>}
-            {predecessors.map((predecessor) => (
-              <p className="small" key={predecessor.issueId}>
-                After {predecessor.title}.
+            {none && <p className="small muted">No links.</p>}
+            {blockedBy.map((predecessor) => (
+              <p className="small" key={`by:${predecessor.issueId}`}>
+                Blocked by {predecessor.title}.
                 {!readOnly && (
                   <button className="btn small" type="button" disabled={busy} onClick={() => void onLink(issue.issueId, predecessor.issueId, "remove")}>
+                    Remove
+                  </button>
+                )}
+              </p>
+            ))}
+            {blocks.map((successor) => (
+              <p className="small" key={`blocks:${successor.issueId}`}>
+                Blocks {successor.title}.
+                {!readOnly && (
+                  <button className="btn small" type="button" disabled={busy} onClick={() => void onLink(successor.issueId, issue.issueId, "remove")}>
+                    Remove
+                  </button>
+                )}
+              </p>
+            ))}
+            {dependsOn.map((predecessor) => (
+              <p className="small" key={`dep:${predecessor.issueId}`}>
+                Depends on {predecessor.title} (no schedule impact).
+                {!readOnly && onSoftLink && (
+                  <button
+                    className="btn small"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void onSoftLink(issue.issueId, removeSoftDependencyRelationship(issue.relationships, predecessor.issueId))}
+                  >
+                    Remove
+                  </button>
+                )}
+              </p>
+            ))}
+            {related.map((successor) => (
+              <p className="small" key={`rel:${successor.issueId}`}>
+                Related: {successor.title} depends on this (no schedule impact).
+                {!readOnly && onSoftLink && (
+                  <button
+                    className="btn small"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void onSoftLink(successor.issueId, removeSoftDependencyRelationship(successor.relationships, issue.issueId))}
+                  >
                     Remove
                   </button>
                 )}
@@ -1953,7 +2679,7 @@ function DependenciesPanel({
                 {note.reason === "overlap" ? `Starts before ${note.predecessorTitle} finishes.` : `Not scheduled after ${note.predecessorTitle}.`}
               </p>
             ))}
-            {!readOnly && <PredecessorForm choices={choices} busy={busy} onAdd={(predecessorId) => onLink(issue.issueId, predecessorId, "add")} />}
+            {!readOnly && <PredecessorForm choices={choices} busy={busy} canSoft={Boolean(onSoftLink)} onAdd={(predecessorId, type) => addLink(issue, predecessorId, type)} />}
           </article>
         );
       })}
@@ -1964,13 +2690,16 @@ function DependenciesPanel({
 function PredecessorForm({
   choices,
   busy,
+  canSoft,
   onAdd,
 }: {
   choices: { issueId: string; title: string }[];
   busy: boolean;
-  onAdd: (predecessorId: string) => Promise<void>;
+  canSoft: boolean;
+  onAdd: (predecessorId: string, type: LinkType) => Promise<void>;
 }) {
   const [predecessorId, setPredecessorId] = useState("");
+  const [type, setType] = useState<LinkType>("blocker");
   if (choices.length === 0) return null;
   return (
     <form
@@ -1978,7 +2707,7 @@ function PredecessorForm({
       onSubmit={(event) => {
         event.preventDefault();
         if (!predecessorId) return;
-        void onAdd(predecessorId).then(() => setPredecessorId(""));
+        void onAdd(predecessorId, type).then(() => setPredecessorId(""));
       }}
     >
       <label>
@@ -1992,8 +2721,15 @@ function PredecessorForm({
           ))}
         </select>
       </label>
+      <label>
+        Type
+        <select value={type} onChange={(event) => setType(event.target.value as LinkType)}>
+          <option value="blocker">Blocker</option>
+          {canSoft && <option value="dependency">Dependency</option>}
+        </select>
+      </label>
       <button className="btn small" type="submit" disabled={busy || !predecessorId}>
-        Add predecessor
+        Add link
       </button>
     </form>
   );

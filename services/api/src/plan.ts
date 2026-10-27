@@ -443,6 +443,10 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
   const compass = settingsForKind?.recordSource === "compass";
   const extraResult = compass ? readCompassExtra(ctx.body) : { ok: true as const, value: {} };
   if (!extraResult.ok) return json(400, { code: "VALIDATION", message: "Check the priority, labels, and relationships.", correlationId: ctx.correlationId }, ctx.correlationId);
+  // Soft dependencies are Compass-owned relationships; reject a task depending on itself before the local write.
+  if (extraResult.value.relationships?.some((relationship) => relationship.kind === "dependency" && relationship.otherIssueId === issueId)) {
+    return json(400, { code: "VALIDATION", message: "A task cannot depend on itself.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
   const parentEdit = compass ? readParent(ctx.body) : "absent";
   if (parentEdit === "invalid") return json(400, { code: "VALIDATION", message: "Choose a parent on this plan.", correlationId: ctx.correlationId }, ctx.correlationId);
   if (!parsed && !hasCompassEdit(extraResult.value) && parentEdit === "absent") {

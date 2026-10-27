@@ -683,7 +683,7 @@ function RenameProjectForm({ session, project }: { session: Session; project: Pr
   }
 
   return (
-    <form className="toolbar progress-override" onSubmit={(event) => void save(event)}>
+    <form className="toolbar settings-name-form" onSubmit={(event) => void save(event)}>
       <label>
         Project name
         <input value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} />

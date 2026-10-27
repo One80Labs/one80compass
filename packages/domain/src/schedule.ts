@@ -97,15 +97,27 @@ export function iterationDisplayDate(iso: string): string {
 
 export type IterationWindow = { id: string; startDate: string; duration: number };
 
-/** Iteration whose inclusive window contains today. Null when none match. */
+/** Local calendar day as YYYY-MM-DD (not UTC). Use this for “today” in Current iteration. */
+export function localIsoDate(now = new Date()): string {
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+/**
+ * Current iteration: today's local calendar date falls on or between that iteration's Start and Finish.
+ * Finish is the inclusive last day (`startDate + duration - 1`). When more than one window contains
+ * today, the latest Start wins. Null when none match.
+ */
 export function currentIterationId(iterations: IterationWindow[], today: string): string | null {
   if (!isIsoDate(today)) return null;
+  let best: { id: string; startDate: string } | null = null;
   for (const item of iterations) {
     const end = iterationFinish(item.startDate, item.duration);
-    if (!end || !item.id) continue;
-    if (today >= item.startDate && today <= end) return item.id;
+    if (!end || !item.id || !isIsoDate(item.startDate)) continue;
+    if (today < item.startDate || today > end) continue;
+    if (!best || item.startDate >= best.startDate) best = { id: item.id, startDate: item.startDate };
   }
-  return null;
+  return best?.id ?? null;
 }
 
 /**

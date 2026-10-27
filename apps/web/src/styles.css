@@ -836,6 +836,117 @@ button.tab.active {
   background: rgba(42, 36, 28, 0.4);
 }
 
+/* Dependency-link editing and chart overlay. */
+.gantt-link-handle {
+  position: absolute;
+  top: 50%;
+  right: -6px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #2a241c;
+  box-shadow: 0 0 0 1px rgba(42, 36, 28, 0.28);
+  cursor: crosshair;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.gantt-bar.interactive:hover .gantt-link-handle,
+.gantt-bar.linkable:hover .gantt-link-handle,
+.gantt-bar.linking .gantt-link-handle,
+.gantt-bar.is-linking .gantt-link-handle,
+.gantt-track.linking .gantt-link-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.gantt-bar.link-target-valid {
+  box-shadow: 0 0 0 2px #15803d;
+}
+
+.gantt-bar.link-target-invalid {
+  box-shadow: 0 0 0 2px #dc2626;
+}
+
+.gantt-dep-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.gantt-dep-line {
+  fill: none;
+  stroke: #70695f;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.gantt-dep-line.blocker {
+  stroke: #dc2626;
+}
+
+.gantt-dep-line.dependency {
+  stroke: #2563eb;
+}
+
+.gantt-dep-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  pointer-events: stroke;
+  vector-effect: non-scaling-stroke;
+}
+
+.gantt-dep-line.selected {
+  stroke-width: 4;
+}
+
+.gantt-risk-icon {
+  display: inline-grid;
+  width: 14px;
+  height: 13px;
+  place-items: center;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  background: #dc2626;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.timeline-dep-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 28px;
+  color: var(--oc-muted);
+  font-size: 12px;
+}
+
+.timeline-dep-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.gantt-link-preview {
+  fill: none;
+  stroke: #70695f;
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
 .comment-log {
   white-space: pre-wrap;
   max-height: 8rem;
@@ -972,6 +1083,16 @@ button.tab.active {
   margin: 16px 0 0;
   padding-top: 14px;
   border-top: 1px solid var(--oc-divider);
+}
+
+.settings-name-form {
+  align-items: flex-end;
+  margin: 12px 0 0;
+}
+
+.settings-name-form input {
+  margin-left: 0;
+  min-width: 220px;
 }
 
 .progress-override input {

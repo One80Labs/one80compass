@@ -1307,7 +1307,7 @@ describe("plan and webhooks", () => {
       issue({ issueId: "I_epic", number: null, title: "Billing", issueType: "EPIC", effort: null }),
       issue({ issueId: "A", number: null, title: "Deck", startDate: "2026-10-01", finishDate: "2026-10-05", parentIssueId: "I_epic" }),
       issue({ issueId: "B", number: null, title: "Rail", startDate: "2026-10-06", finishDate: "2026-10-08", predecessorIds: ["A"], parentIssueId: "I_epic" }),
-      issue({ issueId: "I_child", number: null, title: "Open task", parentIssueId: "A" }),
+      issue({ issueId: "I_child", number: null, title: "Open task", parentIssueId: "A", startDate: "2026-10-15", finishDate: "2026-10-20" }),
     );
     const updated = await handler(
       event({
@@ -1354,6 +1354,7 @@ describe("plan and webhooks", () => {
     );
     expect(linked.statusCode).toBe(200);
     expect(store.issues.find((item) => item.issueId === "B")?.predecessorIds).toEqual(["A", "I_child"]);
+    expect(store.issues.find((item) => item.issueId === "B")).toMatchObject({ startDate: "2026-10-11", finishDate: "2026-10-13" });
     const removed = await handler(
       event({ method: "POST", path: `/projects/${projectId}/issues/B/predecessors/remove`, claims: employeeClaims, body: { predecessorId: "I_child" } }),
     );
@@ -1452,7 +1453,7 @@ describe("plan and webhooks", () => {
     expect(queued).toHaveLength(0);
   });
 
-  it("saves Compass editor fields and refuses a GitHub sync", async () => {
+  it("saves Compass editor fields and soft dependencies without queueing GitHub", async () => {
     queued.length = 0;
     const store = memoryStore();
     const handler = handlerFor(store, { githubConfigured: true });
@@ -1518,7 +1519,7 @@ describe("plan and webhooks", () => {
           issueType: "Task",
           milestone: "Pour",
           assigneeIds: ["user-a"],
-          relationships: [{ id: "rel-1", kind: "relates to", otherIssueId: "missing" }],
+          relationships: [{ id: "dependency:A:P", kind: "dependency", otherIssueId: "P" }],
         },
       }),
     );
@@ -1529,8 +1530,22 @@ describe("plan and webhooks", () => {
       milestoneId: "ms-1",
       milestoneDueOn: "2026-11-01",
       assignees: [{ id: "user-a", login: "ada@example.com" }],
-      relationships: [{ id: "rel-1", kind: "relates to", otherIssueId: "missing" }],
+      relationships: [{ id: "dependency:A:P", kind: "dependency", otherIssueId: "P" }],
     });
+    expect(queued).toHaveLength(0);
+    const selfDependency = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/A`,
+        claims: employeeClaims,
+        body: { relationships: [{ id: "dependency:A:A", kind: "dependency", otherIssueId: "A" }] },
+      }),
+    );
+    expect(selfDependency.statusCode).toBe(400);
+    expect(JSON.parse(selfDependency.body).message).toBe("A task cannot depend on itself.");
+    expect(store.issues.find((item) => item.issueId === "A")?.relationships).toEqual([
+      { id: "dependency:A:P", kind: "dependency", otherIssueId: "P" },
+    ]);
     const sync = await handler(event({ method: "POST", path: `/projects/${projectId}/sync`, claims: employeeClaims, body: {} }));
     expect(sync.statusCode).toBe(409);
     expect(JSON.parse(sync.body).code).toBe("COMPASS_OWNED");

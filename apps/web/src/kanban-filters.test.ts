@@ -6,6 +6,7 @@ import {
   KANBAN_ITERATION_ALL,
   KANBAN_ITERATION_CURRENT,
   KANBAN_ITERATION_NONE,
+  KANBAN_ITERATION_UNMATCHED,
   matchesKanbanFilters,
   resolveIterationFilter,
   toggleIssueType,
@@ -30,12 +31,33 @@ function issue(partial: Partial<KanbanFilterIssue> & Pick<KanbanFilterIssue, "is
 }
 
 describe("kanban filters", () => {
-  it("resolves Current to the iteration that contains today", () => {
+  it("resolves Current to the iteration that contains today (I1 when today is in I1)", () => {
     expect(resolveIterationFilter(KANBAN_ITERATION_CURRENT, iterations, "2026-10-27")).toBe("i1");
     expect(resolveIterationFilter(KANBAN_ITERATION_CURRENT, iterations, "2026-11-10")).toBe("i2");
-    expect(resolveIterationFilter(KANBAN_ITERATION_CURRENT, iterations, "2026-12-01")).toBeNull();
+    expect(resolveIterationFilter(KANBAN_ITERATION_CURRENT, iterations, "2026-12-01")).toBe(KANBAN_ITERATION_UNMATCHED);
     expect(resolveIterationFilter(KANBAN_ITERATION_NONE, iterations, "2026-10-27")).toBeNull();
     expect(resolveIterationFilter(KANBAN_ITERATION_ALL, iterations, "2026-10-27")).toBe(KANBAN_ITERATION_ALL);
+  });
+
+  it("shows no cards when Current has no matching Start–Finish window", () => {
+    const rows = [
+      issue({ issueId: "task", title: "Invoice", iterationId: "i1" }),
+      issue({ issueId: "open", title: "Backlog", iterationId: null }),
+    ];
+    expect(
+      matchesKanbanFilters(
+        rows,
+        {
+          iteration: KANBAN_ITERATION_CURRENT,
+          assignee: KANBAN_ASSIGNEE_ALL,
+          issueTypes: KANBAN_DEFAULT_ISSUE_TYPES,
+          query: "",
+          today: "2026-12-01",
+        },
+        iterations,
+        null,
+      ),
+    ).toEqual([]);
   });
 
   it("defaults to Task and Subtask and can toggle types", () => {
