@@ -148,7 +148,16 @@ export function PlanPage({ session }: { session: Session | null }) {
     <>
       <PageHead title="Project plan." subtitle={`Milestones, phases, and tasks for ${name}.`} />
       <PlanStatus plan={plan} session={session} canWrite={canWrite} />
-      {plan.data && <MilestonePanel session={session} projectId={projectId} canWrite={canWrite} milestones={plan.data.milestones ?? []} onReload={plan.reload} />}
+      {plan.data && (
+        <MilestonePanel
+          session={session}
+          projectId={projectId}
+          canWrite={canWrite}
+          milestones={plan.data.milestones ?? []}
+          override={plan.data.override}
+          onReload={plan.reload}
+        />
+      )}
       <Tabs label="Plan" tabs={["Timeline view", "Dependencies", "Baselines"]} value={tab} onChange={setTab} />
       {tab === "Timeline view" && (
         <div>
@@ -630,26 +639,6 @@ function PlanStatus({ plan, session, canWrite }: { plan: ReturnType<typeof usePl
       )}
       {plan.data && session?.adminGroup && plan.data.settings?.recordSource !== "compass" && (
         <GithubForm projectId={projectId} session={session} settings={plan.data.settings} onSaved={plan.reload} onError={plan.setError} />
-      )}
-      {canWrite && session && plan.data && (
-        <form
-          className="toolbar"
-          onSubmit={(event) => {
-            plan.override(event).catch((caught) => plan.setError(message(caught)));
-          }}
-        >
-          <label>
-            Override percent
-            <input value={plan.percent} onChange={(event) => plan.setPercent(event.target.value)} inputMode="decimal" required />
-          </label>
-          <label>
-            Explanation
-            <input value={plan.explanation} onChange={(event) => plan.setExplanation(event.target.value)} required />
-          </label>
-          <button className="btn" type="submit">
-            Save override
-          </button>
-        </form>
       )}
     </>
   );
@@ -1209,8 +1198,6 @@ function usePlan(session: Session | null) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState<{ issueId: string; body: Record<string, unknown>; proposals: ProposedShift[] } | null>(null);
-  const [percent, setPercent] = useState("");
-  const [explanation, setExplanation] = useState("");
 
   async function reload() {
     if (!session) return;
@@ -1273,10 +1260,6 @@ function usePlan(session: Session | null) {
     clearReview() {
       setReview(null);
     },
-    percent,
-    setPercent,
-    explanation,
-    setExplanation,
     reload,
     async saveIssue(issueId: string, change: IssueEdit) {
       if (!session) return;
@@ -1393,18 +1376,6 @@ function usePlan(session: Session | null) {
         setData(result);
         if (result.sync.status !== "pending") return;
       }
-    },
-    async override(event: FormEvent) {
-      event.preventDefault();
-      if (!session) return;
-      setError(null);
-      await api(`/projects/${projectId}/progress-override`, session.idToken, {
-        method: "POST",
-        body: { percent: Number(percent), explanation },
-      });
-      setPercent("");
-      setExplanation("");
-      await reload();
     },
   };
 }
@@ -2030,23 +2001,28 @@ function PredecessorForm({
 
 const milestoneLabel = { open: "Open", ready: "Ready for confirmation", confirmed: "Confirmed" };
 
-/** GitHub milestones on this project, with confirmation once every task on the milestone is Done. Collapsed by default; Add milestone lives in the expanded body. */
+/** GitHub milestones on this project, with confirmation once every task on the milestone is Done. Collapsed by default; Add milestone and progress override live in the expanded body. */
 export function MilestonePanel({
   session,
   projectId,
   canWrite,
   milestones,
+  override = null,
   onReload,
 }: {
   session: Session | null;
   projectId: string;
   canWrite: boolean;
   milestones: MilestoneView[];
+  /** Current manual progress override, when the parent loaded it (Plan). Overview may omit this. */
+  override?: { percent: number; explanation: string } | null;
   onReload: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [explanation, setExplanation] = useState("");
+  const [overridePercent, setOverridePercent] = useState("");
+  const [overrideExplanation, setOverrideExplanation] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [addNotice, setAddNotice] = useState(false);
 
@@ -2087,6 +2063,27 @@ export function MilestonePanel({
         body: { explanation },
       });
       setExplanation("");
+      await onReload();
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  /** Saves a manual overall progress percent with a required reason; calculated progress is kept on the server. */
+  async function saveOverride(event: FormEvent) {
+    event.preventDefault();
+    if (!session) return;
+    setError(null);
+    setPending("override");
+    try {
+      await api(`/projects/${projectId}/progress-override`, session.idToken, {
+        method: "POST",
+        body: { percent: Number(overridePercent), explanation: overrideExplanation },
+      });
+      setOverridePercent("");
+      setOverrideExplanation("");
       await onReload();
     } catch (caught) {
       setError(message(caught));
@@ -2163,6 +2160,26 @@ export function MilestonePanel({
               )}
             </article>
           ))}
+          {canWrite && session && (
+            <form className="toolbar progress-override" onSubmit={(event) => void saveOverride(event)}>
+              <label>
+                Override percent
+                <input value={overridePercent} onChange={(event) => setOverridePercent(event.target.value)} inputMode="decimal" required />
+              </label>
+              <label>
+                Explanation
+                <input value={overrideExplanation} onChange={(event) => setOverrideExplanation(event.target.value)} required maxLength={500} />
+              </label>
+              <button className="btn" type="submit" disabled={pending === "override"}>
+                Save override
+              </button>
+            </form>
+          )}
+          {override && (
+            <p className="muted small">
+              Current override: {override.percent}% ({override.explanation}).
+            </p>
+          )}
         </div>
       )}
       {addNotice && (

@@ -966,6 +966,23 @@ button.tab.active {
   margin-top: 16px;
 }
 
+/* Align Save override with the input row, not the label+input stack. */
+.progress-override {
+  align-items: flex-end;
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--oc-divider);
+}
+
+.progress-override input {
+  margin-left: 0;
+  min-width: 140px;
+}
+
+.progress-override label:nth-of-type(2) input {
+  min-width: 220px;
+}
+
 .milestone {
   margin-top: 14px;
   padding-top: 12px;
