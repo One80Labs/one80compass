@@ -1,15 +1,14 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { createVaultDb, type VaultDb } from "./db";
 
-function schemaDir(): string {
-  if (typeof __dirname !== "undefined") return __dirname;
-  return dirname(fileURLToPath(import.meta.url));
+/** Schema SQL sits next to the bundled handler (copied during CDK bundling). */
+function schemaPath(): string {
+  return join(__dirname, "schema.sql");
 }
 
 export function readSchemaSql(): string {
-  return readFileSync(join(schemaDir(), "schema.sql"), "utf8");
+  return readFileSync(schemaPath(), "utf8");
 }
 
 /** Split schema.sql into executable statements (idempotent DDL). */
