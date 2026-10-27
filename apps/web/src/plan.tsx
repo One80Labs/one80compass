@@ -798,11 +798,9 @@ function IssueDrawer({
 
   return (
     <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
-      {displayKey && (
-        <p className="muted small">
-          Key <strong>{displayKey}</strong>
-        </p>
-      )}
+      <p className="muted small">
+        Key <strong>{displayKey ?? "—"}</strong>
+      </p>
       <p>
         Title, description, status, effort, iteration, assignee, and comments are sent to GitHub.
         {datesDerived

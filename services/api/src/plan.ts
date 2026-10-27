@@ -9,7 +9,7 @@ import {
   type SyncMessage,
   type SyncState,
 } from "../../../packages/domain/src/index";
-import { applyPlanOrder, createdIssueType, parentDoneBlocked, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
+import { applyPlanOrder, createdIssueType, parentDoneBlocked, planKind, planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { dependencyCycle, dependencyReview, scheduleConflicts } from "../../../packages/domain/src/dependencies";
 import { baselineSnapshot, type BaselineRecord } from "../../../packages/domain/src/baselines";
 import { tracedComment } from "../../../packages/domain/src/comments";
@@ -73,7 +73,11 @@ async function getPlan(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
   const project = await readable(ctx, projectId);
   if (!project) return notFound(ctx.correlationId);
   const settings = await ctx.deps.store.getSettings(projectId);
-  const issues = await ctx.deps.store.listIssues(projectId);
+  let issues = await ctx.deps.store.listIssues(projectId);
+  // Older rows predate COMP-N keys. Assign once when the project has a key so edit screens can show them.
+  if (project.projectKey) {
+    issues = await ensureIssueKeyNumbers(ctx.deps, projectId, issues, settings?.workstreamNumber ?? null);
+  }
   const doneStatuses = settings?.doneStatuses ?? [...DEFAULT_DONE_STATUSES];
   const progress = projectProgress(issues, doneStatuses);
   const override = await ctx.deps.store.getOverride(projectId);
@@ -111,6 +115,33 @@ async function getPlan(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
     },
     ctx.correlationId,
   );
+}
+
+/**
+ * Allocates keyNumber for plan rows that never received one.
+ * Order follows the Timeline (planRows) so numbers stay stable across reloads.
+ */
+async function ensureIssueKeyNumbers(
+  deps: HandlerDeps,
+  projectId: string,
+  issues: PlanIssue[],
+  workstreamNumber: number | null,
+): Promise<PlanIssue[]> {
+  const missing = issues.filter((issue) => issue.keyNumber == null && issue.inProject && !issue.archived && !issue.deletedAt);
+  if (missing.length === 0) return issues;
+  const order = planRows(issues, workstreamNumber).map((row) => row.issueId);
+  const rank = new Map(order.map((id, index) => [id, index]));
+  const queued = [...missing].sort(
+    (left, right) => (rank.get(left.issueId) ?? 1e9) - (rank.get(right.issueId) ?? 1e9) || left.title.localeCompare(right.title) || left.issueId.localeCompare(right.issueId),
+  );
+  const byId = new Map(issues.map((issue) => [issue.issueId, issue]));
+  for (const issue of queued) {
+    const keyNumber = await deps.store.allocateIssueKeyNumber(projectId);
+    const next = { ...issue, keyNumber };
+    await deps.store.putIssue(next);
+    byId.set(issue.issueId, next);
+  }
+  return issues.map((issue) => byId.get(issue.issueId) ?? issue);
 }
 
 async function compassMembers(ctx: PlanCtx, customerId: string, projectId: string) {

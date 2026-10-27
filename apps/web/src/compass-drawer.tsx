@@ -176,11 +176,9 @@ export function CompassIssueDrawer({
 
   return (
     <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
-      {displayKey && (
-        <p className="muted small">
-          Key <strong>{displayKey}</strong>
-        </p>
-      )}
+      <p className="muted small">
+        Key <strong>{displayKey ?? "—"}</strong>
+      </p>
       <p>
         Saved in Compass for this project. GitHub is not updated.
         {datesDerived

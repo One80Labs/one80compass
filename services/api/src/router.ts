@@ -529,6 +529,7 @@ async function renameProject(deps: HandlerDeps, ctx: Ctx, projectId: string): Pr
     before: { name: project.name, projectKey: project.projectKey },
     after: { name: nextName, projectKey: nextKey },
   });
+  // Numbers are assigned on the next plan load when any row is still missing a keyNumber.
   return json(200, next, ctx.correlationId);
 }
 
