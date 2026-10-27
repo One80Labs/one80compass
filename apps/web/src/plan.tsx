@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
-import { applyPlanOrder, orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
+import { applyPlanOrder, hasActiveChildren, orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
+import { PlanDeleteSection } from "./plan-delete";
 import { catalogColorHex } from "../../../packages/domain/src/index";
 import type { LinkType, ProposedShift } from "../../../packages/domain/src/dependencies";
 import {
@@ -168,7 +169,7 @@ export function PlanPage({ session }: { session: Session | null }) {
   const [tab, setTab] = useState("Timeline view");
   const [searchQuery, setSearchQuery] = useState("");
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
-  const issues = plan.data?.issues ?? [];
+  const issues = activePlanIssues(plan.data?.issues ?? []);
   const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
   const searchActive = searchQuery.trim().length >= PLAN_SEARCH_MIN;
   const searchMatches = searchActive ? matchPlanIssues(issues, searchQuery) : [];
@@ -340,6 +341,14 @@ export function PlanPage({ session }: { session: Session | null }) {
             await plan.saveIssue(issueId, change);
             setEditingId(null);
           }}
+          onDelete={
+            hasActiveChildren(editing.issueId, issues)
+              ? null
+              : async () => {
+                  await plan.deleteIssue(editing.issueId);
+                  setEditingId(null);
+                }
+          }
         />
       )}
       {editing && canWrite && plan.data?.settings?.recordSource !== "compass" && (
@@ -358,6 +367,14 @@ export function PlanPage({ session }: { session: Session | null }) {
             await plan.saveIssue(issueId, change);
             setEditingId(null);
           }}
+          onDelete={
+            hasActiveChildren(editing.issueId, issues)
+              ? null
+              : async () => {
+                  await plan.deleteIssue(editing.issueId);
+                  setEditingId(null);
+                }
+          }
         />
       )}
     </>
@@ -384,7 +401,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
   const iterations = plan.data?.settings?.iterations ?? [];
   const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
-  const allIssues = plan.data?.issues ?? [];
+  const allIssues = activePlanIssues(plan.data?.issues ?? []);
   const assignableUsers = assigneeOptions(plan.data?.settings?.assignableUsers ?? [], allIssues.flatMap((issue) => issue.assignees ?? []));
   /** Local calendar day so Current matches Start–Finish the way the team sees dates. */
   const today = localIsoDate();
@@ -649,6 +666,14 @@ export function KanbanPage({ session }: { session: Session | null }) {
             await plan.saveIssue(issueId, change);
             setEditing(null);
           }}
+          onDelete={
+            hasActiveChildren(editing.issueId, allIssues)
+              ? null
+              : async () => {
+                  await plan.deleteIssue(editing.issueId);
+                  setEditing(null);
+                }
+          }
         />
       )}
       {editing && canWrite && plan.data?.settings?.recordSource !== "compass" && (
@@ -667,6 +692,14 @@ export function KanbanPage({ session }: { session: Session | null }) {
             await plan.saveIssue(issueId, change);
             setEditing(null);
           }}
+          onDelete={
+            hasActiveChildren(editing.issueId, allIssues)
+              ? null
+              : async () => {
+                  await plan.deleteIssue(editing.issueId);
+                  setEditing(null);
+                }
+          }
         />
       )}
     </>
@@ -711,6 +744,7 @@ function IssueDrawer({
   derivedFinish,
   onClose,
   onSave,
+  onDelete,
 }: {
   issue: PlanIssue;
   displayKey: string | null;
@@ -722,6 +756,8 @@ function IssueDrawer({
   derivedFinish: string | null;
   onClose: () => void;
   onSave: (issueId: string, change: IssueEdit) => Promise<void>;
+  /** Null when the row still has children — delete is hidden. */
+  onDelete: (() => Promise<void>) | null;
 }) {
   const [title, setTitle] = useState(issue.title);
   const [description, setDescription] = useState(issue.description ?? "");
@@ -859,6 +895,7 @@ function IssueDrawer({
         <textarea className="field" value={comment} onChange={(event) => setComment(event.target.value)} maxLength={2000} placeholder="Add a comment" />
       </label>
       {error && <p className="error">{error}</p>}
+      <PlanDeleteSection busy={saving} onDelete={onDelete} />
     </EditDrawer>
   );
 }
@@ -946,6 +983,11 @@ const kindLabel: Record<PlanKind, string> = {
 
 function planNode(issue: PlanIssue): PlanIssue & { issueType: string | null; number: number | null } {
   return { ...issue, issueType: issue.issueType ?? null, number: issue.number ?? null };
+}
+
+/** Soft-deleted and out-of-project rows stay off Timeline and Kanban. */
+function activePlanIssues(issues: PlanIssue[]): PlanIssue[] {
+  return issues.filter((issue) => issue.inProject !== false && !issue.archived && !issue.deletedAt);
 }
 
 function AddPlanBar({ onAdd }: { onAdd: (kind: Exclude<PlanKind, "workstream">) => void }) {
@@ -1323,6 +1365,23 @@ function usePlan(session: Session | null) {
         await patchIssue(issueId, change, []);
       } catch (caught) {
         if (openReview(caught, issueId, change)) return;
+        setError(message(caught));
+        throw caught;
+      } finally {
+        setBusy(false);
+      }
+    },
+    async deleteIssue(issueId: string) {
+      if (!session) return;
+      setError(null);
+      setBusy(true);
+      try {
+        await api(`/projects/${projectId}/issues/${issueId}/delete`, session.idToken, {
+          method: "POST",
+          body: { confirmation: "DELETE" },
+        });
+        await reload();
+      } catch (caught) {
         setError(message(caught));
         throw caught;
       } finally {

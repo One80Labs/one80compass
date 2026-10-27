@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.3 — 2026-10-27.*
+*Single plan for the portal product and the staff AI vault. Version 1.4 — 2026-10-27.*
 
 This document **combines**:
 
@@ -189,7 +189,6 @@ Hard Blocker vs soft Dependency v1 shipped (or in flight). Post-v1 backlog (also
 | Other link kinds | Start-to-start, finish-to-finish, start-to-finish | Not started |
 | Critical path | Highlight across the blocker graph | Not started |
 | Optional auto-reschedule on Blocker create | Offer existing dependency-review move flow; warn-only remains default | Not started |
-| Sync soft Dependencies to GitHub | Only if product wants an equivalent GitHub relationship | Not started |
 
 ---
 
@@ -266,3 +265,4 @@ Build an MCP server so staff can use the vault from Cursor and Claude.
 | 2026-10-27 | v1.2 Added §5 G2 security hardening open items (Oct 2026 review) and §5 I Gantt post-v1 backlog; mirrored on One80Compass Dev in-app plan |
 | 2026-10-27 | v1.3 Marked §5 G2 complete in code (infra MFA OPTIONAL, Secrets Manager, CORS/RETAIN/PITR/SSE, API pagination/baselines/audit/reports, web token refresh, vault chunk PKs, sync reconcile paging) |
 | 2026-10-27 | v1.3 Marked G2 done: DynamoDB query pagination, baseline number concurrency, customer audit PII redaction, report approve/publish admin-only |
+| 2026-10-27 | v1.4 Dropped §5 I “Sync soft Dependencies to GitHub” (Compass owns plan; soft deps stay portal-only) |

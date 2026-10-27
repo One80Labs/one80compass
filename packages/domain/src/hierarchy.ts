@@ -111,6 +111,21 @@ function activeIssues(issues: HierarchyIssue[]): HierarchyIssue[] {
   return issues.filter((issue) => issue.inProject && !issue.archived && !issue.deletedAt);
 }
 
+/** True when this issue has at least one active child still on the plan. */
+export function hasActiveChildren(
+  issueId: string,
+  issues: Array<{ issueId: string; parentIssueId: string | null; inProject?: boolean; archived?: boolean; deletedAt?: string | null }>,
+): boolean {
+  return issues.some(
+    (issue) =>
+      issue.parentIssueId === issueId &&
+      issue.issueId !== issueId &&
+      issue.inProject !== false &&
+      !issue.archived &&
+      !issue.deletedAt,
+  );
+}
+
 function childMap(issues: HierarchyIssue[]): Map<string, HierarchyIssue[]> {
   const ids = new Set(issues.map((issue) => issue.issueId));
   const map = new Map<string, HierarchyIssue[]>();

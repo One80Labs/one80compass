@@ -2061,6 +2061,24 @@ button.drawer-close {
   background: #fff;
 }
 
+.plan-delete {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--oc-divider);
+  display: grid;
+  gap: 10px;
+}
+
+.plan-delete-open,
+.plan-delete-confirm {
+  border-color: #b42318;
+  color: #b42318;
+}
+
+.plan-delete-confirm:disabled {
+  opacity: 0.45;
+}
+
 .drawer h2 {
   font: 600 27px var(--oc-font-title);
   margin: 0;

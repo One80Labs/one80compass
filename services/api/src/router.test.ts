@@ -1665,6 +1665,37 @@ describe("plan and webhooks", () => {
     );
     expect(JSON.parse(wrong.body).code).toBe("PARENT_REQUIRED");
     expect(queued).toHaveLength(0);
+
+    const blocked = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/issues/${epic?.issueId}/delete`,
+        claims: employeeClaims,
+        body: { confirmation: "DELETE" },
+      }),
+    );
+    expect(JSON.parse(blocked.body).code).toBe("HAS_CHILDREN");
+    const featureId = store.issues.find((item) => item.title === "Payments")?.issueId;
+    const badConfirm = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/issues/${featureId}/delete`,
+        claims: employeeClaims,
+        body: { confirmation: "delete" },
+      }),
+    );
+    expect(JSON.parse(badConfirm.body).code).toBe("VALIDATION");
+    const removed = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/issues/${featureId}/delete`,
+        claims: employeeClaims,
+        body: { confirmation: "DELETE" },
+      }),
+    );
+    expect(removed.statusCode).toBe(200);
+    expect(store.issues.find((item) => item.issueId === featureId)?.deletedAt).toBeTruthy();
+    expect(queued).toHaveLength(0);
   });
 
   it("saves Compass editor fields and soft dependencies without queueing GitHub", async () => {

@@ -19,6 +19,8 @@ export function keepStoredPlanFields(incoming: PlanIssue, stored: PlanIssue | un
     relationships: stored.relationships.map((link) => ({ ...link })),
     planOrder: stored.planOrder,
     keyNumber: stored.keyNumber,
+    // Soft-deleted plan rows stay off the plan across GitHub reconcile.
+    deletedAt: stored.deletedAt,
   };
 }
 

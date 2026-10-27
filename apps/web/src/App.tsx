@@ -430,7 +430,7 @@ function SettingsPage({ session }: { session: Session | null }) {
       </header>
       <div className="settings-grid">
         <section className="panel settings-menu">
-          {["Project access", "General", "Catalog", "Notifications", "GitHub integration"].map((item) => (
+          {["Project access", "General", "Catalog", "Notifications"].map((item) => (
             <button key={item} className={tab === item ? "active" : undefined} type="button" onClick={() => setTab(item)}>
               {item}
             </button>
@@ -488,17 +488,6 @@ function SettingsPage({ session }: { session: Session | null }) {
           <section className="panel">
             <h3>Notifications</h3>
             <p className="copy">Notification preferences are not part of this release.</p>
-          </section>
-        )}
-        {tab === "GitHub integration" && (
-          <section className="panel">
-            <h3>GitHub integration</h3>
-            <p className="copy">Repository mapping is saved by an administrator on the project plan. Issue edits reach GitHub only after the App is configured.</p>
-            {portal.projectId && (
-              <Link className="btn" to={`/projects/${portal.projectId}/plan`}>
-                Open project plan
-              </Link>
-            )}
           </section>
         )}
       </div>

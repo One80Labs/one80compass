@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { catalogColorHex } from "../../../packages/domain/src/index";
 import { datesAfterIterationPick, iterationFinish, iterationOptionLabel } from "../../../packages/domain/src/schedule";
 import type { IssueRelationship, IssueSave } from "./api";
+import { PlanDeleteSection } from "./plan-delete";
 import { EditDrawer } from "./ui";
 
 type Named = { id: string; name: string; color?: string | null };
@@ -60,6 +61,7 @@ export function CompassIssueDrawer({
   derivedFinish,
   onClose,
   onSave,
+  onDelete,
 }: {
   issue: CompassIssue;
   issues: CompassIssue[];
@@ -75,6 +77,8 @@ export function CompassIssueDrawer({
   derivedFinish: string | null;
   onClose: () => void;
   onSave: (issueId: string, change: IssueSave & { title: string; status: string; effort: number | null }) => Promise<void>;
+  /** Null when the row still has children — delete is hidden. */
+  onDelete: (() => Promise<void>) | null;
 }) {
   const [title, setTitle] = useState(issue.title);
   const [description, setDescription] = useState(issue.description ?? "");
@@ -370,6 +374,7 @@ export function CompassIssueDrawer({
         <textarea className="field" value={comment} onChange={(event) => setComment(event.target.value)} maxLength={2000} placeholder="Add a comment" />
       </label>
       {error && <p className="error">{error}</p>}
+      <PlanDeleteSection busy={saving} onDelete={onDelete} />
     </EditDrawer>
   );
 }

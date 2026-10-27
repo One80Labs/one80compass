@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyPlanOrder,
   createdIssueType,
+  hasActiveChildren,
   orderedIssues,
   parentDoneBlocked,
   parentStatusChanges,
@@ -24,6 +25,20 @@ function issue(partial: Partial<HierarchyIssue> & { issueId: string }): Hierarch
     ...partial,
   };
 }
+
+describe("hasActiveChildren", () => {
+  it("is true only while an active child still points at the parent", () => {
+    const rows = [
+      issue({ issueId: "epic" }),
+      issue({ issueId: "task", parentIssueId: "epic" }),
+      issue({ issueId: "gone", parentIssueId: "epic", deletedAt: "2026-10-27T00:00:00.000Z" }),
+    ];
+    expect(hasActiveChildren("epic", rows)).toBe(true);
+    expect(hasActiveChildren("task", rows)).toBe(false);
+    rows[1].deletedAt = "2026-10-27T00:00:00.000Z";
+    expect(hasActiveChildren("epic", rows)).toBe(false);
+  });
+});
 
 describe("parent status", () => {
   it("marks a parent Done when every task under it is Done", () => {

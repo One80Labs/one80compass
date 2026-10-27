@@ -18,4 +18,3 @@ Schedule baselines are portal snapshots. See ADR 0008.
 - Support start-to-start, finish-to-finish, and start-to-finish links.
 - Calculate and display the critical path.
 - Optionally auto-reschedule when creating a blocker.
-- Sync soft dependencies to GitHub.

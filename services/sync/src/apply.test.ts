@@ -187,14 +187,15 @@ describe("applyGithubDelivery", () => {
   });
 
   it("keeps stored priority, labels, and relationships when a GitHub replace has none", () => {
-    const stored = currentIssue();
-    const incoming: PlanIssue = { ...stored, title: "From GitHub", priority: null, labels: [], relationships: [] };
+    const stored = { ...currentIssue(), deletedAt: "2026-10-27T12:00:00.000Z" };
+    const incoming: PlanIssue = { ...stored, title: "From GitHub", priority: null, labels: [], relationships: [], deletedAt: null };
     const kept = keepStoredPlanFields(incoming, stored);
     expect(kept.title).toBe("From GitHub");
     expect(kept.priority).toBe("high");
     expect(kept.labels).toEqual(["bug"]);
     expect(kept.relationships).toEqual([{ id: "rel-1", kind: "blocked_by", otherIssueId: "I_9" }]);
     expect(kept.keyNumber).toBe(stored.keyNumber);
+    expect(kept.deletedAt).toBe("2026-10-27T12:00:00.000Z");
     expect(kept.labels).not.toBe(stored.labels);
     expect(keepStoredPlanFields(incoming, undefined)).toEqual(incoming);
   });

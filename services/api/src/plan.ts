@@ -9,7 +9,7 @@ import {
   type SyncMessage,
   type SyncState,
 } from "../../../packages/domain/src/index";
-import { applyPlanOrder, createdIssueType, parentDoneBlocked, planKind, planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
+import { applyPlanOrder, createdIssueType, hasActiveChildren, parentDoneBlocked, planKind, planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { dependencyCycle, dependencyReview, scheduleConflicts } from "../../../packages/domain/src/dependencies";
 import { baselineSnapshot, type BaselineRecord } from "../../../packages/domain/src/baselines";
 import { tracedComment } from "../../../packages/domain/src/comments";
@@ -50,6 +50,8 @@ export async function handlePlan(ctx: PlanCtx): Promise<HttpResult | null> {
   if (removePredecessor && ctx.method === "POST") return setPredecessor(ctx, decodeURIComponent(removePredecessor[1]), decodeURIComponent(removePredecessor[2]), "remove");
   const addPredecessor = ctx.path.match(/^\/projects\/([^/]+)\/issues\/([^/]+)\/predecessors$/);
   if (addPredecessor && ctx.method === "POST") return setPredecessor(ctx, decodeURIComponent(addPredecessor[1]), decodeURIComponent(addPredecessor[2]), "add");
+  const deleteIssue = ctx.path.match(/^\/projects\/([^/]+)\/issues\/([^/]+)\/delete$/);
+  if (deleteIssue && ctx.method === "POST") return softDeleteIssue(ctx, decodeURIComponent(deleteIssue[1]), decodeURIComponent(deleteIssue[2]));
   const issue = ctx.path.match(/^\/projects\/([^/]+)\/issues\/([^/]+)$/);
   if (issue && ctx.method === "PATCH") return updateIssue(ctx, decodeURIComponent(issue[1]), decodeURIComponent(issue[2]));
   const confirm = ctx.path.match(/^\/projects\/([^/]+)\/milestones\/([^/]+)\/confirm$/);
@@ -499,6 +501,36 @@ async function ensureScheduleFields(ctx: PlanCtx, projectId: string): Promise<Ht
   await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Adding Start and Finish date fields on GitHub.", ctx.deps.now().toISOString()));
   await ctx.deps.enqueue({ type: "ensure-date-fields", projectId });
   return json(202, { accepted: true }, ctx.correlationId);
+}
+
+/**
+ * Soft-deletes a leaf plan row (sets deletedAt). Refused when the item still has active children.
+ * Body must include confirmation: "DELETE". Does not remove the Dynamo row or call GitHub delete.
+ */
+async function softDeleteIssue(ctx: PlanCtx, projectId: string, issueId: string): Promise<HttpResult> {
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
+  if (!project) return notFound(ctx.correlationId);
+  const confirmation = typeof ctx.body.confirmation === "string" ? ctx.body.confirmation.trim() : "";
+  if (confirmation !== "DELETE") {
+    return json(400, { code: "VALIDATION", message: 'Type DELETE to confirm removing this item from the plan.', correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const issues = await ctx.deps.store.listIssues(projectId);
+  const issue = issues.find((item) => item.issueId === issueId && item.customerId === project.customerId);
+  if (!issue || !issue.inProject || issue.archived || issue.deletedAt) return notFound(ctx.correlationId);
+  if (hasActiveChildren(issueId, issues)) {
+    return json(
+      409,
+      { code: "HAS_CHILDREN", message: "Remove or reparent every child before deleting this item.", correlationId: ctx.correlationId },
+      ctx.correlationId,
+    );
+  }
+  const now = ctx.deps.now().toISOString();
+  const deleted = { ...issue, deletedAt: now, updatedAt: now };
+  await ctx.deps.store.putIssue(deleted);
+  await auditPlanItem(ctx, project.customerId, projectId, "plan.item_deleted", issueId, auditIssueSnapshot(issue), auditIssueSnapshot(deleted));
+  return json(200, { issue: deleted }, ctx.correlationId);
 }
 
 async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Promise<HttpResult> {
