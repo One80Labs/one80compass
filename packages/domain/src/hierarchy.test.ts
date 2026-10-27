@@ -119,11 +119,11 @@ describe("orderedIssues", () => {
 });
 
 describe("createdIssueType", () => {
-  it("uses EPIC, Feature, and Task, and leaves a sub-issue untyped", () => {
+  it("uses EPIC, Feature, and Task, and leaves a subtask untyped", () => {
     expect(createdIssueType("epic")).toBe("EPIC");
     expect(createdIssueType("feature")).toBe("Feature");
     expect(createdIssueType("issue")).toBe("Task");
-    expect(createdIssueType("subissue")).toBeNull();
+    expect(createdIssueType("subtask")).toBeNull();
   });
 });
 
@@ -141,7 +141,7 @@ describe("planBands", () => {
     ];
     const byId = new Map(issues.map((issue) => [issue.issueId, issue]));
     expect(planKind(issues[3], byId, 10)).toBe("feature");
-    expect(planKind(issues[4], byId, 10)).toBe("subissue");
+    expect(planKind(issues[4], byId, 10)).toBe("subtask");
     const bands = planBands(issues, 10);
     expect(bands.map((band) => band.title)).toEqual(["Billing", "Outside an Epic"]);
     expect(bands[0].rows.map((row) => [row.title, row.depth])).toEqual([

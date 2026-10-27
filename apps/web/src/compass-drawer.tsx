@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { catalogColorHex } from "../../../packages/domain/src/index";
-import { datesAfterIterationPick, iterationFinish } from "../../../packages/domain/src/schedule";
+import { datesAfterIterationPick, iterationFinish, iterationOptionLabel } from "../../../packages/domain/src/schedule";
 import type { IssueRelationship, IssueSave } from "./api";
 import { EditDrawer } from "./ui";
 
@@ -175,7 +175,7 @@ export function CompassIssueDrawer({
       <p>
         Saved in Compass for this project. GitHub is not updated.
         {datesDerived
-          ? " Start and Finish come from the tasks and sub-issues under this item."
+          ? " Start and Finish come from the tasks and subtasks under this item."
           : summary
             ? " Choosing an iteration fills Start and Finish. You can still change the dates."
             : " Choosing an iteration fills Start and Finish from that iteration. You can still change the dates."}{" "}
@@ -250,7 +250,7 @@ export function CompassIssueDrawer({
           <option value="">No iteration</option>
           {iterationChoices.map((item) => (
             <option key={item.id} value={item.id}>
-              {item.title}
+              {iterationOptionLabel(item)}
             </option>
           ))}
         </select>

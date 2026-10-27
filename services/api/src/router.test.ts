@@ -974,7 +974,7 @@ describe("plan and webhooks", () => {
         method: "POST",
         path: `/projects/${projectId}/plan-items`,
         claims: employeeClaims,
-        body: { kind: "subissue", title: "Charge", parentIssueId: "I_epic" },
+        body: { kind: "subtask", title: "Charge", parentIssueId: "I_epic" },
       }),
     );
     expect(JSON.parse(wrong.body).code).toBe("PARENT_REQUIRED");
@@ -1412,7 +1412,7 @@ describe("plan and webhooks", () => {
         method: "POST",
         path: `/projects/${projectId}/plan-items`,
         claims: employeeClaims,
-        body: { kind: "subissue", title: "Charge", parentIssueId: epic?.issueId },
+        body: { kind: "subtask", title: "Charge", parentIssueId: epic?.issueId },
       }),
     );
     expect(JSON.parse(wrong.body).code).toBe("PARENT_REQUIRED");

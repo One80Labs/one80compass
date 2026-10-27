@@ -13,18 +13,18 @@ export const KANBAN_ITERATION_NONE = "none";
 export const KANBAN_ASSIGNEE_ALL = "all";
 export const KANBAN_ASSIGNEE_UNASSIGNED = "unassigned";
 
-export type KanbanIssueTypeFilter = "EPIC" | "Feature" | "Task" | "Subissue";
+export type KanbanIssueTypeFilter = "EPIC" | "Feature" | "Task" | "Subtask";
 
-export const KANBAN_ISSUE_TYPE_OPTIONS: KanbanIssueTypeFilter[] = ["EPIC", "Feature", "Task", "Subissue"];
+export const KANBAN_ISSUE_TYPE_OPTIONS: KanbanIssueTypeFilter[] = ["EPIC", "Feature", "Task", "Subtask"];
 
-/** Default board view: tasks and sub-issues only. */
-export const KANBAN_DEFAULT_ISSUE_TYPES: KanbanIssueTypeFilter[] = ["Task", "Subissue"];
+/** Default board view: tasks and subtasks only. */
+export const KANBAN_DEFAULT_ISSUE_TYPES: KanbanIssueTypeFilter[] = ["Task", "Subtask"];
 
 const KIND_TO_FILTER: Record<Exclude<PlanKind, "workstream">, KanbanIssueTypeFilter> = {
   epic: "EPIC",
   feature: "Feature",
   issue: "Task",
-  subissue: "Subissue",
+  subtask: "Subtask",
 };
 
 export type KanbanFilterIssue = PlanNode & {

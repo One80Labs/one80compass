@@ -1041,8 +1041,13 @@ button.tab.active {
   min-width: 220px;
 }
 
+.kanban-filter-panel {
+  margin: 16px 0 12px;
+}
+
 .kanban-filters {
   align-items: flex-end;
+  margin: 0;
 }
 
 .kanban-filter {
@@ -1061,6 +1066,10 @@ button.tab.active {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.kanban-filter-panel + .row {
+  margin: 0 0 16px;
 }
 
 .plan-search {

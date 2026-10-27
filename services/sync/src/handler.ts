@@ -162,7 +162,12 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
       return;
     }
     try {
-      await gateway.createPlanItem(settings, message);
+      /** Normalize legacy S3/SQS payload `kind: "subissue"` to `subtask`. */
+      const create = {
+        ...message,
+        kind: ((message as { kind?: string }).kind === "subissue" ? "subtask" : message.kind) as typeof message.kind,
+      };
+      await gateway.createPlanItem(settings, create);
       const result = await gateway.reconcile(settings);
       await store.putSettings(result.settings);
       await saveReconciledIssues(store, settings.projectId, result.issues, now);

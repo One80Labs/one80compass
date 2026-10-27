@@ -261,7 +261,7 @@ export type PlanIssue = {
   archived: boolean;
   deletedAt: string | null;
   parentIssueId: string | null;
-  /** GitHub issue type name. A new Epic is EPIC, a new Feature is Feature, and a new Task is Task. Null on a Sub-issue. */
+  /** GitHub issue type name. A new Epic is EPIC, a new Feature is Feature, and a new Task is Task. Null on a Subtask. */
   issueType: string | null;
   /** GitHub milestone title. Null when the issue has no milestone. */
   milestone: string | null;
@@ -451,7 +451,7 @@ export type SyncMessage =
       type: "create-plan-item";
       projectId: string;
       idempotencyKey: string;
-      kind: "epic" | "feature" | "issue" | "subissue";
+      kind: "epic" | "feature" | "issue" | "subtask";
       title: string;
       /** Parent issue node id. Null when the parent is the Workstream issue number. */
       parentIssueId: string | null;

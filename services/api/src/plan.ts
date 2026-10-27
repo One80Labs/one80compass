@@ -328,10 +328,11 @@ async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResu
   if (opened === "view") return viewOnly(ctx.correlationId);
   const project = opened;
   if (!project) return notFound(ctx.correlationId);
-  const kind = ctx.body.kind;
+  /** Accept legacy queue/API value `subissue` so in-flight create-plan-item messages still apply. */
+  const kind = ctx.body.kind === "subissue" ? "subtask" : ctx.body.kind;
   const title = typeof ctx.body.title === "string" ? ctx.body.title.trim() : "";
-  if (kind !== "epic" && kind !== "feature" && kind !== "issue" && kind !== "subissue") {
-    return json(400, { code: "VALIDATION", message: "kind must be epic, feature, issue, or subissue.", correlationId: ctx.correlationId }, ctx.correlationId);
+  if (kind !== "epic" && kind !== "feature" && kind !== "issue" && kind !== "subtask") {
+    return json(400, { code: "VALIDATION", message: "kind must be epic, feature, issue, or subtask.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
   if (!title || title.length > 256) return json(400, { code: "VALIDATION", message: "A title is required.", correlationId: ctx.correlationId }, ctx.correlationId);
   const settings = await ctx.deps.store.getSettings(projectId);
@@ -355,8 +356,8 @@ async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResu
   if (kind === "issue" && !parent && !settings.workstreamNumber) {
     return json(409, { code: "WORKSTREAM_NOT_SET", message: "Save the Workstream issue number, or choose an Epic or Feature.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
-  if (kind === "subissue" && (parentKind !== "issue" || !parentNumbered)) {
-    return json(409, { code: "PARENT_REQUIRED", message: "A Sub-issue nests under an Issue.", correlationId: ctx.correlationId }, ctx.correlationId);
+  if (kind === "subtask" && (parentKind !== "issue" || !parentNumbered)) {
+    return json(409, { code: "PARENT_REQUIRED", message: "A Subtask nests under an Issue.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
   const rest = { ...ctx.body };
   delete rest.kind;
@@ -784,7 +785,7 @@ type CompassPatch = {
   assigneeIds?: string[];
 };
 
-type PlanKindName = "epic" | "feature" | "issue" | "subissue";
+type PlanKindName = "epic" | "feature" | "issue" | "subtask";
 
 /** Compass projects write the plan row here. GitHub projects keep the enqueue path. */
 async function createCompassPlanItem(
@@ -1037,7 +1038,7 @@ function declaredKind(issue: PlanIssue, byId: Map<string, PlanIssue>, workstream
   if (typeName === "epic") return "epic";
   if (typeName === "feature") return "feature";
   if (typeName === "task") return "issue";
-  return planKind(issue, byId, workstreamNumber) === "subissue" ? "subissue" : "issue";
+  return planKind(issue, byId, workstreamNumber) === "subtask" ? "subtask" : "issue";
 }
 
 function parentRule(kind: PlanKindName, parentKind: PlanKind | null, hasParent: boolean, workstreamNumber: number | null): "WORKSTREAM_NOT_SET" | "PARENT_REQUIRED" | null {
@@ -1047,7 +1048,7 @@ function parentRule(kind: PlanKindName, parentKind: PlanKind | null, hasParent: 
     return null;
   }
   if (kind === "feature") return parentKind === "epic" ? null : "PARENT_REQUIRED";
-  if (kind === "subissue") return parentKind === "issue" ? null : "PARENT_REQUIRED";
+  if (kind === "subtask") return parentKind === "issue" ? null : "PARENT_REQUIRED";
   if (!hasParent) return workstreamNumber ? null : "WORKSTREAM_NOT_SET";
   if (parentKind !== "epic" && parentKind !== "feature" && parentKind !== "workstream") return "PARENT_REQUIRED";
   return null;
@@ -1055,7 +1056,7 @@ function parentRule(kind: PlanKindName, parentKind: PlanKind | null, hasParent: 
 
 function parentMessage(kind: PlanKindName): string {
   if (kind === "feature") return "A Feature nests under an Epic.";
-  if (kind === "subissue") return "A Sub-issue nests under an Issue.";
+  if (kind === "subtask") return "A Subtask nests under an Issue.";
   if (kind === "issue") return "An Issue nests under an Epic or a Feature.";
   return "An Epic stays under the Workstream.";
 }

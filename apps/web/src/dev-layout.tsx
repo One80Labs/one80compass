@@ -100,37 +100,19 @@ function KanbanPreview() {
   return (
     <>
       <PageHead title="Kanban board." subtitle="Track and manage project work for Amur." />
+      <section className="panel kanban-filter-panel">
+        <button type="button" className="milestone-panel-toggle" aria-expanded={false}>
+          <span className="milestone-panel-heading">
+            <h3>Filters</h3>
+            <span className="muted small">Current · All assignees · Task, Subtask</span>
+          </span>
+        </button>
+      </section>
       <div className="row">
         <button className="btn small" type="button">Add Epic</button>
         <button className="btn small" type="button">Add Feature</button>
         <button className="btn small" type="button">Add Task</button>
-        <button className="btn small" type="button">Add Sub-issue</button>
-      </div>
-      <div className="toolbar kanban-filters">
-        <label className="kanban-filter">
-          <span>Iteration</span>
-          <select className="field" aria-label="Filter by iteration" defaultValue="current">
-            <option value="current">Current</option>
-            <option value="all">All iterations</option>
-          </select>
-        </label>
-        <label className="kanban-filter">
-          <span>Assignee</span>
-          <select className="field" aria-label="Filter by assignee" defaultValue="all">
-            <option value="all">All assignees</option>
-            <option value="unassigned">Unassigned</option>
-          </select>
-        </label>
-        <div className="kanban-filter" role="group" aria-label="Filter by issue type">
-          <span>Issue type</span>
-          <div className="kanban-type-toggles">
-            <button className="btn small" type="button">EPIC</button>
-            <button className="btn small" type="button">Feature</button>
-            <button className="btn small primary" type="button">Task</button>
-            <button className="btn small primary" type="button">Subissue</button>
-          </div>
-        </div>
-        <input type="search" placeholder="Search tasks…" aria-label="Search tasks" />
+        <button className="btn small" type="button">Add Subtask</button>
       </div>
       <div className="kanban">
         {["To Do", "In Progress", "In Review", "Done"].map((column) => (

@@ -120,7 +120,7 @@ function descendantLeaves(id: string, children: Map<string, HierarchyIssue[]>): 
   return leaves;
 }
 
-export type PlanKind = "workstream" | "epic" | "feature" | "issue" | "subissue";
+export type PlanKind = "workstream" | "epic" | "feature" | "issue" | "subtask";
 
 export type PlanNode = {
   issueId: string;
@@ -130,11 +130,11 @@ export type PlanNode = {
   issueType: string | null;
 };
 
-const PLAN_INDENT: Record<PlanKind, number> = { workstream: 0, epic: 0, feature: 1, issue: 2, subissue: 3 };
+const PLAN_INDENT: Record<PlanKind, number> = { workstream: 0, epic: 0, feature: 1, issue: 2, subtask: 3 };
 
-/** Epic, Feature, Task, and Workstream come from the GitHub issue type. The name match ignores capitalization, so EPIC counts as Epic and Task stays an issue row. A Sub-issue has no type. */
+/** Epic, Feature, Task, and Workstream come from the GitHub issue type. The name match ignores capitalization, so EPIC counts as Epic and Task stays an issue row. A Subtask has no type. */
 
-/** GitHub issue type written for a new plan row. Sub-issues are created with no type. */
+/** GitHub issue type written for a new plan row. Subtasks are created with no type. */
 export function createdIssueType(kind: PlanKind): "EPIC" | "Feature" | "Task" | null {
   if (kind === "epic") return "EPIC";
   if (kind === "feature") return "Feature";
@@ -142,7 +142,7 @@ export function createdIssueType(kind: PlanKind): "EPIC" | "Feature" | "Task" | 
   return null;
 }
 
-/** Epic, Feature, and Workstream come from the GitHub issue type. Task stays an issue row. A Sub-issue is an issue nested under another issue. */
+/** Epic, Feature, and Workstream come from the GitHub issue type. Task stays an issue row. A Subtask is an issue nested under another issue. */
 export function planKind<T extends PlanNode>(issue: T, byId: Map<string, T>, workstreamNumber: number | null, seen = new Set<string>()): PlanKind {
   if (seen.has(issue.issueId)) return "issue";
   seen.add(issue.issueId);
@@ -153,13 +153,13 @@ export function planKind<T extends PlanNode>(issue: T, byId: Map<string, T>, wor
   const parent = issue.parentIssueId ? byId.get(issue.parentIssueId) : undefined;
   if (!parent || parent.issueId === issue.issueId) return "issue";
   const parentKind = planKind(parent, byId, workstreamNumber, seen);
-  return parentKind === "issue" || parentKind === "subissue" ? "subissue" : "issue";
+  return parentKind === "issue" || parentKind === "subtask" ? "subtask" : "issue";
 }
 
 export type PlanBand<T> = { key: string; title: string; rows: Array<T & { kind: PlanKind; depth: number }> };
 
 /**
- * Epics first, then each Feature, then Issues and their Sub-issues.
+ * Epics first, then each Feature, then Issues and their Subtasks.
  * An Issue directly under an Epic stays at indent 2. The Workstream is omitted.
  * Rows with no Epic ancestor follow in one outside band.
  */
@@ -182,7 +182,7 @@ export function planRows<T extends PlanNode>(issues: T[], workstreamNumber: numb
       roots.push(issue);
     }
   }
-  const rank: Record<PlanKind, number> = { feature: 0, issue: 1, subissue: 2, epic: 3, workstream: 4 };
+  const rank: Record<PlanKind, number> = { feature: 0, issue: 1, subtask: 2, epic: 3, workstream: 4 };
   const orderedChildren = (id: string) =>
     [...(children.get(id) ?? [])].sort(
       (left, right) => rank[left.kind] - rank[right.kind] || left.title.localeCompare(right.title) || left.issueId.localeCompare(right.issueId),

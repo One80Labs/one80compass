@@ -15,6 +15,7 @@ import {
   expandSpanToFit,
   iterationFinish,
   iterationForDates,
+  iterationOptionLabel,
   scheduleSpan,
   scheduleText,
   shiftSchedule,
@@ -187,7 +188,7 @@ export function PlanPage({ session }: { session: Session | null }) {
           {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, effort, and dates can be edited from a row after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
-            The plan is grouped by Epic. Date bars use the Start and Finish fields. Drag the middle of a bar to move both dates, or drag either end to change Start or Finish. Dragging past either edge expands and scrolls the Timeline so you can move work into the past or future. The vertical Today line marks the current day. That write also updates the Iteration field when the new dates fall in an iteration. An Epic or Feature can keep its own dates until a task or sub-issue is added, and then those dates come from the tasks under it. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
+            The plan is grouped by Epic. Date bars use the Start and Finish fields. Drag the middle of a bar to move both dates, or drag either end to change Start or Finish. Dragging past either edge expands and scrolls the Timeline so you can move work into the past or future. The vertical Today line marks the current day. That write also updates the Iteration field when the new dates fall in an iteration. An Epic or Feature can keep its own dates until a task or subtask is added, and then those dates come from the tasks under it. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
           </p>
         </div>
       )}
@@ -305,6 +306,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
   const portal = usePortal();
   const canWrite = portal.canWrite;
   const name = portal.projects.find((item) => item.projectId === projectId)?.name ?? "this project";
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [iterationFilter, setIterationFilter] = useState(KANBAN_ITERATION_CURRENT);
   const [assigneeFilter, setAssigneeFilter] = useState(KANBAN_ASSIGNEE_ALL);
   const [issueTypes, setIssueTypes] = useState<KanbanIssueTypeFilter[]>(KANBAN_DEFAULT_ISSUE_TYPES);
@@ -422,51 +424,79 @@ export function KanbanPage({ session }: { session: Session | null }) {
     <>
       <PageHead title="Kanban board." subtitle={`Track and manage project work for ${name}.`} />
       <PlanStatus plan={plan} session={session} canWrite={canWrite} />
-      {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
-      <div className="toolbar kanban-filters">
-        <label className="kanban-filter">
-          <span>Iteration</span>
-          <select className="field" value={iterationFilter} aria-label="Filter by iteration" onChange={(event) => setIterationFilter(event.target.value)}>
-            <option value={KANBAN_ITERATION_CURRENT}>Current</option>
-            <option value={KANBAN_ITERATION_ALL}>All iterations</option>
-            <option value={KANBAN_ITERATION_NONE}>No iteration</option>
-            {iterations.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="kanban-filter">
-          <span>Assignee</span>
-          <select className="field" value={assigneeFilter} aria-label="Filter by assignee" onChange={(event) => setAssigneeFilter(event.target.value)}>
-            <option value={KANBAN_ASSIGNEE_ALL}>All assignees</option>
-            <option value={KANBAN_ASSIGNEE_UNASSIGNED}>Unassigned</option>
-            {assignableUsers.map((person) => (
-              <option key={person.id} value={person.id}>
-                {person.name ?? person.login}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="kanban-filter" role="group" aria-label="Filter by issue type">
-          <span>Issue type</span>
-          <div className="kanban-type-toggles">
-            {KANBAN_ISSUE_TYPE_OPTIONS.map((type) => (
-              <button
-                key={type}
-                className={issueTypes.includes(type) ? "btn small primary" : "btn small"}
-                type="button"
-                aria-pressed={issueTypes.includes(type)}
-                onClick={() => setIssueTypes((current) => toggleIssueType(current, type))}
-              >
-                {type}
-              </button>
-            ))}
+      <section className="panel kanban-filter-panel">
+        <button
+          type="button"
+          className="milestone-panel-toggle"
+          aria-expanded={filtersOpen}
+          aria-controls="kanban-filter-panel-body"
+          onClick={() => setFiltersOpen((value) => !value)}
+        >
+          <span className="milestone-panel-heading">
+            <h3>Filters</h3>
+            <span className="muted small">
+              {kanbanFilterSummary({
+                iteration: iterationFilter,
+                assignee: assigneeFilter,
+                issueTypes,
+                query,
+                iterations,
+                assignableUsers,
+              })}
+            </span>
+          </span>
+          <ExpandIcon expanded={filtersOpen} />
+        </button>
+        {filtersOpen && (
+          <div id="kanban-filter-panel-body" className="milestone-panel-body">
+            <div className="toolbar kanban-filters">
+              <label className="kanban-filter">
+                <span>Iteration</span>
+                <select className="field" value={iterationFilter} aria-label="Filter by iteration" onChange={(event) => setIterationFilter(event.target.value)}>
+                  <option value={KANBAN_ITERATION_CURRENT}>Current</option>
+                  <option value={KANBAN_ITERATION_ALL}>All iterations</option>
+                  <option value={KANBAN_ITERATION_NONE}>No iteration</option>
+                  {iterations.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="kanban-filter">
+                <span>Assignee</span>
+                <select className="field" value={assigneeFilter} aria-label="Filter by assignee" onChange={(event) => setAssigneeFilter(event.target.value)}>
+                  <option value={KANBAN_ASSIGNEE_ALL}>All assignees</option>
+                  <option value={KANBAN_ASSIGNEE_UNASSIGNED}>Unassigned</option>
+                  {assignableUsers.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.name ?? person.login}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="kanban-filter" role="group" aria-label="Filter by issue type">
+                <span>Issue type</span>
+                <div className="kanban-type-toggles">
+                  {KANBAN_ISSUE_TYPE_OPTIONS.map((type) => (
+                    <button
+                      key={type}
+                      className={issueTypes.includes(type) ? "btn small primary" : "btn small"}
+                      type="button"
+                      aria-pressed={issueTypes.includes(type)}
+                      onClick={() => setIssueTypes((current) => toggleIssueType(current, type))}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <input type="search" value={query} placeholder="Search tasks…" aria-label="Search tasks" onChange={(event) => setQuery(event.target.value)} />
+            </div>
           </div>
-        </div>
-        <input type="search" value={query} placeholder="Search tasks…" aria-label="Search tasks" onChange={(event) => setQuery(event.target.value)} />
-      </div>
+        )}
+      </section>
+      {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
       <div className="kanban">
         {columns.map((column) => {
           const rows = issues.filter((issue) => shownStatus(issue) === column);
@@ -720,9 +750,9 @@ function IssueDrawer({
       <p>
         Title, description, status, effort, iteration, assignee, and comments are sent to GitHub.
         {datesDerived
-          ? " Start and Finish come from the tasks and sub-issues under this item."
+          ? " Start and Finish come from the tasks and subtasks under this item."
           : summary
-            ? " Choosing an iteration fills Start and Finish. You can still change the dates. Those dates stay until a task or sub-issue is added, and then they come from those items."
+            ? " Choosing an iteration fills Start and Finish. You can still change the dates. Those dates stay until a task or subtask is added, and then they come from those items."
             : " Choosing an iteration fills Start and Finish from that iteration. A later iteration keeps Start and sets Finish to the new end date. You can still change the dates."}{" "}
         The timeline bar uses Start and Finish. A comment is stored with your name and the date.
       </p>
@@ -752,7 +782,7 @@ function IssueDrawer({
           <option value="">No iteration</option>
           {iterationChoices.map((item) => (
             <option key={item.id} value={item.id}>
-              {item.title}
+              {iterationOptionLabel(item)}
             </option>
           ))}
         </select>
@@ -877,7 +907,7 @@ const kindLabel: Record<PlanKind, string> = {
   epic: "Epic",
   feature: "Feature",
   issue: "Task",
-  subissue: "Sub-issue",
+  subtask: "Subtask",
 };
 
 function planNode(issue: PlanIssue): PlanIssue & { issueType: string | null; number: number | null } {
@@ -896,11 +926,42 @@ function AddPlanBar({ onAdd }: { onAdd: (kind: Exclude<PlanKind, "workstream">) 
       <button className="btn small" type="button" onClick={() => onAdd("issue")}>
         Add Task
       </button>
-      <button className="btn small" type="button" onClick={() => onAdd("subissue")}>
-        Add Sub-issue
+      <button className="btn small" type="button" onClick={() => onAdd("subtask")}>
+        Add Subtask
       </button>
     </div>
   );
+}
+
+/** Short line shown while the Kanban filter panel is collapsed. */
+function kanbanFilterSummary(input: {
+  iteration: string;
+  assignee: string;
+  issueTypes: KanbanIssueTypeFilter[];
+  query: string;
+  iterations: IterationChoice[];
+  assignableUsers: GitHubUser[];
+}): string {
+  const iterationLabel =
+    input.iteration === KANBAN_ITERATION_CURRENT
+      ? "Current"
+      : input.iteration === KANBAN_ITERATION_ALL
+        ? "All iterations"
+        : input.iteration === KANBAN_ITERATION_NONE
+          ? "No iteration"
+          : (input.iterations.find((item) => item.id === input.iteration)?.title ?? "Iteration");
+  const assigneeLabel =
+    input.assignee === KANBAN_ASSIGNEE_ALL
+      ? "All assignees"
+      : input.assignee === KANBAN_ASSIGNEE_UNASSIGNED
+        ? "Unassigned"
+        : (input.assignableUsers.find((person) => person.id === input.assignee)?.name ??
+          input.assignableUsers.find((person) => person.id === input.assignee)?.login ??
+          "Assignee");
+  const typeLabel = input.issueTypes.length === 0 ? "No types" : input.issueTypes.join(", ");
+  const parts = [iterationLabel, assigneeLabel, typeLabel];
+  if (input.query.trim()) parts.push(`“${input.query.trim()}”`);
+  return parts.join(" · ");
 }
 
 type PlanDraft = {
@@ -1009,7 +1070,7 @@ function AddPlanDrawer({
       <p>
         Title, description, status, effort, iteration, assignee, and comments are sent to GitHub.
         Choosing an iteration fills Start and Finish from that iteration. A later iteration keeps Start and sets Finish to the new end date. You can still change the dates.
-        {plansAhead ? " Those dates stay until a task or sub-issue is added under this item, and then they come from those items." : ""} A comment is stored with your name and the date.
+        {plansAhead ? " Those dates stay until a task or subtask is added under this item, and then they come from those items." : ""} A comment is stored with your name and the date.
       </p>
       <label>
         Title
@@ -1051,7 +1112,7 @@ function AddPlanDrawer({
           <option value="">No iteration</option>
           {iterations.map((item) => (
             <option key={item.id} value={item.id}>
-              {item.title}
+              {iterationOptionLabel(item)}
             </option>
           ))}
         </select>
@@ -1579,7 +1640,7 @@ function TimelineChart({
         </div>
         {bands.map((band, bandIndex) => {
           const ranges = rangesByBand[bandIndex];
-          const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subissue");
+          const tasks = band.rows.filter((row) => row.kind === "issue" || row.kind === "subtask");
           const bandDone = tasks.filter((row) => row.status === "Done").length;
           const width = tasks.length === 0 ? 0 : Math.round((bandDone / tasks.length) * 100);
           const epic = band.rows[0]?.kind === "epic" ? band.rows[0] : null;

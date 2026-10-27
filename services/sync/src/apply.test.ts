@@ -134,7 +134,7 @@ describe("applyGithubDelivery", () => {
     expect(next?.[0].inProject).toBe(true);
   });
 
-  it("records a GitHub sub-issue parent and clears it", () => {
+  it("records a GitHub subtask parent and clears it", () => {
     const added = applyGithubDelivery(
       [],
       settings,

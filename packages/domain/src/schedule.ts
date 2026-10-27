@@ -82,6 +82,19 @@ export function iterationFinish(start: string, duration: number): string | null 
   return addDays(start, duration - 1);
 }
 
+/** Dropdown label: `I1: 10.24.2026 - 10.29.2026`. Falls back to the title when dates are missing. */
+export function iterationOptionLabel(item: { title: string; startDate: string; duration: number }): string {
+  const end = iterationFinish(item.startDate, item.duration);
+  if (!end || !isIsoDate(item.startDate)) return item.title;
+  return `${item.title}: ${iterationDisplayDate(item.startDate)} - ${iterationDisplayDate(end)}`;
+}
+
+/** ISO date as MM.DD.YYYY for iteration dropdowns. */
+export function iterationDisplayDate(iso: string): string {
+  if (!isIsoDate(iso)) return iso;
+  return `${iso.slice(5, 7)}.${iso.slice(8, 10)}.${iso.slice(0, 4)}`;
+}
+
 export type IterationWindow = { id: string; startDate: string; duration: number };
 
 /** Iteration whose inclusive window contains today. Null when none match. */
@@ -159,7 +172,7 @@ export function scheduleText(issue: { startDate: string | null; finishDate: stri
 
 type ChartRow = { depth: number; kind?: string } & Parameters<typeof scheduledRange>[0];
 
-/** An Epic or Feature can keep its own dates until a Task or Sub-issue is under it. */
+/** An Epic or Feature can keep its own dates until a Task or Subtask is under it. */
 export function datesAreDerived(kind: PlanKind): boolean {
   return kind === "epic" || kind === "feature";
 }
@@ -179,8 +192,8 @@ export function scheduleRollups(
 }
 
 /**
- * Start and Finish for one Epic or Feature once a Task or Sub-issue is under it.
- * Null when that parent still has no Task or Sub-issue, so its own dates stay.
+ * Start and Finish for one Epic or Feature once a Task or Subtask is under it.
+ * Null when that parent still has no Task or Subtask, so its own dates stay.
  */
 export function derivedSchedule(
   issues: DatedNode[],

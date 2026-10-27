@@ -11,7 +11,7 @@ export type GitHubGateway = {
   createPlanItem(
     settings: ProjectSettings,
     input: {
-      kind: "epic" | "feature" | "issue" | "subissue";
+      kind: "epic" | "feature" | "issue" | "subtask";
       title: string;
       parentIssueId: string | null;
       workstreamNumber: number | null;
@@ -476,7 +476,7 @@ function assignableUsers(lookup: ProjectLookup): GitHubUser[] {
   });
 }
 
-function fieldsOnCreate(input: IssueChange & { kind: "epic" | "feature" | "issue" | "subissue" }): IssueChange {
+function fieldsOnCreate(input: IssueChange & { kind: "epic" | "feature" | "issue" | "subtask" }): IssueChange {
   const change: IssueChange = {};
   if (input.description !== undefined) change.description = input.description;
   if (input.status) change.status = input.status;

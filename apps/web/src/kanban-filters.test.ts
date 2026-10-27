@@ -38,10 +38,10 @@ describe("kanban filters", () => {
     expect(resolveIterationFilter(KANBAN_ITERATION_ALL, iterations, "2026-10-27")).toBe(KANBAN_ITERATION_ALL);
   });
 
-  it("defaults to Task and Subissue and can toggle types", () => {
-    expect(KANBAN_DEFAULT_ISSUE_TYPES).toEqual(["Task", "Subissue"]);
-    expect(toggleIssueType(["Task", "Subissue"], "EPIC")).toEqual(["EPIC", "Task", "Subissue"]);
-    expect(toggleIssueType(["Task", "Subissue"], "Task")).toEqual(["Subissue"]);
+  it("defaults to Task and Subtask and can toggle types", () => {
+    expect(KANBAN_DEFAULT_ISSUE_TYPES).toEqual(["Task", "Subtask"]);
+    expect(toggleIssueType(["Task", "Subtask"], "EPIC")).toEqual(["EPIC", "Task", "Subtask"]);
+    expect(toggleIssueType(["Task", "Subtask"], "Task")).toEqual(["Subtask"]);
   });
 
   it("keeps tasks in the current iteration and hides epics by default", () => {

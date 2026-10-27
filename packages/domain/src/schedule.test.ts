@@ -7,8 +7,10 @@ import {
   dayOffset,
   expandSpanToFit,
   isIsoDate,
+  iterationDisplayDate,
   iterationFinish,
   iterationForDates,
+  iterationOptionLabel,
   scheduleRollups,
   scheduledRange,
   scheduleSpan,
@@ -48,6 +50,12 @@ describe("schedule", () => {
     expect(currentIterationId(iterations, "2026-10-27")).toBe("i1");
     expect(currentIterationId(iterations, "2026-11-07")).toBe("i2");
     expect(currentIterationId(iterations, "2026-12-01")).toBeNull();
+  });
+
+  it("labels an iteration with name and start–finish dates", () => {
+    expect(iterationDisplayDate("2026-10-24")).toBe("10.24.2026");
+    expect(iterationOptionLabel({ title: "I1", startDate: "2026-10-24", duration: 6 })).toBe("I1: 10.24.2026 - 10.29.2026");
+    expect(iterationOptionLabel({ title: "Sprint", startDate: "bad", duration: 6 })).toBe("Sprint");
   });
 
   it("gives an unscheduled plan a two-week scale and pads a scheduled one, keeping today on the chart", () => {
@@ -106,13 +114,13 @@ describe("schedule", () => {
 });
 
 describe("scheduleRollups", () => {
-  it("sets Epic and Feature dates from the tasks and sub-issues under them", () => {
+  it("sets Epic and Feature dates from the tasks and subtasks under them", () => {
     const rolled = scheduleRollups(
       [
         { issueId: "e", title: "Epic", parentIssueId: null, number: 1, issueType: "EPIC", startDate: null, finishDate: null },
         { issueId: "f", title: "Feature", parentIssueId: "e", number: 2, issueType: "Feature", startDate: "2026-01-01", finishDate: "2026-01-02" },
         { issueId: "t", title: "Task", parentIssueId: "f", number: 3, issueType: "Task", startDate: "2026-10-26", finishDate: "2026-11-02" },
-        { issueId: "s", title: "Sub-issue", parentIssueId: "t", number: 4, issueType: null, startDate: "2026-11-01", finishDate: "2026-11-10" },
+        { issueId: "s", title: "Subtask", parentIssueId: "t", number: 4, issueType: null, startDate: "2026-11-01", finishDate: "2026-11-10" },
       ],
       null,
     );
@@ -122,7 +130,7 @@ describe("scheduleRollups", () => {
     ]);
   });
 
-  it("leaves Epic and Feature dates alone until a task or sub-issue exists", () => {
+  it("leaves Epic and Feature dates alone until a task or subtask exists", () => {
     const rolled = scheduleRollups(
       [
         { issueId: "e", title: "Epic", parentIssueId: null, number: 1, issueType: "EPIC", startDate: "2026-10-01", finishDate: "2026-10-31" },
