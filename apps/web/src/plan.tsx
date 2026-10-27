@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { catalogColorHex } from "../../../packages/domain/src/index";
@@ -197,7 +197,6 @@ export function PlanPage({ session }: { session: Session | null }) {
               if (issue) setSearchQuery(issue.title);
             }}
           />
-          {plan.data && canWrite && <AddPlanBar onAdd={setAddKind} />}
           <TimelineChart
             bands={bands}
             barColors={barColors(issues, plan.data?.settings?.issueTypes ?? [])}
@@ -205,6 +204,7 @@ export function PlanPage({ session }: { session: Session | null }) {
             canWrite={canWrite}
             busy={plan.busy}
             issues={issues}
+            leadingActions={plan.data && canWrite ? <AddPlanBar onAdd={setAddKind} /> : null}
             onLinkPredecessor={plan.linkPredecessor}
             onSaveRelationships={canWrite ? (issueId, relationships) => plan.saveIssue(issueId, { relationships }) : null}
             onEdit={canWrite ? setEditingId : null}
@@ -1595,6 +1595,7 @@ function TimelineChart({
   canWrite,
   busy,
   issues,
+  leadingActions,
   onLinkPredecessor,
   onSaveRelationships,
   onEdit,
@@ -1621,6 +1622,8 @@ function TimelineChart({
   canWrite: boolean;
   busy: boolean;
   issues: PlanIssue[];
+  /** Add Epic/Feature/Task controls rendered on the same row as dependency toggles. */
+  leadingActions: ReactNode;
   onLinkPredecessor: (issueId: string, predecessorId: string, action: "add" | "remove") => Promise<void>;
   onSaveRelationships: ((issueId: string, relationships: { id: string; kind: string; otherIssueId: string }[]) => Promise<void>) | null;
   onEdit: ((issueId: string) => void) | null;
@@ -1952,31 +1955,34 @@ function TimelineChart({
   return (
     <>
       <div className="timeline-dep-toolbar">
-        {toast && (
-          <span className="error small" role="alert">
-            {toast}
-          </span>
-        )}
-        {showLines && (
-          <span className="muted small" aria-label="Line legend">
-            <span aria-hidden="true" style={{ display: "inline-block", width: 14, height: 3, background: DEPENDENCY_COLOR, marginRight: 4, verticalAlign: "middle" }} />
-            Dependency{" "}
-            <span aria-hidden="true" style={{ display: "inline-block", width: 14, height: 3, background: BLOCKER_COLOR, margin: "0 4px 0 8px", verticalAlign: "middle" }} />
-            Blocker
-          </span>
-        )}
-        <button
-          className="btn small"
-          type="button"
-          disabled={riskIds.length === 0}
-          onClick={focusNextRisk}
-          aria-label={`${riskIds.length} at risk. Jump to next at-risk task`}
-        >
-          {riskIds.length} at risk
-        </button>
-        <button className={showLines ? "btn small primary" : "btn small"} type="button" aria-pressed={showLines} onClick={toggleLines}>
-          Dependency lines
-        </button>
+        <div className="timeline-dep-toolbar-start">{leadingActions}</div>
+        <div className="timeline-dep-toolbar-end">
+          {toast && (
+            <span className="error small" role="alert">
+              {toast}
+            </span>
+          )}
+          {showLines && (
+            <span className="muted small" aria-label="Line legend">
+              <span aria-hidden="true" style={{ display: "inline-block", width: 14, height: 3, background: DEPENDENCY_COLOR, marginRight: 4, verticalAlign: "middle" }} />
+              Dependency{" "}
+              <span aria-hidden="true" style={{ display: "inline-block", width: 14, height: 3, background: BLOCKER_COLOR, margin: "0 4px 0 8px", verticalAlign: "middle" }} />
+              Blocker
+            </span>
+          )}
+          <button
+            className="btn small"
+            type="button"
+            disabled={riskIds.length === 0}
+            onClick={focusNextRisk}
+            aria-label={`${riskIds.length} at risk. Jump to next at-risk task`}
+          >
+            {riskIds.length} at risk
+          </button>
+          <button className={showLines ? "btn small primary" : "btn small"} type="button" aria-pressed={showLines} onClick={toggleLines}>
+            Dependency lines
+          </button>
+        </div>
       </div>
       <div className="timeline-scroll" ref={scrollRef}>
         <div className="timeline-chart" ref={chartRef} style={{ minWidth: chartMinWidth, position: "relative" }}>

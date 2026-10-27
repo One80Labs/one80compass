@@ -923,11 +923,25 @@ button.tab.active {
 .timeline-dep-toolbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   min-height: 28px;
+  margin: 0 0 12px;
   color: var(--oc-muted);
   font-size: 12px;
+}
+
+.timeline-dep-toolbar-start,
+.timeline-dep-toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.timeline-dep-toolbar-end {
+  margin-left: auto;
 }
 
 .timeline-dep-toolbar label {
