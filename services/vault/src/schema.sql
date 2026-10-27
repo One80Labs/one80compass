@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS relation (
   CHECK (kind IN ('blocks', 'mitigates', 'evidenced_by', 'decided', 'supersedes', 'part_of'))
 );
 
+-- Chunk PK is customerId:programId:documentId:versionId:index (tenant-scoped).
 CREATE TABLE IF NOT EXISTS chunk (
   id text PRIMARY KEY,
   customer_id text NOT NULL,

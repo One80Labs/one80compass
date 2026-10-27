@@ -1197,11 +1197,20 @@ button.tab.active {
 .settings-name-form {
   align-items: flex-end;
   margin: 12px 0 0;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .settings-name-form input {
   margin-left: 0;
   min-width: 220px;
+}
+
+.settings-name-form label:nth-of-type(2) input {
+  min-width: 88px;
+  max-width: 96px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .progress-override input {

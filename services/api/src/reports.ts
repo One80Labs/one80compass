@@ -1,4 +1,4 @@
-import { canAccessProject, canWriteProject, type Principal } from "../../../packages/authz/src/index";
+import { adminAccess, canAccessProject, canWriteProject, type Principal } from "../../../packages/authz/src/index";
 import type { ReportVersion, StatusReport } from "../../../packages/domain/src/index";
 import type { HandlerDeps, HttpResult } from "./router";
 
@@ -85,6 +85,11 @@ async function transition(ctx: ReportCtx, projectId: string, reportId: string, a
   if (!report) return notFound(ctx.correlationId);
   const allowed = await writable(ctx, projectId);
   if (allowed === "view") return viewOnly(ctx.correlationId);
+  // Approve/publish are platform-admin only; contributors may draft, submit, and revise.
+  if (action === "approve" || action === "publish") {
+    const admin = requireAdmin(ctx);
+    if (admin) return admin;
+  }
   const now = ctx.deps.now().toISOString();
   if (action === "submit" && report.status === "draft") return saveStatus(ctx, report, "in_review", "report.submitted", now);
   if (action === "approve" && report.status === "in_review") return saveStatus(ctx, report, "approved", "report.approved", now);
@@ -160,6 +165,15 @@ async function writable(ctx: ReportCtx, projectId: string) {
   const memberships = await ctx.deps.store.listMembershipsForUser(ctx.principal.userId);
   if (!canWriteProject(ctx.principal, project, memberships)) return "view" as const;
   return project;
+}
+
+function requireAdmin(ctx: ReportCtx): HttpResult | null {
+  const access = adminAccess(ctx.principal);
+  if (access === "ok") return null;
+  if (access === "mfa_required") {
+    return json(403, { code: "MFA_REQUIRED", message: "Administrator actions require MFA.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  return json(403, { code: "FORBIDDEN", message: "Administrator access is required.", correlationId: ctx.correlationId }, ctx.correlationId);
 }
 
 function viewOnly(correlationId: string): HttpResult {

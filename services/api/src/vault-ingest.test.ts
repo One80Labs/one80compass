@@ -107,7 +107,7 @@ function harness(options: {
     store: {
       async getProject(projectId: string) {
         if (projectId !== "prog-1") return null;
-        return { projectId: "prog-1", customerId: "cust-1", name: "Alpha", createdAt: "2026-01-01T00:00:00.000Z" };
+        return { projectId: "prog-1", customerId: "cust-1", name: "Alpha", projectKey: "ALPH", createdAt: "2026-01-01T00:00:00.000Z" };
       },
     },
     now: () => new Date("2026-10-26T12:00:00.000Z"),

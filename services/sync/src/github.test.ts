@@ -1,6 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ProjectSettings } from "../../../packages/domain/src/index";
-import { chooseProject, missingDateFields, readProject } from "./github";
+import {
+  assertIssueConnectionsComplete,
+  chooseProject,
+  loadAllProjectItems,
+  missingDateFields,
+  PROJECT_ITEMS_MAX_PAGES,
+  PROJECT_ITEMS_PAGE_SIZE,
+  readProject,
+} from "./github";
 
 const settings: ProjectSettings = {
   projectId: "proj-1",
@@ -130,5 +138,101 @@ describe("missingDateFields", () => {
   it("asks only for the date fields the project does not already have", () => {
     expect(missingDateFields([{ name: "Start", dataType: "DATE" }, { name: "Finish", dataType: "TEXT" }])).toEqual(["Finish"]);
     expect(missingDateFields([{ name: "Start", dataType: "DATE" }, { name: "Finish", dataType: "DATE" }])).toEqual([]);
+  });
+});
+
+describe("loadAllProjectItems", () => {
+  it("pages until hasNextPage is false and keeps every node", async () => {
+    const fetchPage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        pageInfo: { hasNextPage: true, endCursor: "c2" },
+        nodes: [{ id: "PVTI_2" }],
+      })
+      .mockResolvedValueOnce({
+        pageInfo: { hasNextPage: false, endCursor: null },
+        nodes: [{ id: "PVTI_3" }],
+      });
+
+    const nodes = await loadAllProjectItems(
+      {
+        pageInfo: { hasNextPage: true, endCursor: "c1" },
+        nodes: [{ id: "PVTI_1" }],
+      },
+      fetchPage,
+    );
+
+    expect(nodes.map((item) => item.id)).toEqual(["PVTI_1", "PVTI_2", "PVTI_3"]);
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    expect(fetchPage).toHaveBeenNthCalledWith(1, "c1");
+    expect(fetchPage).toHaveBeenNthCalledWith(2, "c2");
+  });
+
+  it("fails loudly when the safety max would truncate results", async () => {
+    const fetchPage = vi.fn(async (cursor: string) => ({
+      pageInfo: { hasNextPage: true, endCursor: `${cursor}-next` },
+      nodes: [{ id: `item-${cursor}` }],
+    }));
+
+    await expect(
+      loadAllProjectItems(
+        {
+          pageInfo: { hasNextPage: true, endCursor: "c0" },
+          nodes: [{ id: "first" }],
+        },
+        fetchPage,
+        3,
+      ),
+    ).rejects.toThrow(/exceeded 3 pages/);
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a generous default max that covers ~10k items", () => {
+    expect(PROJECT_ITEMS_PAGE_SIZE).toBe(100);
+    expect(PROJECT_ITEMS_MAX_PAGES).toBe(100);
+  });
+});
+
+describe("assertIssueConnectionsComplete", () => {
+  it("allows complete assignees and blockedBy pages", () => {
+    expect(() =>
+      assertIssueConnectionsComplete([
+        {
+          id: "PVTI_1",
+          content: {
+            id: "I_1",
+            number: 1,
+            assignees: { pageInfo: { hasNextPage: false }, nodes: [{ id: "U1", login: "a", name: null }] },
+            blockedBy: { pageInfo: { hasNextPage: false }, nodes: [{ id: "I_2" }] },
+          },
+        },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("fails when assignees were truncated", () => {
+    expect(() =>
+      assertIssueConnectionsComplete([
+        {
+          content: {
+            number: 42,
+            assignees: { pageInfo: { hasNextPage: true }, nodes: [] },
+          },
+        },
+      ]),
+    ).toThrow(/issue #42.*assignees/);
+  });
+
+  it("fails when blockedBy was truncated", () => {
+    expect(() =>
+      assertIssueConnectionsComplete([
+        {
+          content: {
+            number: 7,
+            blockedBy: { pageInfo: { hasNextPage: true }, nodes: [] },
+          },
+        },
+      ]),
+    ).toThrow(/issue #7.*blocked-by/);
   });
 });

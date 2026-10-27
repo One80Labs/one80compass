@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.2 — 2026-10-27.*
+*Single plan for the portal product and the staff AI vault. Version 1.3 — 2026-10-27.*
 
 This document **combines**:
 
@@ -21,7 +21,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | R3 Phase 10 — Staff vault MCP | **Not started** (next) |
 | R3 backlog — ingest UI, scheduled ingest, richer ontology | **Not started** |
 | R1 pilot / first external customer gate | **Not started** |
-| Security hardening follow-ups (Oct 2026 review) | **Not started** (open after code review) |
+| Security hardening follow-ups (Oct 2026 review) | **Complete** in code (deploy + PEM rotate still ops) |
 | Gantt dependency enhancements (post-v1) | **Not started** |
 | R4 Recovery & Governance | **Not started** |
 
@@ -145,24 +145,24 @@ Staff SOP: [docs/sop/staff-vault.md](../sop/staff-vault.md).
 - [ ] Monitoring/alerts proven for critical paths
 - [ ] Pilot with one test customer; retire associated Confluence links
 
-### G2 — Security hardening follow-ups (Oct 2026 review) — Not started
+### G2 — Security hardening follow-ups (Oct 2026 review) — Complete (code)
 
-Code review + security scan closed several Critical/High defects in-repo (authorizer-only JWT claims, SignedIn/MFA gates, document complete verifies S3, webhook claim-before-apply, vault table allowlist, API no longer holds GitHub PEM). Remaining open work:
+Code review + security scan closed Critical/High defects, then this slice landed the remaining G2 items in-repo. **Ops still required:** review the CDK change set before deploy; rotate any GitHub PEM that lived in Lambda env; flip Cognito to `Mfa.REQUIRED` on a dedicated stage/prod stack (dev stack is `OPTIONAL` with software tokens so existing users are not locked out).
 
 | Item | Severity | Notes | Status |
 | --- | --- | --- | --- |
-| Cognito MFA on live DNS | Critical | Stack fronts `one80compass.ai` with `Mfa.OFF`. Move live site to stage/prod with `Mfa.REQUIRED` + software token; keep MFA-off only on sandboxes without prod DNS | Not started |
-| GitHub secrets in Secrets Manager | Critical | Sync Lambda still takes PEM from env at deploy. Store PEM + webhook secret in Secrets Manager / SSM SecureString; rotate any key that was ever in Lambda config | Not started |
-| DynamoDB query pagination | High | List helpers stop at ~1MB; lists can silently truncate at scale. Page until `LastEvaluatedKey` is absent | Not started |
-| Baseline number concurrency | High | Approve uses read-modify-write for baseline number; use conditional write / counter item | Not started |
-| Prod CORS without localhost | Medium | Split stacks: prod origins only `https://one80compass.ai` (no `localhost` on the live API/bucket) | Not started |
-| RETAIN + PITR for prod data | High | Cognito, DynamoDB, documents bucket use DESTROY / auto-delete on current stack; RETAIN + PITR for anything that is the live product | Not started |
-| Encrypt SQS / SNS | Medium | Add SSE (CMK or AWS-managed) on sync queue and alarm topic | Not started |
-| Client ID token refresh | High | Web session holds a snapshot Bearer; refresh via Cognito `getSession` before API calls / on 401 | Not started |
-| Vault chunk ids tenant-scoped | Medium | Prefix chunk PKs with `customerId:programId` | Not started |
-| GitHub reconcile page beyond ~1000 | Medium | GraphQL item pagination stops early; fail loudly or page to completion | Not started |
-| Customer audit PII scope | Medium | `GET /customers/:id/audit` is membership-gated with emails in payloads; admin-only or redact for non-admins | Not started |
-| Report approve/publish roles | Medium | Any project writer can approve/publish; restrict if product requires separation of duties | Not started |
+| Cognito MFA on live DNS | Critical | Dev stack: `Mfa.OPTIONAL` + software OTP. Stage/prod must use `REQUIRED` on a stack without password-only admins | **Done** (code; REQUIRED cutover is ops) |
+| GitHub secrets in Secrets Manager | Critical | Secret `one80compass-dev-github`; Lambdas read `GITHUB_SECRET_ARN`; env remains bootstrap fallback. Rotate prior PEMs after deploy | **Done** (code; rotate is ops) |
+| DynamoDB query pagination | High | `queryAll` / `queryUpTo` in `services/api/src/store.ts` (shared with sync) | **Done** |
+| Baseline number concurrency | High | `BASELINE_SEQ` ADD + conditional put; `409` on race | **Done** |
+| Prod CORS without localhost | Medium | `BROWSER_ORIGINS` / `prodOriginsOnly` / `PROD_ORIGINS_ONLY` → only `https://one80compass.ai` (+ www) | **Done** |
+| RETAIN + PITR for prod data | High | Cognito, Dynamo, documents: `RETAIN`; documents no auto-delete; Dynamo PITR on | **Done** |
+| Encrypt SQS / SNS | Medium | Sync queue + DLQ SQS-managed SSE; alerts topic `alias/aws/sns` | **Done** |
+| Client ID token refresh | High | `freshIdToken()` / `refreshSession()`; `api()` refreshes before fetch and once on 401 | **Done** |
+| Vault chunk ids tenant-scoped | Medium | PK = `customerId:programId:documentId:versionId:index` | **Done** |
+| GitHub reconcile page beyond ~1000 | Medium | Page until complete (cap ~10k); fail loudly; assignees/blockedBy truncated → fail | **Done** |
+| Customer audit PII scope | Medium | Non-admins: metadata only (`before`/`after` null) on customer audit + overview activity; admins full | **Done** |
+| Report approve/publish roles | Medium | Approve/publish platform-admin only; contributors draft/submit/revise | **Done** |
 
 ### H — Release backlog (R3+) — Not started
 
@@ -239,8 +239,8 @@ Build an MCP server so staff can use the vault from Cursor and Claude.
 | Vault cost (Aurora idle) | Serverless v2 floor; monitor ACU and Data API usage |
 | MVP / R3 scope creep | Protect exit gates; MCP and ontology stay backlog until asked |
 | Manual ingest drift | Document SOP; backlog scheduled ingest |
-| Secrets in Lambda env / MFA off on prod DNS | Secrets Manager + rotate; MFA.REQUIRED on stage/prod stack (§5 G2) |
-| Silent Dynamo truncation | Query pagination helper before pilot (§5 G2) |
+| Secrets in Lambda env / MFA off on prod DNS | Secrets Manager landed; rotate PEM after deploy; MFA.REQUIRED on dedicated stage/prod (§5 G2) |
+| Silent Dynamo truncation | Mitigated by `queryAll` (§5 G2) |
 
 ---
 
@@ -264,3 +264,5 @@ Build an MCP server so staff can use the vault from Cursor and Claude.
 | 2026-10-27 | v1.0 Combined portal + vault plans |
 | 2026-10-27 | v1.1 Marked R1, R2, and vault Phases 1–9 complete; open work listed separately |
 | 2026-10-27 | v1.2 Added §5 G2 security hardening open items (Oct 2026 review) and §5 I Gantt post-v1 backlog; mirrored on One80Compass Dev in-app plan |
+| 2026-10-27 | v1.3 Marked §5 G2 complete in code (infra MFA OPTIONAL, Secrets Manager, CORS/RETAIN/PITR/SSE, API pagination/baselines/audit/reports, web token refresh, vault chunk PKs, sync reconcile paging) |
+| 2026-10-27 | v1.3 Marked G2 done: DynamoDB query pagination, baseline number concurrency, customer audit PII redaction, report approve/publish admin-only |

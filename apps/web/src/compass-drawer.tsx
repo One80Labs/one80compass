@@ -15,6 +15,7 @@ export type CompassIssue = {
   status: string;
   effort: number | null;
   number: number | null;
+  keyNumber?: number | null;
   parentIssueId: string | null;
   issueType: string | null;
   startDate: string | null;
@@ -48,6 +49,7 @@ export type CompassCatalogs = {
 export function CompassIssueDrawer({
   issue,
   issues,
+  displayKey,
   catalogs,
   members,
   columns,
@@ -62,6 +64,8 @@ export function CompassIssueDrawer({
 }: {
   issue: CompassIssue;
   issues: CompassIssue[];
+  /** Action-item key such as COMP-12. Null until the project key and sequence exist. */
+  displayKey: string | null;
   catalogs: CompassCatalogs;
   members: Person[];
   columns: string[];
@@ -172,6 +176,11 @@ export function CompassIssueDrawer({
 
   return (
     <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
+      {displayKey && (
+        <p className="muted small">
+          Key <strong>{displayKey}</strong>
+        </p>
+      )}
       <p>
         Saved in Compass for this project. GitHub is not updated.
         {datesDerived

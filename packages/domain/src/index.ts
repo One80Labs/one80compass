@@ -33,8 +33,29 @@ export type Project = {
   projectId: string;
   customerId: string;
   name: string;
+  /**
+   * Short unique prefix for action-item keys (e.g. COMP → COMP-1).
+   * Null on older rows until an administrator sets one in Settings → General.
+   */
+  projectKey: string | null;
   createdAt: string;
 };
+
+/** 3–4 uppercase A–Z letters. Used as the project prefix on action-item keys. */
+export const PROJECT_KEY_PATTERN = /^[A-Z]{3,4}$/;
+
+/** Normalize and validate a project key. Returns null when the value is empty or invalid. */
+export function normalizeProjectKey(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const key = value.trim().toUpperCase();
+  return PROJECT_KEY_PATTERN.test(key) ? key : null;
+}
+
+/** Display key for a plan row, e.g. COMP-12. Null until both parts exist. */
+export function issueDisplayKey(projectKey: string | null | undefined, keyNumber: number | null | undefined): string | null {
+  if (!projectKey || keyNumber == null || !Number.isInteger(keyNumber) || keyNumber < 1) return null;
+  return `${projectKey}-${keyNumber}`;
+}
 
 export const MODULE_KEYS = ["overview", "documents", "plan", "kanban", "reports"] as const;
 export type ModuleKey = (typeof MODULE_KEYS)[number];
@@ -252,6 +273,11 @@ export type PlanIssue = {
   projectId: string;
   customerId: string;
   number: number | null;
+  /**
+   * Per-project running sequence for the action-item key (COMP-N).
+   * Null on older rows or until a number is allocated. Immutable once set.
+   */
+  keyNumber: number | null;
   title: string;
   /** GitHub issue description. Null when the issue body is empty. */
   description: string | null;

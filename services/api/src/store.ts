@@ -1,4 +1,12 @@
-import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  DynamoDBDocumentClient,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  UpdateCommand,
+  type QueryCommandInput,
+} from "@aws-sdk/lib-dynamodb";
 import {
   catalogIssueTypesFromStore,
   catalogLabelsFromStore,
@@ -7,6 +15,7 @@ import {
   isModuleKey,
   labelIdsFromStore,
   memberRole,
+  normalizeProjectKey,
   priorityFromStore,
   priorityOptionsFromStore,
   recordSourceFromStore,
@@ -37,10 +46,19 @@ export interface Store {
   listCustomers(): Promise<Customer[]>;
   getCustomer(customerId: string): Promise<Customer | null>;
   createProject(project: Project): Promise<void>;
-  /** Overwrites the project META row (same keys as create). Used to rename. */
+  /** Overwrites the project META row (same keys as create). Used to rename or set projectKey. */
   putProject(project: Project): Promise<void>;
   getProject(projectId: string): Promise<Project | null>;
   listProjects(customerId: string): Promise<Project[]>;
+  /**
+   * Reserves a global project key (PROJECTKEY#COMP). Fails when another project already holds it.
+   * Returns false on conflict; true when claimed (or already owned by this projectId).
+   */
+  claimProjectKey(projectKey: string, projectId: string, customerId: string): Promise<boolean>;
+  /** Drops the reservation when this project still owns it (used when the key changes). */
+  releaseProjectKey(projectKey: string, projectId: string): Promise<void>;
+  /** Atomically reserves the next action-item sequence number for this project. */
+  allocateIssueKeyNumber(projectId: string): Promise<number>;
   putMembership(membership: Membership): Promise<void>;
   deleteMembership(customerId: string, userId: string): Promise<void>;
   listMembershipsForUser(userId: string): Promise<Membership[]>;
@@ -70,7 +88,15 @@ export interface Store {
   listMilestones(projectId: string): Promise<MilestoneRecord[]>;
   putMilestone(record: MilestoneRecord): Promise<void>;
   listBaselines(projectId: string): Promise<BaselineRecord[]>;
-  putBaseline(record: BaselineRecord): Promise<void>;
+  /** Atomically reserves the next baseline number for this project (Dynamo ADD / in-memory counter). */
+  allocateBaselineNumber(projectId: string): Promise<number>;
+
+  /**
+   * Writes a baseline row. When `requireState` is set, the put fails with
+   * ConditionalCheckFailedException unless the stored row still has that state
+   * (used so concurrent approvers cannot both decide the same proposal).
+   */
+  putBaseline(record: BaselineRecord, options?: { requireState?: BaselineRecord["state"] }): Promise<void>;
   listRisks(projectId: string): Promise<RiskRecord[]>;
   putRisk(record: RiskRecord): Promise<void>;
   getOverride(projectId: string): Promise<ProgressOverride | null>;
@@ -88,11 +114,69 @@ export interface Store {
 
 type Item = Record<string, unknown>;
 
+/** Safety cap so a runaway query cannot loop forever. Sync and API share DynamoStore. */
+export const QUERY_ALL_MAX_PAGES = 100;
+
+type QueryPage = { Items?: Item[]; LastEvaluatedKey?: Item };
+type QuerySend = (command: QueryCommand) => Promise<QueryPage>;
+
+/**
+ * Exhausts DynamoDB Query pages via LastEvaluatedKey. Throws if maxPages is hit
+ * so callers do not silently truncate large tenant lists.
+ */
+export async function queryAll(
+  send: QuerySend,
+  input: Omit<QueryCommandInput, "ExclusiveStartKey">,
+  options?: { maxPages?: number },
+): Promise<Item[]> {
+  const maxPages = options?.maxPages ?? QUERY_ALL_MAX_PAGES;
+  const items: Item[] = [];
+  let ExclusiveStartKey: Item | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await send(new QueryCommand({ ...input, ExclusiveStartKey }));
+    items.push(...(result.Items ?? []));
+    if (!result.LastEvaluatedKey) return items;
+    ExclusiveStartKey = result.LastEvaluatedKey;
+  }
+  console.warn(JSON.stringify({ message: "queryAll hit max pages", tableName: input.TableName, indexName: input.IndexName, maxPages }));
+  throw new Error(`queryAll exceeded ${maxPages} pages for ${input.TableName ?? "table"}`);
+}
+
+/**
+ * Collects up to `limit` items, paging when Dynamo returns early (1MB) before the Limit is filled.
+ */
+export async function queryUpTo(
+  send: QuerySend,
+  input: Omit<QueryCommandInput, "ExclusiveStartKey" | "Limit">,
+  limit: number,
+  options?: { maxPages?: number },
+): Promise<Item[]> {
+  const maxPages = options?.maxPages ?? QUERY_ALL_MAX_PAGES;
+  const items: Item[] = [];
+  let ExclusiveStartKey: Item | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const remaining = limit - items.length;
+    if (remaining <= 0) return items;
+    const result = await send(new QueryCommand({ ...input, Limit: remaining, ExclusiveStartKey }));
+    items.push(...(result.Items ?? []));
+    if (!result.LastEvaluatedKey || items.length >= limit) return items.slice(0, limit);
+    ExclusiveStartKey = result.LastEvaluatedKey;
+  }
+  console.warn(JSON.stringify({ message: "queryUpTo hit max pages", tableName: input.TableName, limit, maxPages }));
+  throw new Error(`queryUpTo exceeded ${maxPages} pages for ${input.TableName ?? "table"}`);
+}
+
+export function isConditionalCheckFailed(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "name" in error && (error as { name: string }).name === "ConditionalCheckFailedException");
+}
+
 export class DynamoStore implements Store {
   constructor(
     private readonly doc: DynamoDBDocumentClient,
     private readonly tableName: string,
   ) {}
+
+  private querySend: QuerySend = (command) => this.doc.send(command);
 
   async createCustomer(customer: Customer): Promise<void> {
     await this.doc.send(
@@ -112,15 +196,13 @@ export class DynamoStore implements Store {
   }
 
   async listCustomers(): Promise<Customer[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: "gsi1",
-        KeyConditionExpression: "gsi1pk = :pk",
-        ExpressionAttributeValues: { ":pk": "CUSTOMERS" },
-      }),
-    );
-    return (result.Items ?? []).map(asCustomer);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      IndexName: "gsi1",
+      KeyConditionExpression: "gsi1pk = :pk",
+      ExpressionAttributeValues: { ":pk": "CUSTOMERS" },
+    });
+    return items.map(asCustomer);
   }
 
   async getCustomer(customerId: string): Promise<Customer | null> {
@@ -163,6 +245,65 @@ export class DynamoStore implements Store {
     );
   }
 
+  async claimProjectKey(projectKey: string, projectId: string, customerId: string): Promise<boolean> {
+    const existing = await this.doc.send(
+      new GetCommand({ TableName: this.tableName, Key: { pk: projectKeyPk(projectKey), sk: "META" } }),
+    );
+    const ownerId = typeof existing.Item?.projectId === "string" ? existing.Item.projectId : null;
+    if (ownerId && ownerId !== projectId) return false;
+    if (ownerId === projectId) return true;
+    try {
+      await this.doc.send(
+        new PutCommand({
+          TableName: this.tableName,
+          Item: {
+            pk: projectKeyPk(projectKey),
+            sk: "META",
+            entity: "projectKey",
+            projectKey,
+            projectId,
+            customerId,
+          },
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      );
+      return true;
+    } catch (error) {
+      if ((error as { name?: string }).name === "ConditionalCheckFailedException") return false;
+      throw error;
+    }
+  }
+
+  async releaseProjectKey(projectKey: string, projectId: string): Promise<void> {
+    const existing = await this.doc.send(
+      new GetCommand({ TableName: this.tableName, Key: { pk: projectKeyPk(projectKey), sk: "META" } }),
+    );
+    if (typeof existing.Item?.projectId === "string" && existing.Item.projectId !== projectId) return;
+    if (!existing.Item) return;
+    await this.doc.send(
+      new DeleteCommand({
+        TableName: this.tableName,
+        Key: { pk: projectKeyPk(projectKey), sk: "META" },
+        ConditionExpression: "attribute_not_exists(projectId) OR projectId = :projectId",
+        ExpressionAttributeValues: { ":projectId": projectId },
+      }),
+    );
+  }
+
+  async allocateIssueKeyNumber(projectId: string): Promise<number> {
+    const result = await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: { pk: proj(projectId), sk: "ISSUE_SEQ" },
+        UpdateExpression: "ADD #n :one SET entity = :entity",
+        ExpressionAttributeNames: { "#n": "value" },
+        ExpressionAttributeValues: { ":one": 1, ":entity": "issueSeq" },
+        ReturnValues: "UPDATED_NEW",
+      }),
+    );
+    return Number(result.Attributes?.value);
+  }
+
   async getProject(projectId: string): Promise<Project | null> {
     const result = await this.doc.send(
       new QueryCommand({
@@ -178,14 +319,12 @@ export class DynamoStore implements Store {
   }
 
   async listProjects(customerId: string): Promise<Project[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": cust(customerId), ":sk": "PROJ#" },
-      }),
-    );
-    return (result.Items ?? []).map(asProject);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": cust(customerId), ":sk": "PROJ#" },
+    });
+    return items.map(asProject);
   }
 
   async putMembership(membership: Membership): Promise<void> {
@@ -214,26 +353,22 @@ export class DynamoStore implements Store {
   }
 
   async listMembershipsForUser(userId: string): Promise<Membership[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: "gsi1",
-        KeyConditionExpression: "gsi1pk = :pk",
-        ExpressionAttributeValues: { ":pk": user(userId) },
-      }),
-    );
-    return (result.Items ?? []).map(asMembership);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      IndexName: "gsi1",
+      KeyConditionExpression: "gsi1pk = :pk",
+      ExpressionAttributeValues: { ":pk": user(userId) },
+    });
+    return items.map(asMembership);
   }
 
   async listMembershipsForCustomer(customerId: string): Promise<Membership[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": cust(customerId), ":sk": "MEMBER#" },
-      }),
-    );
-    return (result.Items ?? []).map(asMembership);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": cust(customerId), ":sk": "MEMBER#" },
+    });
+    return items.map(asMembership);
   }
 
   async createApplication(application: ApplicationLink): Promise<void> {
@@ -252,14 +387,12 @@ export class DynamoStore implements Store {
   }
 
   async listApplications(projectId: string): Promise<ApplicationLink[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "APP#" },
-      }),
-    );
-    return (result.Items ?? []).map(asApplication);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "APP#" },
+    });
+    return items.map(asApplication);
   }
 
   async putAudit(event: AuditEvent): Promise<void> {
@@ -277,16 +410,18 @@ export class DynamoStore implements Store {
   }
 
   async listAudit(customerId: string): Promise<AuditEvent[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
+    // Newest 50 only; still page if Dynamo hits the 1MB page cap before Limit.
+    const items = await queryUpTo(
+      this.querySend,
+      {
         TableName: this.tableName,
         KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
         ExpressionAttributeValues: { ":pk": cust(customerId), ":sk": "AUDIT#" },
         ScanIndexForward: false,
-        Limit: 50,
-      }),
+      },
+      50,
     );
-    return (result.Items ?? []).map(asAudit);
+    return items.map(asAudit);
   }
 
   async getOverview(projectId: string): Promise<ProjectOverview | null> {
@@ -328,14 +463,12 @@ export class DynamoStore implements Store {
   }
 
   async listFolders(projectId: string): Promise<DocumentFolder[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "FOLDER#" },
-      }),
-    );
-    return (result.Items ?? []).map(asFolder);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "FOLDER#" },
+    });
+    return items.map(asFolder);
   }
 
   async putFolder(folder: DocumentFolder): Promise<void> {
@@ -357,14 +490,12 @@ export class DynamoStore implements Store {
   }
 
   async listDocuments(projectId: string): Promise<PortalDocument[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "DOC#" },
-      }),
-    );
-    return (result.Items ?? []).map(asDocument);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "DOC#" },
+    });
+    return items.map(asDocument);
   }
 
   async putVersion(version: DocumentVersion): Promise<void> {
@@ -384,14 +515,12 @@ export class DynamoStore implements Store {
   }
 
   async listVersions(documentId: string): Promise<DocumentVersion[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": doc(documentId), ":sk": "VER#" },
-      }),
-    );
-    return (result.Items ?? []).map(asVersion);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": doc(documentId), ":sk": "VER#" },
+    });
+    return items.map(asVersion);
   }
 
   async getSettings(projectId: string): Promise<ProjectSettings | null> {
@@ -409,15 +538,13 @@ export class DynamoStore implements Store {
   }
 
   async listSettings(): Promise<ProjectSettings[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: "gsi1",
-        KeyConditionExpression: "gsi1pk = :pk",
-        ExpressionAttributeValues: { ":pk": "SETTINGS" },
-      }),
-    );
-    return (result.Items ?? []).map(asSettings);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      IndexName: "gsi1",
+      KeyConditionExpression: "gsi1pk = :pk",
+      ExpressionAttributeValues: { ":pk": "SETTINGS" },
+    });
+    return items.map(asSettings);
   }
 
   async getIssue(projectId: string, issueId: string): Promise<PlanIssue | null> {
@@ -435,25 +562,21 @@ export class DynamoStore implements Store {
   }
 
   async listIssues(projectId: string): Promise<PlanIssue[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "ISSUE#" },
-      }),
-    );
-    return (result.Items ?? []).map(asIssue);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "ISSUE#" },
+    });
+    return items.map(asIssue);
   }
 
   async listMilestones(projectId: string): Promise<MilestoneRecord[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "MILESTONE#" },
-      }),
-    );
-    return (result.Items ?? []).map(asMilestone);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "MILESTONE#" },
+    });
+    return items.map(asMilestone);
   }
 
   async putMilestone(record: MilestoneRecord): Promise<void> {
@@ -466,34 +589,52 @@ export class DynamoStore implements Store {
   }
 
   async listBaselines(projectId: string): Promise<BaselineRecord[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "BASELINE#" },
-      }),
-    );
-    return (result.Items ?? []).map(asBaseline);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "BASELINE#" },
+    });
+    return items.map(asBaseline);
   }
 
-  async putBaseline(record: BaselineRecord): Promise<void> {
+  async allocateBaselineNumber(projectId: string): Promise<number> {
+    const result = await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: { pk: proj(projectId), sk: "BASELINE_SEQ" },
+        UpdateExpression: "ADD #n :one SET entity = :entity",
+        ExpressionAttributeNames: { "#n": "value" },
+        ExpressionAttributeValues: { ":one": 1, ":entity": "baselineSeq" },
+        ReturnValues: "UPDATED_NEW",
+      }),
+    );
+    return Number(result.Attributes?.value);
+  }
+
+  async putBaseline(record: BaselineRecord, options?: { requireState?: BaselineRecord["state"] }): Promise<void> {
     await this.doc.send(
       new PutCommand({
         TableName: this.tableName,
         Item: { pk: proj(record.projectId), sk: `BASELINE#${record.baselineId}`, entity: "baseline", ...record },
+        ...(options?.requireState
+          ? {
+              // Concurrent decide: only the writer that still sees "proposed" wins.
+              ConditionExpression: "attribute_exists(pk) AND #state = :required",
+              ExpressionAttributeNames: { "#state": "state" },
+              ExpressionAttributeValues: { ":required": options.requireState },
+            }
+          : {}),
       }),
     );
   }
 
   async listRisks(projectId: string): Promise<RiskRecord[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "RISK#" },
-      }),
-    );
-    return (result.Items ?? []).map(asRisk);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "RISK#" },
+    });
+    return items.map(asRisk);
   }
 
   async putRisk(record: RiskRecord): Promise<void> {
@@ -556,14 +697,12 @@ export class DynamoStore implements Store {
   }
 
   async listReports(projectId: string): Promise<StatusReport[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "RPT#" },
-      }),
-    );
-    return (result.Items ?? []).filter((item) => item.entity === "report").map(asReport);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "RPT#" },
+    });
+    return items.filter((item) => item.entity === "report").map(asReport);
   }
 
   async putReportVersion(version: ReportVersion): Promise<void> {
@@ -576,15 +715,13 @@ export class DynamoStore implements Store {
   }
 
   async listReportVersions(reportId: string): Promise<ReportVersion[]> {
-    const result = await this.doc.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
-        ExpressionAttributeValues: { ":pk": rpt(reportId), ":sk": "VER#" },
-        ScanIndexForward: false,
-      }),
-    );
-    return (result.Items ?? []).map(asReportVersion);
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": rpt(reportId), ":sk": "VER#" },
+      ScanIndexForward: false,
+    });
+    return items.map(asReportVersion);
   }
 
   async claimDelivery(deliveryId: string): Promise<boolean> {
@@ -598,7 +735,7 @@ export class DynamoStore implements Store {
       );
       return true;
     } catch (error) {
-      if (error && typeof error === "object" && "name" in error && error.name === "ConditionalCheckFailedException") return false;
+      if (isConditionalCheckFailed(error)) return false;
       throw error;
     }
   }
@@ -708,8 +845,13 @@ function asProject(item: Item): Project {
     projectId: String(item.projectId),
     customerId: String(item.customerId),
     name: String(item.name),
+    projectKey: normalizeProjectKey(item.projectKey),
     createdAt: String(item.createdAt),
   };
+}
+
+function projectKeyPk(projectKey: string): string {
+  return `PROJECTKEY#${projectKey}`;
 }
 function asMembership(item: Item): Membership {
   const savedProjects = item.projectIds;
@@ -839,12 +981,15 @@ function asSettings(item: Item): ProjectSettings {
 }
 
 function asIssue(item: Item): PlanIssue {
+  const keyNumber =
+    typeof item.keyNumber === "number" && Number.isInteger(item.keyNumber) && item.keyNumber >= 1 ? item.keyNumber : null;
   return {
     issueId: String(item.issueId),
     itemId: item.itemId == null ? null : String(item.itemId),
     projectId: String(item.projectId),
     customerId: String(item.customerId),
     number: item.number == null ? null : Number(item.number),
+    keyNumber,
     title: String(item.title),
     description: typeof item.description === "string" && item.description.trim() ? item.description : null,
     status: String(item.status ?? ""),

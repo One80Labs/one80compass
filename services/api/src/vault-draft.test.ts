@@ -6,6 +6,7 @@ import type { Store } from "./store";
 import { handleVaultDraft, type VaultDraftDeps } from "./vault-draft";
 
 const employeeClaims = { sub: "user-a", email: "ada@example.com", amr: '["authenticated"]' };
+const adminClaims = { sub: "admin-1", email: "nick@one80labs.com", "cognito:groups": "one80-admin", amr: '["authenticated","mfa"]' };
 
 function event(partial: {
   method: string;
@@ -149,7 +150,7 @@ describe("publish putReportText", () => {
 
     const store = {
       async getProject() {
-        return { projectId: "proj-1", customerId: "cust-1", name: "Bridge", createdAt: "2026-10-24T12:00:00.000Z" };
+        return { projectId: "proj-1", customerId: "cust-1", name: "Bridge", projectKey: "BRDG", createdAt: "2026-10-24T12:00:00.000Z" };
       },
       async listMembershipsForUser() {
         return [{ customerId: "cust-1", userId: "user-a", email: "ada@example.com", name: "", role: "contributor" as const, createdAt: "2026-10-24T12:00:00.000Z", projectIds: null }];
@@ -213,8 +214,12 @@ describe("publish putReportText", () => {
       createdAt: "2026-10-24T12:00:00.000Z",
     });
 
-    const published = await handler(
+    const blocked = await handler(
       event({ method: "POST", path: "/projects/proj-1/reports/r1/publish", claims: employeeClaims }),
+    );
+    expect(blocked.statusCode).toBe(403);
+    const published = await handler(
+      event({ method: "POST", path: "/projects/proj-1/reports/r1/publish", claims: adminClaims }),
     );
     expect(published.statusCode).toBe(200);
     const versionId = JSON.parse(published.body).version.versionId as string;

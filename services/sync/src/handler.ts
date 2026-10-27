@@ -10,13 +10,19 @@ import { githubFromEnv, type GitHubGateway } from "./github";
 
 const tableName = process.env.TABLE_NAME;
 const store = tableName ? new DynamoStore(DynamoDBDocumentClient.from(new DynamoDBClient({})), tableName) : null;
-const github = githubFromEnv(() => new Date());
+let githubGateway: Promise<GitHubGateway> | null = null;
+
+function loadGithub(): Promise<GitHubGateway> {
+  if (!githubGateway) githubGateway = githubFromEnv(() => new Date());
+  return githubGateway;
+}
 
 type SqsEvent = { Records: { body: string }[] };
 
 /** Queue consumer and scheduled reconciliation. */
 export async function handler(event: SqsEvent | { source?: string }): Promise<void> {
   if (!store) throw new Error("TABLE_NAME is required.");
+  const github = await loadGithub();
   if ("Records" in event) {
     for (const record of event.Records) {
       await processMessage(store, github, JSON.parse(record.body) as SyncMessage, new Date().toISOString());
@@ -36,7 +42,15 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
       const issues = await store.listIssues(settings.projectId);
       const next = applyGithubDelivery(issues, settings, message.eventName, message.payload, now);
       if (!next) continue;
-      for (const issue of next) await store.putIssue(issue);
+      for (const issue of next) {
+        const prior = issues.find((row) => row.issueId === issue.issueId);
+        let withKey = issue;
+        if (withKey.keyNumber == null && prior?.keyNumber != null) withKey = { ...withKey, keyNumber: prior.keyNumber };
+        else if (withKey.keyNumber == null && withKey.inProject && !withKey.archived && !withKey.deletedAt) {
+          withKey = { ...withKey, keyNumber: await store.allocateIssueKeyNumber(settings.projectId) };
+        }
+        await store.putIssue(withKey);
+      }
       await rollUpParents(store, gateway, settings, changedIssue(issues, next), now, message.deliveryId);
       await rollUpSchedules(store, gateway, settings, now);
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
@@ -260,14 +274,20 @@ async function rollUpParents(
   }
 }
 
-/** Writes a GitHub project read back without clearing Compass priority, labels, or relationships. */
+/** Writes a GitHub project read back without clearing Compass priority, labels, relationships, or keyNumber. */
 async function saveReconciledIssues(store: DynamoStore, projectId: string, incoming: PlanIssue[], now: string): Promise<void> {
   const previous = await store.listIssues(projectId);
   const stored = new Map(previous.map((issue) => [issue.issueId, issue]));
   const seen = new Set<string>();
   for (const issue of incoming) {
     seen.add(issue.issueId);
-    await store.putIssue(keepStoredPlanFields(issue, stored.get(issue.issueId)));
+    const kept = keepStoredPlanFields(issue, stored.get(issue.issueId));
+    // New rows (and older rows that never got a sequence) receive the next COMP-N number.
+    const withKey =
+      kept.keyNumber == null && kept.inProject && !kept.archived && !kept.deletedAt
+        ? { ...kept, keyNumber: await store.allocateIssueKeyNumber(projectId) }
+        : kept;
+    await store.putIssue(withKey);
   }
   for (const issue of previous) {
     if (!seen.has(issue.issueId) && issue.inProject) await store.putIssue({ ...issue, inProject: false, updatedAt: now });

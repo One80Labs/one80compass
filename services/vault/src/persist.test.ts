@@ -96,7 +96,7 @@ describe("vault persist", () => {
       relations: [],
       chunks: [
         {
-          id: "doc-1:ver-1:0",
+          id: "cust-1:prog-1:doc-1:ver-1:0",
           customerId: "cust-1",
           programId: "prog-1",
           sourceType: "compass",
@@ -106,7 +106,7 @@ describe("vault persist", () => {
           documentId: "doc-1",
           versionId: "ver-1",
           body: "hello",
-          embedding: [0.1, 0.2],
+          embedding: Array.from({ length: 1024 }, (_, i) => (i === 0 ? 0.1 : 0)),
         },
       ],
     };

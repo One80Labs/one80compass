@@ -19,6 +19,14 @@ export type GitHubGateway = {
   ): Promise<void>;
 };
 
+/** Project items are fetched 100 at a time; 100 pages caps reconcile at ~10k items. */
+export const PROJECT_ITEMS_PAGE_SIZE = 100;
+export const PROJECT_ITEMS_MAX_PAGES = 100;
+/** Nested issue connections; truncated pages fail reconcile instead of silent loss. */
+export const ISSUE_CONNECTION_PAGE_SIZE = 100;
+
+type PageInfo = { hasNextPage: boolean; endCursor?: string | null };
+
 type GraphItem = {
   id?: string;
   isArchived?: boolean;
@@ -32,8 +40,8 @@ type GraphItem = {
     milestone?: { id?: string; title?: string; dueOn?: string | null } | null;
     parent?: { id?: string } | null;
     issueType?: { name?: string } | null;
-    assignees?: { nodes?: ({ id?: string; login?: string; name?: string | null } | null)[] | null } | null;
-    blockedBy?: { nodes?: ({ id?: string } | null)[] | null } | null;
+    assignees?: { pageInfo?: PageInfo; nodes?: ({ id?: string; login?: string; name?: string | null } | null)[] | null } | null;
+    blockedBy?: { pageInfo?: PageInfo; nodes?: ({ id?: string } | null)[] | null } | null;
   } | null;
   fieldValues?: { nodes?: FieldValue[] };
 };
@@ -60,9 +68,11 @@ type GraphField = {
   configuration?: { iterations?: GraphIteration[]; completedIterations?: GraphIteration[] };
 };
 
+type ProjectItemsPage = { pageInfo: PageInfo; nodes: GraphItem[] };
+
 type ProjectBody = {
   id: string;
-  items: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: GraphItem[] };
+  items: ProjectItemsPage;
   fields: { nodes: GraphField[] };
 };
 
@@ -79,13 +89,11 @@ type ProjectLookup = {
 type ProjectScope = "organization" | "repository";
 
 type ProjectPage = {
-  node?: { items?: ProjectBody["items"] } | null;
+  node?: { items?: ProjectItemsPage } | null;
 };
 
-/** Reads App credentials from the environment. An empty key means sync is not configured. */
-export function githubFromEnv(now: () => Date): GitHubGateway {
-  const appId = process.env.GITHUB_APP_ID ?? "";
-  const privateKey = (process.env.GITHUB_APP_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
+/** Builds a gateway from explicit App credentials. An empty key means sync is not configured. */
+export function githubFromCredentials(appId: string, privateKey: string, now: () => Date): GitHubGateway {
   const configured = Boolean(appId && privateKey.includes("BEGIN"));
   return {
     configured,
@@ -100,16 +108,11 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
       const found = chooseProject(lookup);
       if (!found) throw new Error("The GitHub Project was not found for that owner and repository.");
       const project = found.project;
-      project.items.nodes = project.items.nodes ?? [];
-      let cursor = project.items.pageInfo.hasNextPage ? project.items.pageInfo.endCursor : null;
-      for (let page = 0; page < 9 && cursor; page += 1) {
+      project.items.nodes = await loadAllProjectItems(project.items, async (cursor) => {
         const data = await graphql<ProjectPage>(token, PROJECT_PAGE_QUERY, { id: project.id, cursor });
-        const items = data.node?.items;
-        if (!items) break;
-        project.items.nodes.push(...(items.nodes ?? []));
-        if (!items.pageInfo.hasNextPage) break;
-        cursor = items.pageInfo.endCursor;
-      }
+        return data.node?.items ?? null;
+      });
+      assertIssueConnectionsComplete(project.items.nodes);
       return readProject(settings, project, found.scope, now().toISOString(), assignableUsers(lookup));
     },
     async ensureDateFields(settings) {
@@ -229,6 +232,7 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
           projectId: settings.projectId,
           customerId: settings.customerId,
           number,
+          keyNumber: null,
           title: input.title,
           description: null,
           status: "",
@@ -263,6 +267,13 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
   };
 }
 
+/** Prefers Secrets Manager (`GITHUB_SECRET_ARN`); falls back to `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY`. */
+export async function githubFromEnv(now: () => Date): Promise<GitHubGateway> {
+  const { loadGithubSecret } = await import("../../api/src/github-secret");
+  const secret = await loadGithubSecret();
+  return githubFromCredentials(secret.appId, secret.privateKey, now);
+}
+
 function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string): PlanIssue {
   const values = item.fieldValues?.nodes ?? [];
   const status = values.find((value) => value.field?.name === settings.statusFieldName && typeof value.name === "string")?.name ?? "";
@@ -275,6 +286,7 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
     projectId: settings.projectId,
     customerId: settings.customerId,
     number: item.content?.number ?? null,
+    keyNumber: null,
     title: item.content?.title ?? "Untitled",
     description: item.content?.body?.trim() ? item.content.body : null,
     status,
@@ -334,14 +346,12 @@ function predecessorIds(item: GraphItem): string[] {
   return [...new Set(ids.map((node) => node?.id).filter((id): id is string => Boolean(id && id !== own)))];
 }
 
-const PROJECT_FIELDS = `
-  id
-  items(first:100,after:$cursor){
-    pageInfo{hasNextPage endCursor}
-    nodes{
+const ISSUE_CONTENT_FIELDS = `id number title body state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} assignees(first:${ISSUE_CONNECTION_PAGE_SIZE}){pageInfo{hasNextPage} nodes{id login name}} blockedBy(first:${ISSUE_CONNECTION_PAGE_SIZE}){pageInfo{hasNextPage} nodes{id}}`;
+
+const PROJECT_ITEM_NODES = `
       id
       isArchived
-      content{... on Issue{id number title body state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} assignees(first:20){nodes{id login name}} blockedBy(first:20){nodes{id}}}}
+      content{... on Issue{${ISSUE_CONTENT_FIELDS}}}
       fieldValues(first:40){nodes{
         ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
         ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
@@ -349,7 +359,13 @@ const PROJECT_FIELDS = `
         ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2FieldCommon{name}}}
         ... on ProjectV2ItemFieldIterationValue{iterationId title startDate duration field{... on ProjectV2FieldCommon{name}}}
       }}
-    }
+`;
+
+const PROJECT_FIELDS = `
+  id
+  items(first:${PROJECT_ITEMS_PAGE_SIZE},after:$cursor){
+    pageInfo{hasNextPage endCursor}
+    nodes{${PROJECT_ITEM_NODES}}
   }
   fields(first:50){nodes{
     ... on ProjectV2SingleSelectField{id name options{id name}}
@@ -373,24 +389,64 @@ const PROJECT_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:S
 const PROJECT_PAGE_QUERY = `query($id:ID!,$cursor:String){
   node(id:$id){
     ... on ProjectV2 {
-      items(first:100,after:$cursor){
+      items(first:${PROJECT_ITEMS_PAGE_SIZE},after:$cursor){
         pageInfo{hasNextPage endCursor}
-        nodes{
-          id
-          isArchived
-          content{... on Issue{id number title body state repository{nameWithOwner} milestone{id title dueOn} parent{id} issueType{name} assignees(first:20){nodes{id login name}} blockedBy(first:20){nodes{id}}}}
-          fieldValues(first:40){nodes{
-            ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{id name}}}
-            ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2Field{id name}}}
-            ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2Field{id name}}}
-            ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2FieldCommon{name}}}
-            ... on ProjectV2ItemFieldIterationValue{iterationId title startDate duration field{... on ProjectV2FieldCommon{name}}}
-          }}
-        }
+        nodes{${PROJECT_ITEM_NODES}}
       }
     }
   }
 }`;
+
+/**
+ * Walks project item pages until hasNextPage is false.
+ * Throws if the safety max is hit so reconcile never silently truncates.
+ */
+export async function loadAllProjectItems(
+  firstPage: ProjectItemsPage,
+  fetchPage: (cursor: string) => Promise<ProjectItemsPage | null | undefined>,
+  maxPages = PROJECT_ITEMS_MAX_PAGES,
+): Promise<GraphItem[]> {
+  const nodes = [...(firstPage.nodes ?? [])];
+  let pageCount = 1;
+  let hasNext = Boolean(firstPage.pageInfo.hasNextPage);
+  let cursor = firstPage.pageInfo.endCursor ?? null;
+
+  while (hasNext) {
+    if (pageCount >= maxPages) {
+      throw new Error(
+        `GitHub project reconcile exceeded ${maxPages} pages (~${maxPages * PROJECT_ITEMS_PAGE_SIZE} items). Refusing to truncate.`,
+      );
+    }
+    if (!cursor) throw new Error("GitHub project items reported hasNextPage without an endCursor.");
+    const items = await fetchPage(cursor);
+    if (!items) throw new Error("GitHub project items page was missing.");
+    nodes.push(...(items.nodes ?? []));
+    pageCount += 1;
+    hasNext = Boolean(items.pageInfo.hasNextPage);
+    cursor = items.pageInfo.endCursor ?? null;
+  }
+
+  return nodes;
+}
+
+/** Fails reconcile when assignees or blockedBy were truncated by the GraphQL page size. */
+export function assertIssueConnectionsComplete(items: GraphItem[]): void {
+  for (const item of items) {
+    const content = item.content;
+    if (!content) continue;
+    const label = content.number != null ? `#${content.number}` : content.id ?? item.id ?? "unknown";
+    if (content.assignees?.pageInfo?.hasNextPage) {
+      throw new Error(
+        `GitHub issue ${label} has more than ${ISSUE_CONNECTION_PAGE_SIZE} assignees; reconcile refuses incomplete data.`,
+      );
+    }
+    if (content.blockedBy?.pageInfo?.hasNextPage) {
+      throw new Error(
+        `GitHub issue ${label} has more than ${ISSUE_CONNECTION_PAGE_SIZE} blocked-by links; reconcile refuses incomplete data.`,
+      );
+    }
+  }
+}
 
 /** Prefers a repository project, then an organization project with the same number. */
 export function chooseProject(data: ProjectLookup): { project: ProjectBody; scope: ProjectScope } | null {

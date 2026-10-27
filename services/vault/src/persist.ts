@@ -1,6 +1,7 @@
 import type { AllowlistEntry } from "./allowlist";
 import type { IngestResult, VaultEntityRow, VaultRelationRow } from "./ingest";
 import type { VaultChunk } from "./types";
+import { EMBEDDING_DIMENSIONS } from "./types";
 import { createVaultDb, type VaultDb } from "./db";
 import type { SqlParameter } from "@aws-sdk/client-rds-data";
 
@@ -211,6 +212,9 @@ async function insertRelation(db: VaultDb, row: VaultRelationRow, transactionId:
 }
 
 async function insertChunk(db: VaultDb, chunk: VaultChunk, transactionId: string): Promise<void> {
+  if (chunk.embedding != null && chunk.embedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new Error(`Chunk embedding must be ${EMBEDDING_DIMENSIONS} floats (got ${chunk.embedding.length})`);
+  }
   const embedding =
     chunk.embedding && chunk.embedding.length > 0 ? `[${chunk.embedding.join(",")}]` : null;
   await db.execute(

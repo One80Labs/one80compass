@@ -46,6 +46,7 @@ describe("applyGithubDelivery", () => {
         projectId: "proj-1",
         customerId: "cust-1",
         number: 4,
+        keyNumber: null,
         title: "Old",
         status: "Todo",
         effort: 5,
@@ -193,6 +194,7 @@ describe("applyGithubDelivery", () => {
     expect(kept.priority).toBe("high");
     expect(kept.labels).toEqual(["bug"]);
     expect(kept.relationships).toEqual([{ id: "rel-1", kind: "blocked_by", otherIssueId: "I_9" }]);
+    expect(kept.keyNumber).toBe(stored.keyNumber);
     expect(kept.labels).not.toBe(stored.labels);
     expect(keepStoredPlanFields(incoming, undefined)).toEqual(incoming);
   });
@@ -205,6 +207,7 @@ function currentIssue(): PlanIssue {
     projectId: "proj-1",
     customerId: "cust-1",
     number: 4,
+    keyNumber: null,
     title: "Old",
     status: "Todo",
     effort: 5,

@@ -23,7 +23,7 @@ Routes for the first slice:
 - `POST /projects/{projectId}/documents/{documentId}/versions` and `.../complete`
 - `GET /projects/{projectId}/documents/{documentId}/download`
 - `POST /projects/{projectId}/documents/{documentId}/delete` and `.../restore`
-- `GET /customers/{customerId}/audit`
+- `GET /customers/{customerId}/audit` — members with customer access get event metadata with `before`/`after` redacted; platform admins get full payloads (same as `/admin/.../audit`)
 - `GET /projects/{projectId}/plan`
 - `PUT /projects/{projectId}/github` saves the owner, repository, project number, and the Workstream issue number. An empty Workstream number clears it.
 - `POST /projects/{projectId}/import-compass` copies the stored GitHub projection into Compass-owned issues and catalogs. Administrator only. The request reads DynamoDB and does not call GitHub. A project whose `recordSource` is already `compass` returns 409.
@@ -41,7 +41,7 @@ Routes for the first slice:
 - `GET` and `POST /projects/{projectId}/reports`
 - `POST /projects/{projectId}/reports/draft` builds a cited status draft from vault work items and filed chunks. Administrator only. The body needs `question`. The draft does not change plan issues. Requires `loadVaultChunks` on the handler deps.
 - `GET` and `PUT /projects/{projectId}/reports/{reportId}`
-- `POST /projects/{projectId}/reports/{reportId}/submit`, `/approve`, `/publish`, and `/revise`
+- `POST /projects/{projectId}/reports/{reportId}/submit` and `/revise` for project writers; `/approve` and `/publish` are platform-admin only
 - `PUT /projects/{projectId}/vault-allowlist` records or clears that project on the staff vault allowlist. Administrator only. The API invokes the vault Lambda; it does not hold the vault secret.
 - `POST /projects/{projectId}/vault-ingest` copies the allowlisted program and its filed documents into the vault. Administrator only. Plan and document text are read from DynamoDB and S3; rows are saved through the vault Lambda.
 

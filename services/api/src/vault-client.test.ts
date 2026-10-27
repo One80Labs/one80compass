@@ -19,7 +19,7 @@ describe("vault client wiring", () => {
     const deps = createVaultIngestDeps({
       store: {
         async getProject() {
-          return { projectId: "prog-1", customerId: "cust-1", name: "Demo" };
+          return { projectId: "prog-1", customerId: "cust-1", name: "Demo", projectKey: "DEMO" };
         },
         async listIssues() {
           return [

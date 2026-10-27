@@ -156,7 +156,8 @@ export function ingestProgram(input: IngestInput): IngestResult {
     for (const body of bodies) {
       chunks.push({
         ...identity(document.documentId),
-        id: `${document.documentId}:${versionId}:${index}`,
+        // Tenant-scoped PK: avoids cross-tenant collisions on shared document ids.
+        id: `${program.customerId}:${program.programId}:${document.documentId}:${versionId}:${index}`,
         sourceLabel: label,
         documentId: document.documentId,
         versionId,

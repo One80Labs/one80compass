@@ -77,6 +77,8 @@ type PlanIssue = {
   status: string;
   effort: number | null;
   number: number | null;
+  /** Per-project sequence for COMP-N keys. Null until allocated. */
+  keyNumber?: number | null;
   parentIssueId: string | null;
   issueType: string | null;
   startDate: string | null;
@@ -138,6 +140,8 @@ type PlanResponse = {
     priorityOptions?: { id: string; name: string }[];
     milestones?: { id: string; title: string; dueOn: string | null }[];
   } | null;
+  /** Project key prefix for action-item labels (COMP-1). Null until set in Settings. */
+  projectKey?: string | null;
   sync: { status: string; detail: string | null };
   issues: PlanIssue[];
   progress: { label: string; defaultedIssueIds: string[] };
@@ -147,6 +151,11 @@ type PlanResponse = {
   risks?: RiskRegisterRow[];
   members?: { id: string; login: string; name: string | null }[];
 };
+
+function actionItemKey(projectKey: string | null | undefined, keyNumber: number | null | undefined): string | null {
+  if (!projectKey || keyNumber == null || !Number.isInteger(keyNumber) || keyNumber < 1) return null;
+  return `${projectKey}-${keyNumber}`;
+}
 
 const defaultColumns = ["Todo", "In Progress", "Done"];
 
@@ -311,6 +320,7 @@ export function PlanPage({ session }: { session: Session | null }) {
           key={editing.issueId}
           issue={editing}
           issues={issues}
+          displayKey={actionItemKey(plan.data.projectKey, editing.keyNumber)}
           catalogs={{
             statusOptions: plan.data.settings.statusOptions ?? [],
             labels: plan.data.settings.labels ?? [],
@@ -337,6 +347,7 @@ export function PlanPage({ session }: { session: Session | null }) {
         <IssueDrawer
           key={editing.issueId}
           issue={editing}
+          displayKey={actionItemKey(plan.data?.projectKey, editing.keyNumber)}
           columns={columns}
           iterations={plan.data?.settings?.iterations ?? []}
           users={plan.data?.settings?.assignableUsers ?? []}
@@ -620,6 +631,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
           key={editing.issueId}
           issue={editing}
           issues={allIssues}
+          displayKey={actionItemKey(plan.data.projectKey, editing.keyNumber)}
           catalogs={{
             statusOptions: plan.data.settings.statusOptions ?? [],
             labels: plan.data.settings.labels ?? [],
@@ -646,6 +658,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
         <IssueDrawer
           key={editing.issueId}
           issue={editing}
+          displayKey={actionItemKey(plan.data?.projectKey, editing.keyNumber)}
           columns={columns}
           iterations={plan.data?.settings?.iterations ?? []}
           users={plan.data?.settings?.assignableUsers ?? []}
@@ -693,6 +706,7 @@ function PlanStatus({ plan, session, canWrite }: { plan: ReturnType<typeof usePl
 
 function IssueDrawer({
   issue,
+  displayKey,
   columns,
   iterations,
   users,
@@ -704,6 +718,7 @@ function IssueDrawer({
   onSave,
 }: {
   issue: PlanIssue;
+  displayKey: string | null;
   columns: string[];
   iterations: IterationChoice[];
   users: GitHubUser[];
@@ -783,6 +798,11 @@ function IssueDrawer({
 
   return (
     <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
+      {displayKey && (
+        <p className="muted small">
+          Key <strong>{displayKey}</strong>
+        </p>
+      )}
       <p>
         Title, description, status, effort, iteration, assignee, and comments are sent to GitHub.
         {datesDerived

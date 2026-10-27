@@ -19,6 +19,7 @@ import { projectProgress } from "../../../packages/domain/src/progress";
 import { mergeRiskRegister, riskSeverityFromStore, type RiskRecord } from "../../../packages/domain/src/risks";
 import { importCompass } from "../../sync/src/import-compass";
 import type { HandlerDeps, HttpResult } from "./router";
+import { isConditionalCheckFailed } from "./store";
 
 type PlanCtx = {
   deps: HandlerDeps;
@@ -94,7 +95,22 @@ async function getPlan(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
       })),
     ),
   ).map((row) => ({ ...row, projectId: row.projectId || projectId, customerId: row.customerId || project.customerId }));
-  return json(200, { settings, sync: await visibleSync(ctx, projectId, project.customerId, settings), issues, progress, override, milestones, baselines, risks, members }, ctx.correlationId);
+  return json(
+    200,
+    {
+      settings,
+      projectKey: project.projectKey,
+      sync: await visibleSync(ctx, projectId, project.customerId, settings),
+      issues,
+      progress,
+      override,
+      milestones,
+      baselines,
+      risks,
+      members,
+    },
+    ctx.correlationId,
+  );
 }
 
 async function compassMembers(ctx: PlanCtx, customerId: string, projectId: string) {
@@ -407,6 +423,9 @@ async function createPlanItem(ctx: PlanCtx, projectId: string): Promise<HttpResu
     change.comments = tracedComment(null, await actorLabel(ctx, project.customerId), ctx.deps.now().toISOString().slice(0, 10), change.comment);
     delete change.comment;
   }
+  if (!project.projectKey) {
+    return json(409, { code: "PROJECT_KEY_REQUIRED", message: "Set a project key in Settings → General before adding plan items.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
   if (settings.recordSource === "compass") return createCompassPlanItem(ctx, project.customerId, settings, issues, kind, title, parent ?? null, change, compassExtra.value);
   if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
   const idempotencyKey = ctx.deps.newId();
@@ -556,14 +575,20 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
       if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
       const idempotencyKey = typeof ctx.body.idempotencyKey === "string" && ctx.body.idempotencyKey.trim() ? ctx.body.idempotencyKey.trim() : ctx.deps.newId();
       await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Sending the schedule to GitHub.", ctx.deps.now().toISOString()));
+      const scheduleChanges = [
+        { issueId, ...change },
+        ...proposals.map((proposal) => ({ issueId: proposal.issueId, startDate: proposal.toStart, finishDate: proposal.toFinish })),
+      ];
       await ctx.deps.enqueue({
         type: "update-schedule",
         projectId,
         idempotencyKey,
-        changes: [
-          { issueId, ...change },
-          ...proposals.map((proposal) => ({ issueId: proposal.issueId, startDate: proposal.toStart, finishDate: proposal.toFinish })),
-        ],
+        changes: scheduleChanges,
+      });
+      await auditPlanItem(ctx, project.customerId, projectId, "plan.item_updated", issueId, auditIssueSnapshot(issue), {
+        requested: change,
+        proposals,
+        idempotencyKey,
       });
       return json(202, { accepted: true, idempotencyKey }, ctx.correlationId);
     }
@@ -574,6 +599,7 @@ async function updateIssue(ctx: PlanCtx, projectId: string, issueId: string): Pr
   await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Sending the change to GitHub.", ctx.deps.now().toISOString()));
   const message: SyncMessage = { type: "update-issue", projectId, issueId, idempotencyKey, ...change };
   await ctx.deps.enqueue(message);
+  await auditPlanItem(ctx, project.customerId, projectId, "plan.item_updated", issueId, auditIssueSnapshot(issue), { requested: change, idempotencyKey });
   return json(202, { accepted: true, idempotencyKey }, ctx.correlationId);
 }
 
@@ -597,12 +623,18 @@ async function setPredecessor(ctx: PlanCtx, projectId: string, issueId: string, 
   if (dependencySettings?.recordSource === "compass") {
     const predecessorIds = action === "add" ? [...issue.predecessorIds, predecessorId] : issue.predecessorIds.filter((id) => id !== predecessorId);
     await ctx.deps.store.putIssue({ ...issue, predecessorIds, updatedAt: ctx.deps.now().toISOString() });
+    await auditPlanItem(ctx, project.customerId, projectId, "plan.item_updated", issueId, { predecessorIds: issue.predecessorIds }, { predecessorIds, action, predecessorId });
     return json(200, { predecessorIds }, ctx.correlationId);
   }
   if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
   const idempotencyKey = typeof ctx.body.idempotencyKey === "string" && ctx.body.idempotencyKey.trim() ? ctx.body.idempotencyKey.trim() : ctx.deps.newId();
   await ctx.deps.store.putSync(syncRow(projectId, project.customerId, "pending", "Sending the dependency to GitHub.", ctx.deps.now().toISOString()));
   await ctx.deps.enqueue({ type: "set-dependency", projectId, issueId, predecessorId, action, idempotencyKey });
+  await auditPlanItem(ctx, project.customerId, projectId, "plan.item_updated", issueId, { predecessorIds: issue.predecessorIds }, {
+    action,
+    predecessorId,
+    idempotencyKey,
+  });
   return json(202, { accepted: true, idempotencyKey }, ctx.correlationId);
 }
 
@@ -621,8 +653,9 @@ async function createBaseline(ctx: PlanCtx, projectId: string): Promise<HttpResu
     if (adminAccess(ctx.principal) !== "ok") {
       return json(403, { code: "FORBIDDEN", message: "An administrator sets Baseline 1.", correlationId: ctx.correlationId }, ctx.correlationId);
     }
+    const number = await ctx.deps.store.allocateBaselineNumber(projectId);
     const baseline = baselineRecord(ctx, project.projectId, project.customerId, explanation, tasks, now, {
-      number: 1,
+      number,
       state: "approved",
       decidedAt: now,
       decidedBy: ctx.principal.userId,
@@ -660,8 +693,8 @@ async function decideBaseline(ctx: PlanCtx, projectId: string, baselineId: strin
   if (state === "rejected" && !rejection) {
     return json(400, { code: "VALIDATION", message: "An explanation is required to reject a baseline.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
-  const approved = (await ctx.deps.store.listBaselines(projectId)).filter((record) => record.state === "approved");
-  const number = state === "approved" ? Math.max(0, ...approved.map((record) => record.number ?? 0)) + 1 : null;
+  // Allocate before the conditional put so concurrent approvers never share a number.
+  const number = state === "approved" ? await ctx.deps.store.allocateBaselineNumber(projectId) : null;
   const now = ctx.deps.now().toISOString();
   const baseline: BaselineRecord = {
     ...existing,
@@ -671,7 +704,14 @@ async function decideBaseline(ctx: PlanCtx, projectId: string, baselineId: strin
     decidedAt: now,
     decidedBy: ctx.principal.userId,
   };
-  await ctx.deps.store.putBaseline(baseline);
+  try {
+    await ctx.deps.store.putBaseline(baseline, { requireState: "proposed" });
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) {
+      return json(409, { code: "BASELINE_DECIDED", message: "This baseline proposal is already decided.", correlationId: ctx.correlationId }, ctx.correlationId);
+    }
+    throw error;
+  }
   await auditBaseline(ctx, project.customerId, projectId, state === "approved" ? "baseline.approved" : "baseline.rejected", baselineId, existing, baseline);
   return json(200, { baseline }, ctx.correlationId);
 }
@@ -835,6 +875,23 @@ function note(value: unknown): string | null {
   return trimmed;
 }
 
+/** Append-only plan change: who, when, issue id, and prior/new state (or requested patch). */
+async function auditPlanItem(ctx: PlanCtx, customerId: string, projectId: string, action: string, issueId: string, before: unknown, after: unknown): Promise<void> {
+  await ctx.deps.store.putAudit({
+    eventId: ctx.deps.newId(),
+    customerId,
+    projectId,
+    actorUserId: ctx.principal.userId,
+    action,
+    targetType: "issue",
+    targetId: issueId,
+    before,
+    after,
+    at: ctx.deps.now().toISOString(),
+    correlationId: ctx.correlationId,
+  });
+}
+
 async function auditBaseline(ctx: PlanCtx, customerId: string, projectId: string, action: string, baselineId: string, before: BaselineRecord | null, after: BaselineRecord) {
   await ctx.deps.store.putAudit({
     eventId: ctx.deps.newId(),
@@ -942,6 +999,7 @@ async function createCompassPlanItem(
 ): Promise<HttpResult> {
   const now = ctx.deps.now().toISOString();
   const parentIssueId = kind === "epic" || (kind === "issue" && !parent) ? workstreamParentId(issues, settings.workstreamNumber) : parent?.issueId ?? null;
+  const keyNumber = await ctx.deps.store.allocateIssueKeyNumber(settings.projectId);
   const created = applyLocalIssue(
     {
       issueId: ctx.deps.newId(),
@@ -949,6 +1007,7 @@ async function createCompassPlanItem(
       projectId: settings.projectId,
       customerId,
       number: null,
+      keyNumber,
       title,
       description: null,
       status: "",
@@ -1022,12 +1081,41 @@ async function saveCompassIssue(
     });
   }
   await ctx.deps.store.putIssue(next);
+  await auditPlanItem(ctx, settings.customerId, settings.projectId, "plan.item_updated", issue.issueId, auditIssueSnapshot(issue), auditIssueSnapshot(next));
   for (const proposal of proposals) {
     const later = issues.find((item) => item.issueId === proposal.issueId);
     if (!later || later.issueId === issue.issueId) continue;
-    await ctx.deps.store.putIssue({ ...later, startDate: proposal.toStart, finishDate: proposal.toFinish, updatedAt: now });
+    const shifted = { ...later, startDate: proposal.toStart, finishDate: proposal.toFinish, updatedAt: now };
+    await ctx.deps.store.putIssue(shifted);
+    await auditPlanItem(ctx, settings.customerId, settings.projectId, "plan.item_updated", later.issueId, auditIssueSnapshot(later), {
+      ...auditIssueSnapshot(shifted),
+      shiftedByIssueId: issue.issueId,
+    });
   }
   return json(200, { issue: next }, ctx.correlationId);
+}
+
+/** Compact plan fields for audit before/after (avoids dumping every GitHub projection field). */
+function auditIssueSnapshot(issue: PlanIssue): Record<string, unknown> {
+  return {
+    title: issue.title,
+    description: issue.description,
+    status: issue.status,
+    effort: issue.effort,
+    parentIssueId: issue.parentIssueId,
+    issueType: issue.issueType,
+    startDate: issue.startDate,
+    finishDate: issue.finishDate,
+    iterationId: issue.iterationId,
+    assignees: issue.assignees,
+    comments: issue.comments,
+    priority: issue.priority,
+    labels: issue.labels,
+    relationships: issue.relationships,
+    predecessorIds: issue.predecessorIds,
+    milestone: issue.milestone,
+    planOrder: issue.planOrder,
+  };
 }
 
 function applyLocalIssue(issue: PlanIssue, change: IssueChange, settings: ProjectSettings, extra: CompassPatch & { parentIssueId?: string | null }, now: string): PlanIssue {

@@ -12,12 +12,14 @@ import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as kms from "aws-cdk-lib/aws-kms";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as sqs from "aws-cdk-lib/aws-sqs";
@@ -32,6 +34,29 @@ const SITE_DOMAIN = "one80compass.ai";
 const SITE_CERTIFICATE_ARN = "arn:aws:acm:us-east-1:168034219908:certificate/c630a40c-640f-43ec-898f-11aec9c02ece";
 const SITE_HOSTED_ZONE_ID = "Z0060300L4EB8CFDVZ1D";
 
+function resolveBrowserOrigins(stack: cdk.Stack, cloudFrontDomainName: string): string[] {
+  const fromEnv = (process.env.BROWSER_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (fromEnv.length > 0) return fromEnv;
+
+  const contextFlag = stack.node.tryGetContext("prodOriginsOnly");
+  const prodOriginsOnly =
+    contextFlag === true || contextFlag === "true" || process.env.PROD_ORIGINS_ONLY === "true";
+  if (prodOriginsOnly) {
+    // Prod path: no localhost; www is already on the live distribution.
+    return [`https://${SITE_DOMAIN}`, `https://www.${SITE_DOMAIN}`];
+  }
+  return [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    `https://${cloudFrontDomainName}`,
+    `https://${SITE_DOMAIN}`,
+    `https://www.${SITE_DOMAIN}`,
+  ];
+}
+
 export class DevStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: cdk.StackProps) {
     super(scope, id, props);
@@ -40,11 +65,12 @@ export class DevStack extends cdk.Stack {
       userPoolName: "one80compass-dev",
       selfSignUpEnabled: false,
       signInAliases: { email: true },
-      // WARNING: this stack currently fronts one80compass.ai. Password-only admin
-      // sign-in is a production risk. Move the live site to a stage/prod stack with
-      // cognito.Mfa.REQUIRED + software token before a pilot, and keep MFA off only
-      // on an isolated sandbox without production DNS.
-      mfa: cognito.Mfa.OFF,
+      // WARNING: this shared stack fronts one80compass.ai. Mfa.REQUIRED would lock out
+      // existing users who have not enrolled TOTP (app login does not yet handle MFA_SETUP).
+      // OPTIONAL enables software-token MFA without forcing cutover. Dedicated stage/prod
+      // pools MUST use cognito.Mfa.REQUIRED + otp before a pilot.
+      mfa: cognito.Mfa.OPTIONAL,
+      mfaSecondFactor: { otp: true, sms: false },
       passwordPolicy: {
         minLength: 12,
         requireLowercase: true,
@@ -54,7 +80,8 @@ export class DevStack extends cdk.Stack {
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       standardAttributes: { email: { required: true, mutable: true } },
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      // Retain the pool: live DNS identity must survive stack teardown mistakes.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
     const client = pool.addClient("Web", {
@@ -124,7 +151,9 @@ export class DevStack extends cdk.Stack {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      // Plan + customer data: retain on stack delete; PITR for accidental writes/deletes.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
     });
     table.addGlobalSecondaryIndex({
       indexName: "gsi1",
@@ -133,6 +162,7 @@ export class DevStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    // Static SPA assets only — safe to destroy/rebuild on redeploy.
     const web = new s3.Bucket(this, "Web", {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -155,21 +185,16 @@ export class DevStack extends cdk.Stack {
         { httpStatus: 404, responseHttpStatus: 200, responsePagePath: "/index.html", ttl: cdk.Duration.seconds(0) },
       ],
     });
-    const browserOrigins = [
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-      `https://${site.distributionDomainName}`,
-      `https://${SITE_DOMAIN}`,
-      `https://www.${SITE_DOMAIN}`,
-    ];
+    const browserOrigins = resolveBrowserOrigins(this, site.distributionDomainName);
 
     const documents = new s3.Bucket(this, "Documents", {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
       versioned: true,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: true,
+      // Customer uploads: retain; never auto-empty on stack delete.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
       cors: [
         {
           allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.GET, s3.HttpMethods.HEAD],
@@ -183,17 +208,58 @@ export class DevStack extends cdk.Stack {
     const deadLetters = new sqs.Queue(this, "SyncDeadLetters", {
       queueName: "one80compass-dev-sync-dlq",
       retentionPeriod: cdk.Duration.days(14),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
     });
     const syncQueue = new sqs.Queue(this, "SyncQueue", {
       queueName: "one80compass-dev-sync",
       visibilityTimeout: cdk.Duration.seconds(60),
       deadLetterQueue: { queue: deadLetters, maxReceiveCount: 5 },
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
     });
 
     const githubAppId = process.env.GITHUB_APP_ID ?? "";
-    const githubPrivateKey = process.env.GITHUB_APP_PRIVATE_KEY ?? "";
+    const githubPrivateKey = (process.env.GITHUB_APP_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
     const githubWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET ?? "";
     const githubConfigured = Boolean(githubAppId && githubPrivateKey && githubWebhookSecret);
+
+    // JSON keys: appId, privateKey, webhookSecret. Shell is CFN-managed; seed once from deploy env
+    // when present (custom resource onCreate only — later deploys without env do not wipe). Prefer
+    // GITHUB_SECRET_ARN in Lambdas; plaintext env remains a bootstrap fallback. Rotate any key that
+    // was ever in Lambda env or a synth/CFN artifact; prefer CLI put-secret-value after bootstrap.
+    const githubSecret = new secretsmanager.Secret(this, "GithubApp", {
+      secretName: "one80compass-dev-github",
+      description: "GitHub App credentials for plan sync (appId, privateKey, webhookSecret)",
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ appId: "", privateKey: "", webhookSecret: "" }),
+        generateStringKey: "_cdkPlaceholder",
+        excludePunctuation: true,
+      },
+    });
+    if (githubConfigured) {
+      new cr.AwsCustomResource(this, "SeedGithubSecret", {
+        onCreate: {
+          service: "SecretsManager",
+          action: "putSecretValue",
+          parameters: {
+            SecretId: githubSecret.secretArn,
+            SecretString: JSON.stringify({
+              appId: githubAppId,
+              privateKey: githubPrivateKey,
+              webhookSecret: githubWebhookSecret,
+            }),
+          },
+          physicalResourceId: cr.PhysicalResourceId.of("one80compass-dev-github-seed"),
+        },
+        policy: cr.AwsCustomResourcePolicy.fromStatements([
+          new iam.PolicyStatement({
+            actions: ["secretsmanager:PutSecretValue"],
+            resources: [githubSecret.secretArn],
+          }),
+        ]),
+        installLatestAwsSdk: false,
+      });
+    }
 
     const apiFunction = new nodejs.NodejsFunction(this, "Api", {
       functionName: "one80compass-dev-api",
@@ -208,8 +274,9 @@ export class DevStack extends cdk.Stack {
         BUCKET_NAME: documents.bucketName,
         MAX_UPLOAD_BYTES: String(25 * 1024 * 1024),
         SYNC_QUEUE_URL: syncQueue.queueUrl,
-        // API verifies webhooks and reports sync status; the private key stays on the sync Lambda only.
+        // API verifies webhooks only — never the App PEM. Prefer secret ARN; env is fallback.
         GITHUB_CONFIGURED: githubConfigured ? "true" : "",
+        GITHUB_SECRET_ARN: githubSecret.secretArn,
         GITHUB_WEBHOOK_SECRET: githubWebhookSecret,
       },
       bundling: { sourceMap: true, minify: true },
@@ -218,6 +285,7 @@ export class DevStack extends cdk.Stack {
     documents.grantPut(apiFunction);
     documents.grantRead(apiFunction);
     syncQueue.grantSendMessages(apiFunction);
+    githubSecret.grantRead(apiFunction);
     apiFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: [
@@ -253,13 +321,15 @@ export class DevStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
       environment: {
         TABLE_NAME: table.tableName,
-        // Prefer Secrets Manager for the PEM in stage/prod; env is a temporary bootstrap path.
         GITHUB_APP_ID: githubAppId,
+        GITHUB_SECRET_ARN: githubSecret.secretArn,
+        // Fallback until sync reads Secrets Manager via GITHUB_SECRET_ARN (see services/sync).
         GITHUB_APP_PRIVATE_KEY: githubPrivateKey,
       },
       bundling: { sourceMap: true, minify: true },
     });
     table.grantReadWriteData(syncFunction);
+    githubSecret.grantRead(syncFunction);
     syncFunction.addEventSource(new sources.SqsEventSource(syncQueue, { batchSize: 1 }));
     new events.Rule(this, "Reconcile", {
       schedule: events.Schedule.rate(cdk.Duration.minutes(15)),
@@ -285,7 +355,11 @@ export class DevStack extends cdk.Stack {
       authorizer,
     });
 
-    const alerts = new sns.Topic(this, "Alerts", { topicName: "one80compass-dev-alerts" });
+    const alerts = new sns.Topic(this, "Alerts", {
+      topicName: "one80compass-dev-alerts",
+      // AWS-managed SNS CMK (SSE); email delivery works with alias/aws/sns.
+      masterKey: kms.Alias.fromAliasName(this, "AlertsKey", "alias/aws/sns"),
+    });
     alerts.addSubscription(new subscriptions.EmailSubscription(ADMIN_EMAIL));
     const notify = new cw_actions.SnsAction(alerts);
     for (const [id, metric, name] of [
@@ -334,5 +408,6 @@ export class DevStack extends cdk.Stack {
     new cdk.CfnOutput(this, "UserPoolClientId", { value: client.userPoolClientId });
     new cdk.CfnOutput(this, "ApiUrl", { value: httpApi.apiEndpoint });
     new cdk.CfnOutput(this, "WebhookUrl", { value: `${httpApi.apiEndpoint}/webhooks/github` });
+    new cdk.CfnOutput(this, "GithubSecretArn", { value: githubSecret.secretArn });
   }
 }

@@ -46,6 +46,9 @@ function memoryStore(): Store & {
   const reportVersions: ReportVersion[] = [];
   const milestones: MilestoneRecord[] = [];
   const baselines: BaselineRecord[] = [];
+  const baselineSeq = new Map<string, number>();
+  const issueKeySeq = new Map<string, number>();
+  const projectKeys = new Map<string, string>();
   const risks: RiskRecord[] = [];
   return {
     customers,
@@ -75,6 +78,20 @@ function memoryStore(): Store & {
     },
     async listProjects(customerId) {
       return projects.filter((project) => project.customerId === customerId);
+    },
+    async claimProjectKey(projectKey, projectId, _customerId) {
+      const owner = projectKeys.get(projectKey);
+      if (owner && owner !== projectId) return false;
+      projectKeys.set(projectKey, projectId);
+      return true;
+    },
+    async releaseProjectKey(projectKey, projectId) {
+      if (projectKeys.get(projectKey) === projectId) projectKeys.delete(projectKey);
+    },
+    async allocateIssueKeyNumber(projectId) {
+      const next = (issueKeySeq.get(projectId) ?? 0) + 1;
+      issueKeySeq.set(projectId, next);
+      return next;
     },
     async putMembership(membership) {
       const index = memberships.findIndex((row) => row.customerId === membership.customerId && row.userId === membership.userId);
@@ -222,8 +239,20 @@ function memoryStore(): Store & {
     async listBaselines(projectId) {
       return baselines.filter((record) => record.projectId === projectId);
     },
-    async putBaseline(record) {
+    async allocateBaselineNumber(projectId) {
+      const next = (baselineSeq.get(projectId) ?? 0) + 1;
+      baselineSeq.set(projectId, next);
+      return next;
+    },
+    async putBaseline(record, options) {
       const index = baselines.findIndex((item) => item.baselineId === record.baselineId);
+      if (options?.requireState) {
+        if (index < 0 || baselines[index].state !== options.requireState) {
+          const error = new Error("The conditional request failed");
+          error.name = "ConditionalCheckFailedException";
+          throw error;
+        }
+      }
       if (index >= 0) baselines[index] = record;
       else baselines.push(record);
     },
@@ -356,12 +385,13 @@ describe("api router", () => {
         method: "POST",
         path: `/admin/customers/${customerId}/projects`,
         claims: adminClaims,
-        body: { name: "Bridge", customerId: "someone-else" },
+        body: { name: "Bridge", projectKey: "BRDG", customerId: "someone-else" },
       }),
     );
     expect(projectResponse.statusCode).toBe(201);
     const project = JSON.parse(projectResponse.body);
     expect(project.customerId).toBe(customerId);
+    expect(project.projectKey).toBe("BRDG");
 
     const invite = await handler(
       event({
@@ -423,11 +453,11 @@ describe("api router", () => {
     const handler = handlerFor(store);
     await handler(event({ method: "POST", path: "/admin/customers", claims: adminClaims, body: { name: "Acme" } }));
     const customerId = store.customers[0].customerId;
-    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge" } }));
+    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge", projectKey: "BRDG" } }));
     const projectId = store.projects[0].projectId;
 
     const refused = await handler(
-      event({ method: "PATCH", path: `/admin/projects/${projectId}`, claims: employeeClaims, body: { name: "Harbor" } }),
+      event({ method: "PATCH", path: `/admin/projects/${projectId}`, claims: employeeClaims, body: { name: "Harbor", projectKey: "HARB" } }),
     );
     expect(refused.statusCode).toBe(403);
 
@@ -451,7 +481,7 @@ describe("api router", () => {
     const handler = handlerFor(store);
     await handler(event({ method: "POST", path: "/admin/customers", claims: adminClaims, body: { name: "Acme" } }));
     const customerId = store.customers[0].customerId;
-    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge" } }));
+    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge", projectKey: "BRDG" } }));
     const projectId = store.projects[0].projectId;
 
     const response = await handler(event({ method: "GET", path: `/projects/${projectId}`, claims: employeeClaims }));
@@ -495,6 +525,7 @@ describe("api router", () => {
       projectId,
       customerId: store.projects[0].customerId,
       number: 2,
+      keyNumber: null,
       title: "Deck",
       status: "Todo",
       effort: 1,
@@ -669,8 +700,8 @@ describe("api router", () => {
     });
     await handler(event({ method: "POST", path: "/admin/customers", claims: adminClaims, body: { name: "Acme" } }));
     const customerId = store.customers[0].customerId;
-    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge" } }));
-    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Harbor" } }));
+    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge", projectKey: "BRDG" } }));
+    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Harbor", projectKey: "HARB" } }));
     await handler(event({ method: "POST", path: `/admin/customers/${customerId}/invitations`, claims: adminClaims, body: { email: "ada@example.com" } }));
     const bridge = store.projects[0].projectId;
     const harbor = store.projects[1].projectId;
@@ -782,7 +813,7 @@ describe("api router", () => {
 async function seedProject(handler: (event: HttpEvent) => Promise<{ statusCode: number; body: string }>, store: ReturnType<typeof memoryStore>) {
   await handler(event({ method: "POST", path: "/admin/customers", claims: adminClaims, body: { name: "Acme" } }));
   const customerId = store.customers[0].customerId;
-  await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge" } }));
+  await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge", projectKey: "BRDG" } }));
   store.memberships.push({
     customerId,
     userId: "user-a",
@@ -806,6 +837,7 @@ describe("plan and webhooks", () => {
       projectId,
       customerId: store.projects[0].customerId,
       number: 1,
+      keyNumber: null,
       title: "Pour footing",
       status: "Done",
       effort: 1,
@@ -860,6 +892,7 @@ describe("plan and webhooks", () => {
       itemId: null,
       projectId,
       customerId,
+      keyNumber: null as number | null,
       effort: 1,
       issueState: "open" as const,
       archived: false,
@@ -911,6 +944,7 @@ describe("plan and webhooks", () => {
       projectId,
       customerId: store.projects[0].customerId,
       number: 4,
+      keyNumber: null,
       title: "Deck",
       status: "Ready",
       effort: 1,
@@ -995,6 +1029,7 @@ describe("plan and webhooks", () => {
       projectId,
       customerId,
       number: 11,
+      keyNumber: null,
       title: "Billing",
       status: "Ready",
       effort: null,
@@ -1081,6 +1116,7 @@ describe("plan and webhooks", () => {
       itemId: null,
       projectId,
       customerId,
+      keyNumber: null as number | null,
       effort: 1,
       issueState: "open" as const,
       archived: false,
@@ -1147,6 +1183,7 @@ describe("plan and webhooks", () => {
       projectId,
       customerId,
       number: 3,
+      keyNumber: null,
       title: "Deck",
       status: "Ready",
       effort: 1,
@@ -1209,6 +1246,7 @@ describe("plan and webhooks", () => {
       projectId,
       customerId,
       number: 1,
+      keyNumber: null,
       title: "Deck",
       status: "Ready",
       effort: 1,
@@ -1279,6 +1317,7 @@ describe("plan and webhooks", () => {
       itemId: null,
       projectId,
       customerId,
+      keyNumber: null as number | null,
       description: null as string | null,
       effort: 1,
       issueState: "open" as const,
@@ -1351,6 +1390,7 @@ describe("plan and webhooks", () => {
       itemId: null,
       projectId,
       customerId,
+      keyNumber: null as number | null,
       effort: 1,
       issueState: "open" as const,
       archived: false,
@@ -1439,6 +1479,7 @@ describe("plan and webhooks", () => {
       itemId: null,
       projectId,
       customerId,
+      keyNumber: null,
       status: "Ready",
       effort: 1,
       issueState: "open",
@@ -1493,6 +1534,7 @@ describe("plan and webhooks", () => {
     });
     expect(saved?.comments).toContain("Shifted the pour.");
     expect(queued).toHaveLength(0);
+    expect(store.audits.some((row) => row.action === "plan.item_updated" && row.targetId === "A" && (row.after as { title?: string }).title === "Deck boards")).toBe(true);
     const blocked = await handler(event({ method: "PATCH", path: `/projects/${projectId}/issues/A`, claims: employeeClaims, body: { status: "Done" } }));
     expect(blocked.statusCode).toBe(409);
     expect(JSON.parse(blocked.body).code).toBe("PARENT_INCOMPLETE");
@@ -1510,6 +1552,7 @@ describe("plan and webhooks", () => {
     expect(approved.statusCode).toBe(200);
     expect(store.issues.find((item) => item.issueId === "A")?.finishDate).toBe("2026-10-10");
     expect(store.issues.find((item) => item.issueId === "B")).toMatchObject({ startDate: "2026-10-11", finishDate: "2026-10-13" });
+    expect(store.audits.some((row) => row.action === "plan.item_updated" && row.targetId === "B" && (row.after as { shiftedByIssueId?: string }).shiftedByIssueId === "A")).toBe(true);
     const loop = await handler(event({ method: "POST", path: `/projects/${projectId}/issues/A/predecessors`, claims: employeeClaims, body: { predecessorId: "B" } }));
     expect(loop.statusCode).toBe(409);
     expect(JSON.parse(loop.body).code).toBe("DEPENDENCY_CYCLE");
@@ -1519,6 +1562,7 @@ describe("plan and webhooks", () => {
     expect(linked.statusCode).toBe(200);
     expect(store.issues.find((item) => item.issueId === "B")?.predecessorIds).toEqual(["A", "I_child"]);
     expect(store.issues.find((item) => item.issueId === "B")).toMatchObject({ startDate: "2026-10-11", finishDate: "2026-10-13" });
+    expect(store.audits.some((row) => row.action === "plan.item_updated" && row.targetId === "B" && (row.after as { predecessorIds?: string[] }).predecessorIds?.includes("I_child"))).toBe(true);
     const removed = await handler(
       event({ method: "POST", path: `/projects/${projectId}/issues/B/predecessors/remove`, claims: employeeClaims, body: { predecessorId: "I_child" } }),
     );
@@ -1586,6 +1630,7 @@ describe("plan and webhooks", () => {
     const epic = store.issues.find((item) => item.title === "Billing");
     expect(epic).toMatchObject({
       number: null,
+      keyNumber: 1,
       issueState: "open",
       inProject: true,
       issueType: "EPIC",
@@ -1604,7 +1649,12 @@ describe("plan and webhooks", () => {
       }),
     );
     expect(feature.statusCode).toBe(201);
-    expect(store.issues.find((item) => item.title === "Payments")).toMatchObject({ parentIssueId: epic?.issueId, issueType: "Feature", number: null });
+    expect(store.issues.find((item) => item.title === "Payments")).toMatchObject({
+      parentIssueId: epic?.issueId,
+      issueType: "Feature",
+      number: null,
+      keyNumber: 2,
+    });
     const wrong = await handler(
       event({
         method: "POST",
@@ -1633,6 +1683,7 @@ describe("plan and webhooks", () => {
       projectId,
       customerId,
       number: 1,
+      keyNumber: null,
       title: "Deck",
       status: "Ready",
       effort: 1,
@@ -1760,6 +1811,7 @@ describe("plan and webhooks", () => {
       projectId,
       customerId,
       number: 4,
+      keyNumber: null,
       title: "Deck",
       status: "Ready",
       effort: 1,
@@ -1792,6 +1844,14 @@ describe("plan and webhooks", () => {
     expect(response.statusCode).toBe(202);
     expect(queued).toEqual([expect.objectContaining({ type: "update-issue", projectId, issueId: "I_date", title: "Changed" })]);
     expect(store.issues[0].title).toBe("Deck");
+    expect(
+      store.audits.some(
+        (row) =>
+          row.action === "plan.item_updated" &&
+          row.targetId === "I_date" &&
+          (row.after as { requested?: { title?: string } }).requested?.title === "Changed",
+      ),
+    ).toBe(true);
   });
 
   it("imports the stored projection once and returns 409 when Compass already owns it", async () => {
@@ -1835,6 +1895,7 @@ describe("plan and webhooks", () => {
       projectId,
       customerId,
       number: 12,
+      keyNumber: null,
       title: "Charge card",
       description: "Take payment",
       status: "Ready",
@@ -1909,10 +1970,13 @@ describe("plan and webhooks", () => {
     expect(created.statusCode).toBe(201);
     const reportId = JSON.parse(created.body).reportId as string;
     const early = await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/publish`, claims: employeeClaims }));
-    expect(early.statusCode).toBe(409);
+    expect(early.statusCode).toBe(403);
     await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/submit`, claims: employeeClaims }));
-    await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/approve`, claims: employeeClaims }));
-    const published = await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/publish`, claims: employeeClaims }));
+    const contributorApprove = await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/approve`, claims: employeeClaims }));
+    expect(contributorApprove.statusCode).toBe(403);
+    const approved = await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/approve`, claims: adminClaims }));
+    expect(approved.statusCode).toBe(200);
+    const published = await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/publish`, claims: adminClaims }));
     expect(published.statusCode).toBe(200);
     const versionId = JSON.parse(published.body).version.versionId as string;
     await handler(event({ method: "POST", path: `/projects/${projectId}/reports/${reportId}/revise`, claims: employeeClaims }));
@@ -1927,6 +1991,54 @@ describe("plan and webhooks", () => {
     expect(payload.versions[0].body).toBe("Kickoff is done.");
     const hidden = await handler(event({ method: "GET", path: `/projects/${projectId}/reports`, claims: { ...employeeClaims, sub: "user-b" } }));
     expect(hidden.statusCode).toBe(404);
+  });
+
+  it("redacts customer audit before/after for members and keeps full payloads for admins", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.audits.push({
+      eventId: "evt-pii",
+      customerId,
+      projectId,
+      actorUserId: "admin-1",
+      action: "member.updated",
+      targetType: "membership",
+      targetId: "user-a",
+      before: { email: "old@example.com", name: "Ada" },
+      after: { email: "ada@example.com", name: "Ada Lovelace" },
+      at: "2026-10-24T12:00:00.000Z",
+      correlationId: "req-1",
+    });
+    const memberView = await handler(event({ method: "GET", path: `/customers/${customerId}/audit`, claims: employeeClaims }));
+    expect(memberView.statusCode).toBe(200);
+    const memberEvents = JSON.parse(memberView.body).events as { action: string; before: unknown; after: unknown; actorUserId: string }[];
+    const memberRow = memberEvents.find((row) => row.action === "member.updated");
+    expect(memberRow).toMatchObject({ action: "member.updated", actorUserId: "admin-1", before: null, after: null });
+    const adminView = await handler(event({ method: "GET", path: `/customers/${customerId}/audit`, claims: adminClaims }));
+    expect(adminView.statusCode).toBe(200);
+    const adminEvents = JSON.parse(adminView.body).events as { action: string; before: { email: string } | null; after: { email: string } | null }[];
+    const adminRow = adminEvents.find((row) => row.action === "member.updated");
+    expect(adminRow?.before?.email).toBe("old@example.com");
+    expect(adminRow?.after?.email).toBe("ada@example.com");
+  });
+
+  it("returns 409 when a second approve races on an already-decided baseline", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    await handler(event({ method: "POST", path: `/projects/${projectId}/baselines`, claims: adminClaims, body: { explanation: "Baseline 1." } }));
+    const proposed = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines`, claims: employeeClaims, body: { explanation: "Next cut." } }));
+    const baselineId = JSON.parse(proposed.body).baseline.baselineId as string;
+    const first = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines/${baselineId}/approve`, claims: adminClaims, body: {} }));
+    expect(first.statusCode).toBe(200);
+    expect(JSON.parse(first.body).baseline.number).toBe(2);
+    const second = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines/${baselineId}/approve`, claims: adminClaims, body: {} }));
+    expect(second.statusCode).toBe(409);
+    expect(JSON.parse(second.body).code).toBe("BASELINE_DECIDED");
+    const numbers = store.baselines.filter((row) => row.state === "approved").map((row) => row.number);
+    expect(numbers).toEqual([1, 2]);
   });
 });
 

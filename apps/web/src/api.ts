@@ -1,4 +1,5 @@
 import type { ProjectCatalogs } from "../../../packages/domain/src/index";
+import { freshIdToken } from "./auth";
 
 /** A link that is not the parent and not a finish-to-start dependency. */
 export type IssueRelationship = {
@@ -49,7 +50,24 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Authenticated API call. Prefer Cognito's current ID token (getSession may refresh it)
+ * over the caller's possibly stale Session.idToken snapshot. Retries once on 401 after
+ * another refresh; does not loop.
+ */
 export async function api<T>(path: string, idToken: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const token = (await freshIdToken()) ?? idToken;
+  try {
+    return await request<T>(path, token, init);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 401) throw error;
+    const retried = await freshIdToken();
+    if (!retried || retried === token) throw error;
+    return request<T>(path, retried, init);
+  }
+}
+
+async function request<T>(path: string, idToken: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const response = await fetch(`${apiUrl()}${path}`, {
     method: init?.method ?? "GET",
     headers: {

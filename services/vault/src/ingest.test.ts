@@ -57,9 +57,51 @@ describe("ingestProgram", () => {
       expect(chunk.documentId).toBeTruthy();
       expect(chunk.versionId).toBeTruthy();
       expect(chunk.embedding).toHaveLength(1024);
+      expect(chunk.id).toBe(
+        `${CUSTOMER}:${PROGRAM}:${chunk.documentId}:${chunk.versionId}:0`,
+      );
     }
     expect(result.chunks.find((chunk) => chunk.documentId === "doc-upload")?.versionId).toBe("ver-upload");
     expect(result.chunks.find((chunk) => chunk.documentId === "doc-flies")?.sourceLabel).toBe("fireflies");
+  });
+
+  it("scopes chunk ids by customer and program so tenants cannot collide on document id", () => {
+    const sharedDoc = "shared-doc";
+    const sharedVer = "shared-ver";
+    const makeInput = (customerId: string, programId: string) => ({
+      allowlist: [{ customerId, programId }],
+      program: { customerId, programId, title: "Prog" },
+      issues: [] as IngestIssue[],
+      milestones: [],
+      documents: [
+        {
+          documentId: sharedDoc,
+          customerId,
+          projectId: programId,
+          name: "shared.txt",
+          sourceLabel: "compass-upload" as const,
+          deletedAt: null,
+          currentVersionId: sharedVer,
+        },
+      ],
+      versions: [
+        version({
+          versionId: sharedVer,
+          documentId: sharedDoc,
+          text: "Same document id in two tenants.",
+        }),
+      ],
+      recordedAt: RECORDED,
+      embed: deterministicEmbed,
+    });
+
+    const a = ingestProgram(makeInput("cust-a", "prog-a"));
+    const b = ingestProgram(makeInput("cust-b", "prog-b"));
+    expect(a.chunks).toHaveLength(1);
+    expect(b.chunks).toHaveLength(1);
+    expect(a.chunks[0]?.id).toBe(`cust-a:prog-a:${sharedDoc}:${sharedVer}:0`);
+    expect(b.chunks[0]?.id).toBe(`cust-b:prog-b:${sharedDoc}:${sharedVer}:0`);
+    expect(a.chunks[0]?.id).not.toBe(b.chunks[0]?.id);
   });
 
   it("skips null label, deleted, pending version, and empty projectId files", () => {

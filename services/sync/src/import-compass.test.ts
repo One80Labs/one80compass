@@ -38,6 +38,7 @@ function issue(partial: Partial<PlanIssue> & Pick<PlanIssue, "issueId" | "title"
     projectId: "proj-1",
     customerId: "cust-1",
     number: null,
+    keyNumber: null,
     description: null,
     status: "",
     effort: null,
@@ -74,6 +75,7 @@ describe("importCompass", () => {
     const child = issue({
       issueId: "I_child",
       number: 12,
+      keyNumber: null,
       title: "Charge card",
       description: "Take payment",
       status: "Ready",

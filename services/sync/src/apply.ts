@@ -18,6 +18,7 @@ export function keepStoredPlanFields(incoming: PlanIssue, stored: PlanIssue | un
     labels: [...stored.labels],
     relationships: stored.relationships.map((link) => ({ ...link })),
     planOrder: stored.planOrder,
+    keyNumber: stored.keyNumber,
   };
 }
 
@@ -134,6 +135,7 @@ function blankIssue(settings: ProjectSettings, issueId: string, now: string): Pl
     projectId: settings.projectId,
     customerId: settings.customerId,
     number: null,
+    keyNumber: null,
     title: "Untitled",
     description: null,
     status: "",

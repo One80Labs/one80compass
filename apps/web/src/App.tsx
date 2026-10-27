@@ -13,7 +13,7 @@ import { displayName, ModuleTiles, Shell, usePortal, type PortalActivity } from 
 import { CatalogSettings } from "./catalogs";
 
 type Customer = { customerId: string; name: string };
-type Project = { projectId: string; customerId: string; name: string };
+type Project = { projectId: string; customerId: string; name: string; projectKey?: string | null };
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -556,13 +556,11 @@ function AdminHome({ session }: { session: Session }) {
       />
       {portal.customerId && (
         <>
-          <NamedForm
-            label="Project name"
-            submit="Create project"
-            onSubmit={async (name) => {
+          <CreateProjectForm
+            onSubmit={async (name, projectKey) => {
               const created = await api<Project>(`/admin/customers/${portal.customerId}/projects`, session.idToken, {
                 method: "POST",
-                body: { name },
+                body: { name, projectKey },
               });
               portal.reload();
               portal.setProjectId(created.projectId);
@@ -675,19 +673,65 @@ function NamedForm({ label, submit, onSubmit }: { label: string; submit: string;
   );
 }
 
-/** Administrator form on Settings → General. Saves the portal project name without changing GitHub. */
+/** Administrator create form: name plus required 3–4 letter key (e.g. COMP → COMP-1). */
+function CreateProjectForm({ onSubmit }: { onSubmit: (name: string, projectKey: string) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [projectKey, setProjectKey] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <form
+      className="toolbar settings-name-form"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setError(null);
+        try {
+          await onSubmit(name, projectKey);
+          setName("");
+          setProjectKey("");
+        } catch (caught) {
+          setError(caught instanceof ApiError ? caught.message : "Request failed.");
+        }
+      }}
+    >
+      <label>
+        Project name
+        <input value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} />
+      </label>
+      <label>
+        Project key
+        <input
+          value={projectKey}
+          onChange={(event) => setProjectKey(event.target.value.toUpperCase())}
+          required
+          minLength={3}
+          maxLength={4}
+          pattern="[A-Za-z]{3,4}"
+          title="3 or 4 letters"
+          placeholder="COMP"
+          style={{ minWidth: 88, textTransform: "uppercase" }}
+        />
+      </label>
+      {error && <p className="error">{error}</p>}
+      <button type="submit">Create project</button>
+    </form>
+  );
+}
+
+/** Administrator form on Settings → General. Name and project key sit side by side. */
 function RenameProjectForm({ session, project }: { session: Session; project: Project }) {
   const portal = usePortal();
   const [name, setName] = useState(project.name);
+  const [projectKey, setProjectKey] = useState(project.projectKey ?? "");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setName(project.name);
+    setProjectKey(project.projectKey ?? "");
     setError(null);
     setNotice(null);
-  }, [project.projectId, project.name]);
+  }, [project.projectId, project.name, project.projectKey]);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -697,26 +741,43 @@ function RenameProjectForm({ session, project }: { session: Session; project: Pr
     try {
       const saved = await api<Project>(`/admin/projects/${project.projectId}`, session.idToken, {
         method: "PATCH",
-        body: { name },
+        body: { name, projectKey },
       });
       setName(saved.name);
-      setNotice("Project name saved.");
+      setProjectKey(saved.projectKey ?? "");
+      setNotice("Project settings saved.");
       portal.reload();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not rename the project.");
+      setError(caught instanceof ApiError ? caught.message : "Could not save the project.");
     } finally {
       setBusy(false);
     }
   }
 
+  const keyChanged = projectKey.trim().toUpperCase() !== (project.projectKey ?? "");
+  const nameChanged = name.trim() !== project.name;
   return (
     <form className="toolbar settings-name-form" onSubmit={(event) => void save(event)}>
       <label>
         Project name
         <input value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} />
       </label>
-      <button className="btn primary" type="submit" disabled={busy || name.trim() === project.name}>
-        Save name
+      <label>
+        Project key
+        <input
+          value={projectKey}
+          onChange={(event) => setProjectKey(event.target.value.toUpperCase())}
+          required
+          minLength={3}
+          maxLength={4}
+          pattern="[A-Za-z]{3,4}"
+          title="3 or 4 letters used on action items (COMP-1)"
+          placeholder="COMP"
+          style={{ minWidth: 88, textTransform: "uppercase" }}
+        />
+      </label>
+      <button className="btn primary" type="submit" disabled={busy || (!nameChanged && !keyChanged)}>
+        Save
       </button>
       {error && <p className="error">{error}</p>}
       {notice && <p className="muted small">{notice}</p>}

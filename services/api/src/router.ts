@@ -5,6 +5,7 @@ import {
   isProjectHealth,
   memberRole,
   MAX_UPLOAD_BYTES,
+  normalizeProjectKey,
   type AuditEvent,
   type DocumentFolder,
   type DocumentSourceLabel,
@@ -463,10 +464,19 @@ async function createProject(deps: HandlerDeps, ctx: Ctx, customerId: string): P
   if (gate) return gate;
   const name = stringField(ctx.body, "name");
   if (!name || name.length > 120) return validation(ctx, "A project name up to 120 characters is required.");
+  const projectKey = normalizeProjectKey(ctx.body.projectKey);
+  if (!projectKey) return validation(ctx, "A project key of 3 or 4 letters is required.");
   const customer = await deps.store.getCustomer(customerId);
   if (!customer) return notFound(ctx);
-  const project = { projectId: deps.newId(), customerId, name, createdAt: deps.now().toISOString() };
-  await deps.store.createProject(project);
+  const project = { projectId: deps.newId(), customerId, name, projectKey, createdAt: deps.now().toISOString() };
+  const claimed = await deps.store.claimProjectKey(projectKey, project.projectId, customerId);
+  if (!claimed) return validation(ctx, `The project key ${projectKey} is already in use.`);
+  try {
+    await deps.store.createProject(project);
+  } catch (error) {
+    await deps.store.releaseProjectKey(projectKey, project.projectId);
+    throw error;
+  }
   await audit(deps, ctx, {
     customerId,
     action: "project.created",
@@ -474,30 +484,50 @@ async function createProject(deps: HandlerDeps, ctx: Ctx, customerId: string): P
     projectId: project.projectId,
     targetId: project.projectId,
     before: null,
-    after: { name, customerId },
+    after: { name, projectKey, customerId },
   });
   return json(201, project, ctx.correlationId);
 }
 
-/** Administrator renames the selected project. The name is portal-owned and does not change GitHub. */
+/** Administrator updates the portal project name and/or key. Does not change GitHub. */
 async function renameProject(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
   const gate = requireAdmin(ctx);
   if (gate) return gate;
-  const name = stringField(ctx.body, "name");
-  if (!name || name.length > 120) return validation(ctx, "A project name up to 120 characters is required.");
+  const hasName = Object.prototype.hasOwnProperty.call(ctx.body, "name");
+  const hasKey = Object.prototype.hasOwnProperty.call(ctx.body, "projectKey");
+  if (!hasName && !hasKey) return validation(ctx, "A project name or project key is required.");
+  const name = hasName ? stringField(ctx.body, "name") : null;
+  if (hasName && (!name || name.length > 120)) return validation(ctx, "A project name up to 120 characters is required.");
+  const projectKey = hasKey ? normalizeProjectKey(ctx.body.projectKey) : null;
+  if (hasKey && !projectKey) return validation(ctx, "A project key of 3 or 4 letters is required.");
   const project = await deps.store.getProject(projectId);
   if (!project) return notFound(ctx);
-  if (project.name === name) return json(200, project, ctx.correlationId);
-  const next = { ...project, name };
+  const nextName = name ?? project.name;
+  const nextKey = projectKey ?? project.projectKey;
+  if (!nextKey) return validation(ctx, "A project key of 3 or 4 letters is required.");
+  if (project.name === nextName && project.projectKey === nextKey) return json(200, project, ctx.correlationId);
+
+  if (nextKey !== project.projectKey) {
+    const claimed = await deps.store.claimProjectKey(nextKey, project.projectId, project.customerId);
+    if (!claimed) return validation(ctx, `The project key ${nextKey} is already in use.`);
+  }
+
+  const next = { ...project, name: nextName, projectKey: nextKey };
   await deps.store.putProject(next);
+  if (project.projectKey && project.projectKey !== nextKey) {
+    await deps.store.releaseProjectKey(project.projectKey, project.projectId);
+  }
+
+  const renamed = project.name !== nextName;
+  const keyChanged = project.projectKey !== nextKey;
   await audit(deps, ctx, {
     customerId: project.customerId,
-    action: "project.renamed",
+    action: renamed && keyChanged ? "project.updated" : renamed ? "project.renamed" : "project.key_set",
     targetType: "project",
     projectId: project.projectId,
     targetId: project.projectId,
-    before: { name: project.name },
-    after: { name },
+    before: { name: project.name, projectKey: project.projectKey },
+    after: { name: nextName, projectKey: nextKey },
   });
   return json(200, next, ctx.correlationId);
 }
@@ -646,7 +676,17 @@ function json(statusCode: number, payload: unknown, correlationId: string): Http
 
 async function listCustomerAudit(deps: HandlerDeps, ctx: Ctx, customerId: string): Promise<HttpResult> {
   if (!(await canReadCustomer(deps, ctx, customerId))) return notFound(ctx);
-  return json(200, { events: await deps.store.listAudit(customerId) }, ctx.correlationId);
+  const events = await deps.store.listAudit(customerId);
+  // Non-admins keep metadata (action/at/actor) but before/after can hold membership emails/names.
+  if (adminAccess(ctx.principal) === "ok") {
+    return json(200, { events }, ctx.correlationId);
+  }
+  return json(200, { events: events.map(redactAuditPayloads) }, ctx.correlationId);
+}
+
+/** Strip before/after so customer-scoped audit lists do not leak invite/member PII to non-admins. */
+function redactAuditPayloads(event: AuditEvent): AuditEvent {
+  return { ...event, before: null, after: null };
 }
 
 async function latestPublishedReport(deps: HandlerDeps, projectId: string): Promise<{ reportId: string; title: string; publishedAt: string } | null> {
@@ -668,7 +708,8 @@ async function projectOverview(deps: HandlerDeps, ctx: Ctx, projectId: string, m
   if (method === "GET") {
     const documents = await deps.store.listDocuments(projectId);
     const issues = await deps.store.listIssues(projectId);
-    const activity = (await deps.store.listAudit(project.customerId)).filter((event) => event.projectId === projectId).slice(0, 10);
+    const rawActivity = (await deps.store.listAudit(project.customerId)).filter((event) => event.projectId === projectId).slice(0, 10);
+    const activity = adminAccess(ctx.principal) === "ok" ? rawActivity : rawActivity.map(redactAuditPayloads);
     return json(
       200,
       {

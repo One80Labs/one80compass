@@ -6,7 +6,7 @@ import { signOut } from "./auth";
 import { modulePath } from "./project";
 
 type Customer = { customerId: string; name: string };
-type Project = { projectId: string; customerId: string; name: string; createdAt?: string };
+type Project = { projectId: string; customerId: string; name: string; projectKey?: string | null; createdAt?: string };
 type Application = { applicationId: string; projectId: string; displayName: string; moduleKey: string };
 type Me = { memberships: { customerId: string; role?: string }[] };
 

@@ -101,11 +101,7 @@ export function restoreSession(): Promise<Session | null> {
         resolve(null);
         return;
       }
-      const payload = session.getIdToken().payload;
-      const emailClaim = payload.email;
-      const usernameClaim = payload["cognito:username"];
-      const email =
-        typeof emailClaim === "string" ? emailClaim : typeof usernameClaim === "string" ? usernameClaim : user.getUsername();
+      const email = emailFromSession(session, user.getUsername());
       const restored = readSession(session, email);
       // Do not invent MFA satisfaction. Prefer token evidence, then Cognito enrollment for admins.
       if (!(mfaRequired && restored.adminGroup) || restored.mfa) {
@@ -120,6 +116,31 @@ export function restoreSession(): Promise<Session | null> {
       }
     });
   });
+}
+
+/**
+ * Returns a Session from Cognito's cached/refreshed tokens (via getSession).
+ * Use before API calls so a ~1h-old React Session.idToken snapshot does not cause 401s.
+ * Does not probe MFA enrollment or force mfa: true — claims come from readSession only.
+ */
+export function refreshSession(): Promise<Session | null> {
+  const user = pool.getCurrentUser();
+  if (!user) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    user.getSession((error: Error | null, session: CognitoUserSession | null) => {
+      if (error || !session) {
+        resolve(null);
+        return;
+      }
+      resolve(readSession(session, emailFromSession(session, user.getUsername())));
+    });
+  });
+}
+
+/** Fresh Cognito ID token for Authorization headers, or null if there is no browser session. */
+export async function freshIdToken(): Promise<string | null> {
+  const session = await refreshSession();
+  return session?.idToken ?? null;
 }
 
 function authenticate(user: CognitoUser, email: string, password: string): Promise<SignInResult> {
@@ -161,6 +182,15 @@ export function mfaIsEnrolled(email: string): Promise<boolean> {
       }, { bypassCache: true });
     });
   });
+}
+
+function emailFromSession(session: CognitoUserSession, fallbackUsername: string): string {
+  const payload = session.getIdToken().payload;
+  const emailClaim = payload.email;
+  const usernameClaim = payload["cognito:username"];
+  if (typeof emailClaim === "string") return emailClaim;
+  if (typeof usernameClaim === "string") return usernameClaim;
+  return fallbackUsername;
 }
 
 function readSession(session: CognitoUserSession, email: string): Session {
