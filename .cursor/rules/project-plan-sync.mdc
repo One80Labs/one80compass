@@ -1,0 +1,19 @@
+---
+description: Keep the One80Compass release plan MD and the live in-app project plan in sync
+alwaysApply: true
+---
+
+# Project plan updates (MD + app)
+
+Whenever the user asks to update the **project plan**, **release plan**, backlog, or open items for One80Compass, do **both**:
+
+1. **Markdown (source of sequencing):** update `docs/product/One80Compass_Unified_Release_Plan.md` (status tables, open-work checklists, revision row). Keep `docs/CURSOR_START_HERE.md` / ADR links accurate if they point at plan sections.
+2. **In-app plan (what users see):** update the live **One80Compass Dev** Compass-owned project in DynamoDB table `one80compass-dev`:
+   - Project id: `b5371746-a794-4bf9-8ff8-c55ee9d3d72a`
+   - Customer id: `a5587d65-5b4b-4fac-b259-4149d2aa5b04`
+   - AWS profile: `one80compass`, region `us-east-2`
+   - Create/update `ISSUE#…` rows (Epic / Feature / Task) with the same titles and backlog semantics as the MD; place under the correct parent Feature/Epic.
+
+Do not treat the MD-only change as done. Do not invent a second “sample” plan in the web app unless the user asks for local preview data.
+
+When marking work complete, mark it in the MD **and** set the matching plan issue `status` to `Done` (and dates if appropriate).

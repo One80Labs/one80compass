@@ -28,6 +28,8 @@ export async function handler(event: SqsEvent | { source?: string }): Promise<vo
 
 export async function processMessage(store: DynamoStore, gateway: GitHubGateway, message: SyncMessage, now: string): Promise<void> {
   if (message.type === "webhook") {
+    // Claim first so GitHub retries and SQS redeliveries do not re-apply mutations.
+    if (!(await store.claimDelivery(message.deliveryId))) return;
     const settingsList = await store.listSettings();
     for (const settings of settingsList) {
       if (!acceptsGithubSync(settings)) continue;
@@ -39,7 +41,6 @@ export async function processMessage(store: DynamoStore, gateway: GitHubGateway,
       await rollUpSchedules(store, gateway, settings, now);
       await store.putSync({ projectId: settings.projectId, customerId: settings.customerId, status: "ok", detail: null, updatedAt: now });
     }
-    await store.claimDelivery(message.deliveryId);
     return;
   }
   if (message.type === "reconcile") {

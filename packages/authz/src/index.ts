@@ -14,9 +14,13 @@ export type MembershipRef = {
   userId: string;
   /** Absent or null means every project of the customer. */
   projectIds?: string[] | null;
-  /** Absent means Contributor. View can read and cannot change the project. */
+  /** Absent means Contributor. View can read and cannot change the project. Legacy "employee" maps to contributor. */
   role?: "contributor" | "view" | "employee";
 };
+
+function writeRole(role: MembershipRef["role"] | undefined): boolean {
+  return role !== "view";
+}
 
 export function parseClaimList(value: string | undefined): string[] {
   if (!value) return [];
@@ -106,7 +110,7 @@ export function canWriteProject(
   if (isPlatformAdmin(principal)) return true;
   return memberships.some((membership) => {
     if (membership.customerId !== project.customerId || membership.userId !== principal.userId) return false;
-    if (membership.role === "view") return false;
+    if (!writeRole(membership.role)) return false;
     if (membership.projectIds == null) return true;
     return membership.projectIds.includes(project.projectId);
   });

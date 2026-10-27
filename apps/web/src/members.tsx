@@ -151,7 +151,7 @@ function MemberDrawer({
           name,
           email: administrator ? member.email : email,
           projectIds: administrator || allProjects ? null : projectIds,
-          access: administrator ? "Contributor" : access,
+          ...(administrator ? {} : { access }),
         },
       });
       onSaved(saved);

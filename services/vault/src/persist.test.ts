@@ -118,6 +118,30 @@ describe("vault persist", () => {
     expect(calls.every((call) => !call.sql.includes("DELETE FROM") || call.transactionId === "tx-1")).toBe(true);
   });
 
+  it("rejects save-rows for a program that is not allowlisted", async () => {
+    const { db } = fakeDb();
+    await expect(
+      saveIngestResult(
+        {
+          rows: [
+            {
+              table: "program",
+              customerId: "other",
+              programId: "prog-9",
+              sourceType: "compass",
+              sourceId: "prog-9",
+              recordedAt: "2026-10-26T00:00:00.000Z",
+              title: "Nope",
+            },
+          ],
+          relations: [],
+          chunks: [],
+        },
+        db,
+      ),
+    ).rejects.toThrow(/not allowlisted/);
+  });
+
   it("lists chunks for one customer and program", async () => {
     const { db, calls } = fakeDb();
     const chunks = await listChunks("cust-1", "prog-1", db);

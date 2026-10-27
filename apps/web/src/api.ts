@@ -31,7 +31,11 @@ export type IssueSave = {
   relationships?: IssueRelationship[];
 };
 
-const apiUrl = () => import.meta.env.VITE_API_URL.replace(/\/$/, "");
+const apiUrl = () => {
+  const raw = import.meta.env.VITE_API_URL;
+  if (!raw || typeof raw !== "string") throw new Error("VITE_API_URL is not configured.");
+  return raw.replace(/\/$/, "");
+};
 
 export class ApiError extends Error {
   constructor(
@@ -54,7 +58,16 @@ export async function api<T>(path: string, idToken: string, init?: { method?: st
     },
     body: init?.body === undefined ? undefined : JSON.stringify(init.body),
   });
-  const payload = (await response.json()) as T & { code?: string; message?: string };
+  const text = await response.text();
+  let payload = {} as T & { code?: string; message?: string };
+  if (text) {
+    try {
+      payload = JSON.parse(text) as T & { code?: string; message?: string };
+    } catch {
+      if (!response.ok) throw new ApiError("Request failed.", response.status, "ERROR");
+      throw new ApiError("The API returned a non-JSON response.", response.status, "ERROR");
+    }
+  }
   if (!response.ok) {
     throw new ApiError(payload.message ?? "Request failed.", response.status, payload.code ?? "ERROR", payload);
   }

@@ -40,8 +40,10 @@ export class DevStack extends cdk.Stack {
       userPoolName: "one80compass-dev",
       selfSignUpEnabled: false,
       signInAliases: { email: true },
-      // Dev sign-in is email and password. Stage and production must set this
-      // back to REQUIRED with a software-token second factor before a pilot.
+      // WARNING: this stack currently fronts one80compass.ai. Password-only admin
+      // sign-in is a production risk. Move the live site to a stage/prod stack with
+      // cognito.Mfa.REQUIRED + software token before a pilot, and keep MFA off only
+      // on an isolated sandbox without production DNS.
       mfa: cognito.Mfa.OFF,
       passwordPolicy: {
         minLength: 12,
@@ -188,6 +190,11 @@ export class DevStack extends cdk.Stack {
       deadLetterQueue: { queue: deadLetters, maxReceiveCount: 5 },
     });
 
+    const githubAppId = process.env.GITHUB_APP_ID ?? "";
+    const githubPrivateKey = process.env.GITHUB_APP_PRIVATE_KEY ?? "";
+    const githubWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET ?? "";
+    const githubConfigured = Boolean(githubAppId && githubPrivateKey && githubWebhookSecret);
+
     const apiFunction = new nodejs.NodejsFunction(this, "Api", {
       functionName: "one80compass-dev-api",
       entry: path.join(__dirname, "../../services/api/src/main.ts"),
@@ -201,9 +208,9 @@ export class DevStack extends cdk.Stack {
         BUCKET_NAME: documents.bucketName,
         MAX_UPLOAD_BYTES: String(25 * 1024 * 1024),
         SYNC_QUEUE_URL: syncQueue.queueUrl,
-        GITHUB_APP_ID: process.env.GITHUB_APP_ID ?? "",
-        GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY ?? "",
-        GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET ?? "",
+        // API verifies webhooks and reports sync status; the private key stays on the sync Lambda only.
+        GITHUB_CONFIGURED: githubConfigured ? "true" : "",
+        GITHUB_WEBHOOK_SECRET: githubWebhookSecret,
       },
       bundling: { sourceMap: true, minify: true },
     });
@@ -246,9 +253,9 @@ export class DevStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
       environment: {
         TABLE_NAME: table.tableName,
-        GITHUB_APP_ID: process.env.GITHUB_APP_ID ?? "",
-        GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY ?? "",
-        GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET ?? "",
+        // Prefer Secrets Manager for the PEM in stage/prod; env is a temporary bootstrap path.
+        GITHUB_APP_ID: githubAppId,
+        GITHUB_APP_PRIVATE_KEY: githubPrivateKey,
       },
       bundling: { sourceMap: true, minify: true },
     });

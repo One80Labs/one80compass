@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 /** Short-lived URLs for a private documents bucket. The API checks membership before signing. */
@@ -20,6 +20,16 @@ export function createFileSigner(bucket: string) {
         }),
         { expiresIn: 300 },
       );
+    },
+    /** True when the object exists and, when expectedBytes is set, matches ContentLength. */
+    async objectExists(objectKey: string, expectedBytes?: number): Promise<boolean> {
+      try {
+        const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: objectKey }));
+        if (expectedBytes != null && head.ContentLength != null && head.ContentLength !== expectedBytes) return false;
+        return true;
+      } catch {
+        return false;
+      }
     },
     /** Store published status report text beside project documents. */
     putReportText(objectKey: string, body: string) {

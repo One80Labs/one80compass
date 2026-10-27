@@ -55,6 +55,8 @@ export type HandlerDeps = {
   now: () => Date;
   signUpload: (objectKey: string, sizeBytes: number) => Promise<string>;
   signDownload: (objectKey: string, fileName: string, contentType: string) => Promise<string>;
+  /** Confirms a pending upload object exists in the documents bucket before marking stored. */
+  objectExists?: (objectKey: string, expectedBytes?: number) => Promise<boolean>;
   /** Optional: store published report markdown in the documents bucket. */
   putReportText?: (objectKey: string, body: string) => Promise<void>;
   /** Staff vault ingest and allowlist. Absent in unit tests that do not exercise vault routes. */
@@ -422,7 +424,18 @@ async function inviteMember(deps: HandlerDeps, ctx: Ctx, customerId: string): Pr
   const role = chosen === "keep" ? "contributor" : chosen;
   const customer = await deps.store.getCustomer(customerId);
   if (!customer) return notFound(ctx);
+  const existing = await deps.store.listMembershipsForCustomer(customerId);
+  if (existing.some((membership) => membership.email === email)) {
+    return conflict(ctx, "That email is already a member of this customer.");
+  }
   const invited = await deps.inviteUser(email);
+  const adminIds = new Set(await deps.listAdminUserIds());
+  if (adminIds.has(invited.userId)) {
+    return validation(ctx, "That email belongs to an administrator.");
+  }
+  if (existing.some((membership) => membership.userId === invited.userId)) {
+    return conflict(ctx, "That user is already a member of this customer.");
+  }
   const membership = {
     customerId,
     userId: invited.userId,
@@ -924,6 +937,14 @@ async function completeDocumentVersion(deps: HandlerDeps, ctx: Ctx, projectId: s
   if (blocked) return blocked;
   const version = await deps.store.getVersion(documentId, versionId);
   if (!version || version.projectId !== projectId) return notFound(ctx);
+  if (version.status === "stored") {
+    return json(200, { documentId, versionId, currentVersionId: document.currentVersionId ?? versionId }, ctx.correlationId);
+  }
+  if (version.status !== "pending") return validation(ctx, "Only pending uploads can be completed.");
+  if (deps.objectExists) {
+    const exists = await deps.objectExists(version.objectKey, version.sizeBytes);
+    if (!exists) return validation(ctx, "Upload the file before completing this version.");
+  }
   const previousVersionId = document.currentVersionId;
   const stored = { ...version, status: "stored" as const };
   await deps.store.putVersion(stored);
@@ -1046,7 +1067,7 @@ function fileFields(ctx: Ctx, deps: HandlerDeps): FileFields | null {
   if (!/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(contentType) || contentType.length > 200) return null;
   const sizeBytes = ctx.body.sizeBytes;
   const limit = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES;
-  if (typeof sizeBytes !== "number" || !Number.isInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > limit) return null;
+  if (typeof sizeBytes !== "number" || !Number.isInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > limit) return null;
   const folder = folderField(ctx.body.folder);
   if (folder === null) return null;
   return { folder, fileName, contentType, sizeBytes };
@@ -1100,29 +1121,11 @@ function optionalText(value: unknown, max: number): string | null | undefined {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/** Identity comes only from API Gateway's verified JWT authorizer. Never decode Bearer payloads here. */
 function claimsFromEvent(event: HttpEvent): Record<string, string> | undefined {
   const authorizerClaims = event.requestContext.authorizer?.jwt?.claims;
-  const tokenClaims = claimsFromAuthorization(header(event, "authorization"));
-  if (!authorizerClaims && !tokenClaims) return undefined;
-  return { ...authorizerClaims, ...tokenClaims };
-}
-
-function claimsFromAuthorization(authorization: string | undefined): Record<string, string> | undefined {
-  const token = authorization?.replace(/^Bearer\s+/i, "");
-  const segment = token?.split(".")[1];
-  if (!segment) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-    const claims: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === "string") claims[key] = value;
-      else if (value != null) claims[key] = JSON.stringify(value);
-    }
-    return claims;
-  } catch {
-    return undefined;
-  }
+  if (!authorizerClaims || typeof authorizerClaims !== "object") return undefined;
+  return authorizerClaims;
 }
 
 function header(event: HttpEvent, name: string): string | undefined {

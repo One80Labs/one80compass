@@ -294,6 +294,7 @@ function handlerFor(store: Store, extras: Partial<Pick<HandlerDeps, "inviteUser"
     maxUploadBytes: 100,
     signUpload: async (objectKey) => `https://files.example/upload/${objectKey}`,
     signDownload: async (objectKey) => `https://files.example/download/${objectKey}`,
+    objectExists: async () => true,
     enqueue: async (message) => {
       queued.push(message);
     },
@@ -305,17 +306,29 @@ function handlerFor(store: Store, extras: Partial<Pick<HandlerDeps, "inviteUser"
 }
 
 describe("api router", () => {
-  it("accepts MFA recorded in the token when the authorizer omits it", async () => {
-    const token = fakeJwt({ amr: ["authenticated", "mfa"] });
+  it("ignores an unverified Bearer payload that tries to escalate groups", async () => {
+    const token = fakeJwt({ sub: "attacker", "cognito:groups": "one80-admin", amr: ["authenticated", "mfa"] });
     const response = await handlerFor(memoryStore())(
       event({
         method: "GET",
         path: "/admin/customers",
-        claims: { sub: "admin-1", "cognito:groups": "one80-admin" },
+        claims: { sub: "user-a", email: "ada@example.com" },
         headers: { authorization: `Bearer ${token}` },
       }),
     );
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(403);
+  });
+
+  it("returns 401 when the authorizer claims are missing even if Authorization is present", async () => {
+    const token = fakeJwt({ sub: "admin-1", "cognito:groups": "one80-admin" });
+    const response = await handlerFor(memoryStore())(
+      event({
+        method: "GET",
+        path: "/admin/customers",
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(response.statusCode).toBe(401);
   });
 
   it("returns 401 when the token is missing", async () => {

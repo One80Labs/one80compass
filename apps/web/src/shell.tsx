@@ -168,8 +168,12 @@ export function Shell({
     if (next && MODULES.includes(moduleKey)) navigate(modulePath(moduleKey, next));
   }
 
-  const canWrite = Boolean(sample) || session.adminGroup || (rolesReady && customerId !== "" && roles[customerId] !== "view");
-  const accessLabel = session.adminGroup ? "Administrator" : roles[customerId] === "view" ? "View" : "Contributor";
+  const canWrite = Boolean(sample) || session.adminGroup || (rolesReady && customerId !== "" && roles[customerId] === "contributor");
+  const accessLabel: PortalState["accessLabel"] = session.adminGroup
+    ? "Administrator"
+    : roles[customerId] === "view"
+      ? "View"
+      : "Contributor";
   const portal: PortalState = {
     customers,
     projects,

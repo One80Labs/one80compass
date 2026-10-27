@@ -17,7 +17,8 @@ const files = createFileSigner(bucketName);
 const readObjectText = createObjectTextReader(bucketName);
 const sqs = new SQSClient({});
 const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET ?? "";
-const githubConfigured = Boolean(process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY && webhookSecret);
+/** API never loads the GitHub App private key; infra sets GITHUB_CONFIGURED when sync has credentials. */
+const githubConfigured = process.env.GITHUB_CONFIGURED === "true" || Boolean(process.env.GITHUB_APP_ID && webhookSecret);
 
 const store = new DynamoStore(DynamoDBDocumentClient.from(new DynamoDBClient({})), tableName);
 const cognito = new CognitoIdentityProviderClient({});
@@ -31,6 +32,7 @@ export const handler = createHandler({
   maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES ?? MAX_UPLOAD_BYTES),
   signUpload: files.signUpload,
   signDownload: files.signDownload,
+  objectExists: files.objectExists,
   putReportText: files.putReportText,
   vault: vault ?? undefined,
   loadVaultChunks,

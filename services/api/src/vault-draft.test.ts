@@ -193,6 +193,7 @@ describe("publish putReportText", () => {
       newId: () => `id-${++n}`,
       now: () => new Date("2026-10-24T12:00:00.000Z"),
       signUpload: async () => "https://upload",
+      objectExists: async () => true,
       signDownload: async () => "https://download",
       putReportText,
       enqueue: async () => undefined,

@@ -16,8 +16,8 @@ export type VaultEvent =
  */
 export async function handler(event: unknown): Promise<Record<string, unknown>> {
   const typed = event as VaultEvent | null;
-  if (!typed || typeof typed !== "object" || !("type" in typed)) {
-    throw new Error(`Unknown vault event: ${JSON.stringify(event)}`);
+  if (!typed || typeof typed !== "object" || !("type" in typed) || typeof typed.type !== "string") {
+    throw new Error("Unknown vault event");
   }
 
   if (typed.type === "apply-schema") {
@@ -43,8 +43,13 @@ export async function handler(event: unknown): Promise<Record<string, unknown>> 
     if (!typed.customerId || !typed.programId) {
       throw new Error("list-chunks requires customerId and programId");
     }
+    const allowlist = await readAllowlist();
+    if (!allowlist.some((entry) => entry.customerId === typed.customerId && entry.programId === typed.programId)) {
+      throw new Error("list-chunks program is not allowlisted");
+    }
     return { chunks: await listChunks(typed.customerId, typed.programId) };
   }
 
-  throw new Error(`Unknown vault event: ${JSON.stringify(event)}`);
+  const unexpected = (typed as { type: string }).type;
+  throw new Error(`Unknown vault event type: ${unexpected}`);
 }

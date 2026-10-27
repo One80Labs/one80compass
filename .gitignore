@@ -6,7 +6,10 @@ cdk.out/
 !apps/web/src/vite-env.d.ts
 !docs/design/app.js
 .env
-.env.local
+.env.*
+!.env.example
+*.pem
+*.key
 .DS_Store
 coverage/
 *.log

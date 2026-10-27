@@ -5,6 +5,9 @@ import { createVaultDb, type VaultDb } from "./db";
 import type { SqlParameter } from "@aws-sdk/client-rds-data";
 
 const PROGRAM_TABLES = ["chunk", "relation", "work_item", "milestone", "document", "transcript", "artifact", "program"] as const;
+const ENTITY_TABLE_NAMES = ["program", "work_item", "milestone", "document", "transcript", "artifact"] as const;
+const ENTITY_TABLES = new Set<string>(ENTITY_TABLE_NAMES);
+const DOCUMENT_LIKE_TABLES = new Set<string>(["document", "transcript", "artifact"]);
 
 function str(name: string, value: string | null | undefined): SqlParameter {
   if (value == null) return { name, value: { isNull: true } };
@@ -50,9 +53,18 @@ export async function saveAllowlist(entry: AllowlistEntry, enabled: boolean, db:
  * Clears prior rows for each program id so a second ingest does not leave stale chunks.
  */
 export async function saveIngestResult(result: IngestResult, db: VaultDb = createVaultDb()): Promise<void> {
+  assertSafeIngestResult(result);
+  const allowlist = await readAllowlist(db);
   const programs = new Map<string, { customerId: string; programId: string }>();
   for (const row of result.rows) programs.set(`${row.customerId}:${row.programId}`, { customerId: row.customerId, programId: row.programId });
   for (const chunk of result.chunks) programs.set(`${chunk.customerId}:${chunk.programId}`, { customerId: chunk.customerId, programId: chunk.programId });
+  for (const relation of result.relations) programs.set(`${relation.customerId}:${relation.programId}`, { customerId: relation.customerId, programId: relation.programId });
+  if (programs.size === 0) throw new Error("save-rows requires at least one program row");
+  for (const program of programs.values()) {
+    if (!allowlist.some((entry) => entry.customerId === program.customerId && entry.programId === program.programId)) {
+      throw new Error(`Program ${program.customerId}/${program.programId} is not allowlisted`);
+    }
+  }
 
   const transactionId = await db.beginTransaction();
   try {
@@ -72,6 +84,17 @@ export async function saveIngestResult(result: IngestResult, db: VaultDb = creat
   } catch (error) {
     await db.rollback(transactionId);
     throw error;
+  }
+}
+
+function assertSafeIngestResult(result: IngestResult): void {
+  if (!result || !Array.isArray(result.rows) || !Array.isArray(result.relations) || !Array.isArray(result.chunks)) {
+    throw new Error("save-rows result must include rows, relations, and chunks arrays");
+  }
+  for (const row of result.rows) {
+    if (!row.customerId || !row.programId || !ENTITY_TABLES.has(row.table)) {
+      throw new Error(`Invalid entity table or tenant for row ${row.sourceId ?? "?"}`);
+    }
   }
 }
 
@@ -100,6 +123,7 @@ export async function listChunks(customerId: string, programId: string, db: Vaul
 }
 
 async function insertEntity(db: VaultDb, row: VaultEntityRow, transactionId: string): Promise<void> {
+  if (!ENTITY_TABLES.has(row.table)) throw new Error(`Unsupported vault entity table: ${String(row.table)}`);
   const id = entityId(row);
   const base = [
     str("id", id),
@@ -144,8 +168,15 @@ async function insertEntity(db: VaultDb, row: VaultEntityRow, transactionId: str
     );
     return;
   }
+  if (!DOCUMENT_LIKE_TABLES.has(row.table)) throw new Error(`Unsupported vault entity table: ${row.table}`);
+  const tableSql =
+    row.table === "document"
+      ? "document"
+      : row.table === "transcript"
+        ? "transcript"
+        : "artifact";
   await db.execute(
-    `INSERT INTO ${row.table} (id, customer_id, program_id, source_type, source_id, recorded_at, name, source_label, compass_document_id, version_id)
+    `INSERT INTO ${tableSql} (id, customer_id, program_id, source_type, source_id, recorded_at, name, source_label, compass_document_id, version_id)
      VALUES (:id, :customer_id, :program_id, :source_type, :source_id, :recorded_at::timestamptz, :name, :source_label, :compass_document_id, :version_id)`,
     [
       ...base,

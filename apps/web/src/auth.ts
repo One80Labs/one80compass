@@ -96,7 +96,7 @@ export function restoreSession(): Promise<Session | null> {
   const user = pool.getCurrentUser();
   if (!user) return Promise.resolve(null);
   return new Promise((resolve) => {
-    user.getSession((error: Error | null, session: CognitoUserSession | null) => {
+    user.getSession(async (error: Error | null, session: CognitoUserSession | null) => {
       if (error || !session) {
         resolve(null);
         return;
@@ -107,8 +107,17 @@ export function restoreSession(): Promise<Session | null> {
       const email =
         typeof emailClaim === "string" ? emailClaim : typeof usernameClaim === "string" ? usernameClaim : user.getUsername();
       const restored = readSession(session, email);
-      // A pool that requires MFA issues the token only after the code, and the ID token has no amr claim.
-      resolve(mfaRequired && restored.adminGroup ? { ...restored, mfa: true } : restored);
+      // Do not invent MFA satisfaction. Prefer token evidence, then Cognito enrollment for admins.
+      if (!(mfaRequired && restored.adminGroup) || restored.mfa) {
+        resolve(restored);
+        return;
+      }
+      try {
+        const enrolled = await mfaIsEnrolled(email);
+        resolve({ ...restored, mfa: enrolled });
+      } catch {
+        resolve(restored);
+      }
     });
   });
 }

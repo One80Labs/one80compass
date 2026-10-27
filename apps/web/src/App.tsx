@@ -57,7 +57,21 @@ export function App() {
 }
 
 function SignedIn({ session, onSession, children }: { session: Session | null; onSession: (session: Session | null) => void; children: ReactNode }) {
-  if (!session) return children;
+  if (!session) {
+    return (
+      <main className="gate">
+        <h1>One80Compass</h1>
+        <SignIn onSession={onSession} />
+      </main>
+    );
+  }
+  if (mfaRequired && session.adminGroup && !session.mfa) {
+    return (
+      <main className="gate">
+        <MfaGate session={session} onSession={onSession} />
+      </main>
+    );
+  }
   return (
     <Shell session={session} onSession={onSession}>
       {children}
@@ -89,8 +103,9 @@ function Home({ session, onSession }: { session: Session | null; onSession: (ses
 }
 
 function SignIn({ onSession }: { onSession: (session: Session) => void }) {
-  const [email, setEmail] = useState("nick@one80labs.com");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [pendingUser, setPendingUser] = useState<CognitoUser | null>(null);
   const [mode, setMode] = useState<"password" | "newPassword" | "totp">("password");
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +120,7 @@ function SignIn({ onSession }: { onSession: (session: Session) => void }) {
         return;
       }
       if (mode === "totp" && pendingUser) {
-        onSession(await submitTotp(pendingUser, email, password));
+        onSession(await submitTotp(pendingUser, email, totpCode));
         return;
       }
       applyResult(await signIn(email, password));
@@ -138,13 +153,24 @@ function SignIn({ onSession }: { onSession: (session: Session) => void }) {
       {mode === "password" && !mfaRequired && <p>This development site signs you in with your email and password.</p>}
       <label>
         {label}
-        <input
-          type={mode === "totp" ? "text" : "password"}
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          autoComplete={mode === "password" ? "current-password" : "new-password"}
-          required
-        />
+        {mode === "totp" ? (
+          <input
+            type="text"
+            inputMode="numeric"
+            value={totpCode}
+            onChange={(event) => setTotpCode(event.target.value)}
+            autoComplete="one-time-code"
+            required
+          />
+        ) : (
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete={mode === "password" ? "current-password" : "new-password"}
+            required
+          />
+        )}
       </label>
       {error && <p className="error">{error}</p>}
       <button type="submit">Continue</button>
@@ -234,7 +260,8 @@ function Dashboard({ session }: { session: Session }) {
       .then((result) => {
         const label = result.summary.progress ?? "Not Started / No Tasks";
         setProgress(label);
-        setPercent(label.endsWith("%") ? Number(label.replace("%", "")) : null);
+        const parsed = label.endsWith("%") ? Number(label.replace("%", "")) : NaN;
+        setPercent(Number.isFinite(parsed) ? parsed : null);
         setActivity(result.activity.slice(0, 4));
       })
       .catch(() => undefined);
