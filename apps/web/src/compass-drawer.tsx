@@ -56,7 +56,6 @@ export function CompassIssueDrawer({
   iterations,
   users,
   datesDerived,
-  summary,
   derivedStart,
   derivedFinish,
   onClose,
@@ -72,7 +71,6 @@ export function CompassIssueDrawer({
   iterations: IterationChoice[];
   users: Person[];
   datesDerived: boolean;
-  summary: boolean;
   derivedStart: string | null;
   derivedFinish: string | null;
   onClose: () => void;
@@ -178,15 +176,6 @@ export function CompassIssueDrawer({
     <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
       <p className="muted small">
         Key <strong>{displayKey ?? "—"}</strong>
-      </p>
-      <p>
-        Saved in Compass for this project. GitHub is not updated.
-        {datesDerived
-          ? " Start and Finish come from the tasks and subtasks under this item."
-          : summary
-            ? " Choosing an iteration fills Start and Finish. You can still change the dates."
-            : " Choosing an iteration fills Start and Finish from that iteration. You can still change the dates."}{" "}
-        A comment is stored with your name and the date.
       </p>
       <label>
         Title

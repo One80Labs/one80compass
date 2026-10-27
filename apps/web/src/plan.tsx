@@ -333,7 +333,6 @@ export function PlanPage({ session }: { session: Session | null }) {
           iterations={plan.data.settings.iterations ?? []}
           users={plan.data.settings.assignableUsers ?? []}
           datesDerived={derivedDates(editing, issues, workstreamNumber)}
-          summary={summaryIssue(editing, issues, workstreamNumber)}
           derivedStart={rolledDates(editing, issues, workstreamNumber)?.startDate ?? null}
           derivedFinish={rolledDates(editing, issues, workstreamNumber)?.finishDate ?? null}
           onClose={() => setEditingId(null)}
@@ -352,7 +351,6 @@ export function PlanPage({ session }: { session: Session | null }) {
           iterations={plan.data?.settings?.iterations ?? []}
           users={plan.data?.settings?.assignableUsers ?? []}
           datesDerived={derivedDates(editing, issues, workstreamNumber)}
-          summary={summaryIssue(editing, issues, workstreamNumber)}
           derivedStart={rolledDates(editing, issues, workstreamNumber)?.startDate ?? null}
           derivedFinish={rolledDates(editing, issues, workstreamNumber)?.finishDate ?? null}
           onClose={() => setEditingId(null)}
@@ -644,7 +642,6 @@ export function KanbanPage({ session }: { session: Session | null }) {
           iterations={plan.data.settings.iterations ?? []}
           users={plan.data.settings.assignableUsers ?? []}
           datesDerived={derivedDates(editing, allIssues, workstreamNumber)}
-          summary={summaryIssue(editing, allIssues, workstreamNumber)}
           derivedStart={rolledDates(editing, allIssues, workstreamNumber)?.startDate ?? null}
           derivedFinish={rolledDates(editing, allIssues, workstreamNumber)?.finishDate ?? null}
           onClose={() => setEditing(null)}
@@ -663,7 +660,6 @@ export function KanbanPage({ session }: { session: Session | null }) {
           iterations={plan.data?.settings?.iterations ?? []}
           users={plan.data?.settings?.assignableUsers ?? []}
           datesDerived={derivedDates(editing, allIssues, workstreamNumber)}
-          summary={summaryIssue(editing, allIssues, workstreamNumber)}
           derivedStart={rolledDates(editing, allIssues, workstreamNumber)?.startDate ?? null}
           derivedFinish={rolledDates(editing, allIssues, workstreamNumber)?.finishDate ?? null}
           onClose={() => setEditing(null)}
@@ -711,7 +707,6 @@ function IssueDrawer({
   iterations,
   users,
   datesDerived,
-  summary,
   derivedStart,
   derivedFinish,
   onClose,
@@ -723,7 +718,6 @@ function IssueDrawer({
   iterations: IterationChoice[];
   users: GitHubUser[];
   datesDerived: boolean;
-  summary: boolean;
   derivedStart: string | null;
   derivedFinish: string | null;
   onClose: () => void;
@@ -801,15 +795,6 @@ function IssueDrawer({
       <p className="muted small">
         Key <strong>{displayKey ?? "—"}</strong>
       </p>
-      <p>
-        Title, description, status, effort, iteration, assignee, and comments are sent to GitHub.
-        {datesDerived
-          ? " Start and Finish come from the tasks and subtasks under this item."
-          : summary
-            ? " Choosing an iteration fills Start and Finish. You can still change the dates. Those dates stay until a task or subtask is added, and then they come from those items."
-            : " Choosing an iteration fills Start and Finish from that iteration. A later iteration keeps Start and sets Finish to the new end date. You can still change the dates."}{" "}
-        The timeline bar uses Start and Finish. A comment is stored with your name and the date.
-      </p>
       <label>
         Title
         <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={200} />
@@ -880,11 +865,6 @@ function IssueDrawer({
 
 function derivedDates(issue: PlanIssue, issues: PlanIssue[], workstreamNumber: number | null): boolean {
   return derivedSchedule(issues.map(planNode), workstreamNumber, issue.issueId) !== null;
-}
-
-function summaryIssue(issue: PlanIssue, issues: PlanIssue[], workstreamNumber: number | null): boolean {
-  const nodes = issues.map(planNode);
-  return datesAreDerived(planKind(planNode(issue), new Map(nodes.map((item) => [item.issueId, item])), workstreamNumber));
 }
 
 function rolledDates(issue: PlanIssue, issues: PlanIssue[], workstreamNumber: number | null) {
