@@ -101,6 +101,12 @@ async function transition(ctx: ReportCtx, projectId: string, reportId: string, a
       publishedBy: ctx.principal.userId,
     };
     await ctx.deps.store.putReportVersion(version);
+    if (ctx.deps.putReportText) {
+      await ctx.deps.putReportText(
+        `customers/${report.customerId}/projects/${projectId}/reports/${reportId}/versions/${version.versionId}.md`,
+        report.body,
+      );
+    }
     const published = { ...report, status: "published" as const, updatedAt: now };
     await ctx.deps.store.putReport(published);
     await audit(ctx, report.customerId, projectId, "report.published", reportId, { status: report.status }, { status: "published", versionId: version.versionId });

@@ -203,6 +203,17 @@ function ReportsPreview() {
   return (
     <>
       <PageHead title="Status reports." subtitle="Published updates on progress for Amur." action={<button className="btn primary" type="button">Create report</button>} />
+      <section className="panel">
+        <h3>Draft from vault</h3>
+        <label>
+          Question
+          <input className="field" defaultValue="What did the vendor sign?" />
+        </label>
+        <button className="btn" type="button">
+          Draft from vault
+        </button>
+        <p className="copy">The vendor signed the SOW on Monday. [compass-upload doc-9 ver-3]</p>
+      </section>
       <Tabs label="Reports" tabs={["All reports", "Summary view"]} value="All reports" onChange={() => undefined} />
       <div className="table-wrap">
         <table>

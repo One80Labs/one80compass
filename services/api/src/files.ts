@@ -21,5 +21,16 @@ export function createFileSigner(bucket: string) {
         { expiresIn: 300 },
       );
     },
+    /** Store published status report text beside project documents. */
+    putReportText(objectKey: string, body: string) {
+      return s3.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: objectKey,
+          Body: body,
+          ContentType: "text/markdown; charset=utf-8",
+        }),
+      ).then(() => undefined);
+    },
   };
 }

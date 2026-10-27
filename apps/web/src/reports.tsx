@@ -33,6 +33,7 @@ export function ReportsPage({ session }: { session: Session | null }) {
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newBody, setNewBody] = useState("");
+  const [vaultQuestion, setVaultQuestion] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,6 +54,17 @@ export function ReportsPage({ session }: { session: Session | null }) {
     navigate(`/projects/${projectId}/reports/${created.reportId}`);
   }
 
+  async function draftFromVault() {
+    if (!session) return;
+    setError(null);
+    const drafted = await api<{ report: Report }>(`/projects/${projectId}/reports/draft`, session.idToken, {
+      method: "POST",
+      body: { question: vaultQuestion },
+    });
+    setVaultQuestion("");
+    navigate(`/projects/${projectId}/reports/${drafted.report.reportId}`);
+  }
+
   const published = reports.filter((report) => report.status === "published");
 
   return (
@@ -70,6 +82,24 @@ export function ReportsPage({ session }: { session: Session | null }) {
       />
       {!session && <p>Sign in to open reports.</p>}
       {error && <p className="error">{error}</p>}
+      {session?.adminGroup && (
+        <section className="panel">
+          <h3>Draft from vault</h3>
+          <label>
+            Question
+            <input className="field" value={vaultQuestion} onChange={(event) => setVaultQuestion(event.target.value)} />
+          </label>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => {
+              draftFromVault().catch((caught) => setError(message(caught)));
+            }}
+          >
+            Draft from vault
+          </button>
+        </section>
+      )}
       <Tabs label="Reports" tabs={["All reports", "Summary view"]} value={tab} onChange={setTab} />
       {tab === "Summary view" ? (
         <section className="panel">

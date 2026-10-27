@@ -84,6 +84,10 @@ export type DocumentFolder = {
   createdAt: string;
 };
 
+/** Labels that mark a Compass file for the staff vault. Null means the file stays out of the vault. */
+export const DOCUMENT_SOURCE_LABELS = ["compass-upload", "krisp", "fireflies", "other"] as const;
+export type DocumentSourceLabel = (typeof DOCUMENT_SOURCE_LABELS)[number];
+
 export type PortalDocument = {
   documentId: string;
   projectId: string;
@@ -93,7 +97,18 @@ export type PortalDocument = {
   currentVersionId: string | null;
   deletedAt: string | null;
   createdAt: string;
+  /** Vault filing label. Missing or unknown store values parse as null. */
+  sourceLabel: DocumentSourceLabel | null;
 };
+
+/** Missing or unknown labels become null so the file is not filed in the vault. */
+export function documentSourceLabelFromStore(value: unknown): DocumentSourceLabel | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return (DOCUMENT_SOURCE_LABELS as readonly string[]).includes(trimmed)
+    ? (trimmed as DocumentSourceLabel)
+    : null;
+}
 
 export type DocumentVersion = {
   versionId: string;

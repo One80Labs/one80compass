@@ -3,6 +3,7 @@ import {
   catalogIssueTypesFromStore,
   catalogLabelsFromStore,
   catalogMilestonesFromStore,
+  documentSourceLabelFromStore,
   isModuleKey,
   labelIdsFromStore,
   memberRole,
@@ -740,6 +741,7 @@ function asDocument(item: Item): PortalDocument {
     currentVersionId: item.currentVersionId == null ? null : String(item.currentVersionId),
     deletedAt: item.deletedAt == null ? null : String(item.deletedAt),
     createdAt: String(item.createdAt),
+    sourceLabel: documentSourceLabelFromStore(item.sourceLabel),
   };
 }
 

@@ -17,6 +17,7 @@ type OverviewResponse = {
   publishedReport: { reportId: string; title: string; publishedAt: string } | null;
   activity: { eventId: string; action: string; at: string }[];
 };
+type DocumentSourceLabel = "compass-upload" | "krisp" | "fireflies" | "other";
 type ListedDocument = {
   documentId: string;
   name: string;
@@ -25,6 +26,8 @@ type ListedDocument = {
   currentFileName: string | null;
   currentVersionId: string | null;
   deletedAt?: string | null;
+  /** Vault filing label. Null keeps the file out of the staff vault. */
+  sourceLabel?: DocumentSourceLabel | null;
 };
 type ListedFolder = { path: string; name: string; parent: string };
 type StoredVersion = {
@@ -437,6 +440,20 @@ export function DocumentsPage({ session }: { session: Session | null }) {
                               }}
                             />
                           )}
+                          {canWrite && (
+                            <SourceLabelSelect
+                              value={document.sourceLabel ?? null}
+                              onChange={(sourceLabel) => {
+                                if (!session) return;
+                                api(`/projects/${projectId}/documents/${document.documentId}`, session.idToken, {
+                                  method: "PATCH",
+                                  body: { sourceLabel },
+                                })
+                                  .then(reload)
+                                  .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not set the source label."));
+                              }}
+                            />
+                          )}
                         </span>
                       )}
                     </td>
@@ -718,6 +735,33 @@ function MoveFolder({ folders, value, onMove }: { folders: ListedFolder[]; value
           {folder.path}
         </option>
       ))}
+    </select>
+  );
+}
+
+/** Staff control for filing a document into the vault by source label. */
+function SourceLabelSelect({
+  value,
+  onChange,
+}: {
+  value: DocumentSourceLabel | null;
+  onChange: (sourceLabel: DocumentSourceLabel | null) => void;
+}) {
+  return (
+    <select
+      className="field"
+      aria-label="Vault source label"
+      value={value ?? ""}
+      onChange={(event) => {
+        const next = event.target.value;
+        onChange(next === "" ? null : (next as DocumentSourceLabel));
+      }}
+    >
+      <option value="">No vault label</option>
+      <option value="compass-upload">compass-upload</option>
+      <option value="krisp">krisp</option>
+      <option value="fireflies">fireflies</option>
+      <option value="other">other</option>
     </select>
   );
 }

@@ -1,11 +1,13 @@
 import { adminAccess, canAccessCustomer, canAccessProject, canWriteProject, principalFromClaims, type Principal } from "../../../packages/authz/src/index";
 import {
+  documentSourceLabelFromStore,
   isModuleKey,
   isProjectHealth,
   memberRole,
   MAX_UPLOAD_BYTES,
   type AuditEvent,
   type DocumentFolder,
+  type DocumentSourceLabel,
   type DocumentVersion,
   type MemberRole,
   type Membership,
@@ -19,7 +21,10 @@ import { projectProgress } from "../../../packages/domain/src/progress";
 import { handlePlan } from "./plan";
 import { handleCatalogs } from "./catalogs";
 import { handleReports } from "./reports";
+import { handleVaultDraft } from "./vault-draft";
+import { handleVaultIngest, type VaultIngestDeps } from "./vault-ingest";
 import type { Store } from "./store";
+import type { VaultChunk } from "../../vault/src/types";
 import { acceptWebhook } from "./webhook";
 
 export type HttpEvent = {
@@ -50,6 +55,12 @@ export type HandlerDeps = {
   now: () => Date;
   signUpload: (objectKey: string, sizeBytes: number) => Promise<string>;
   signDownload: (objectKey: string, fileName: string, contentType: string) => Promise<string>;
+  /** Optional: store published report markdown in the documents bucket. */
+  putReportText?: (objectKey: string, body: string) => Promise<void>;
+  /** Staff vault ingest and allowlist. Absent in unit tests that do not exercise vault routes. */
+  vault?: VaultIngestDeps;
+  /** Chunks already filtered by customer and program for a status draft. */
+  loadVaultChunks?: (customerId: string, programId: string) => Promise<VaultChunk[]>;
   maxUploadBytes?: number;
   enqueue: (message: SyncMessage) => Promise<void>;
   githubConfigured: boolean;
@@ -106,6 +117,39 @@ export function createHandler(deps: HandlerDeps) {
       if (catalogs) return catalogs;
       const reported = await handleReports({ deps, principal, method, path, body, correlationId });
       if (reported) return reported;
+      if (deps.vault) {
+        const vaulted = await handleVaultIngest({ deps, principal, method, path, body, correlationId }, deps.vault);
+        if (vaulted) return vaulted;
+      }
+      if (deps.loadVaultChunks) {
+        const drafted = await handleVaultDraft({
+          deps: {
+            getProject: (id) => deps.store.getProject(id),
+            listMembershipsForUser: (id) => deps.store.listMembershipsForUser(id),
+            loadWorkItems: async (projectId) =>
+              (await deps.store.listIssues(projectId)).map((issue) => ({
+                issueId: issue.issueId,
+                title: issue.title,
+                status: issue.status,
+                issueType: issue.issueType,
+                startDate: issue.startDate,
+                finishDate: issue.finishDate,
+                effort: issue.effort,
+                description: issue.description,
+              })),
+            loadChunks: (customerId, programId) => deps.loadVaultChunks!(customerId, programId),
+            createReport: (report) => deps.store.createReport(report),
+            newId: deps.newId,
+            now: deps.now,
+          },
+          principal,
+          method,
+          path,
+          body,
+          correlationId,
+        });
+        if (drafted) return drafted;
+      }
 
       if (path === "/admin/members" && method === "GET") return listMembers(deps, ctx);
 
@@ -733,21 +777,37 @@ async function moveDocumentToFolder(deps: HandlerDeps, ctx: Ctx, projectId: stri
   if (!document) return notFound(ctx);
   const blocked = await rejectView(deps, ctx, { customerId: document.customerId, projectId });
   if (blocked) return blocked;
-  const folder = folderField(ctx.body.folder);
-  if (folder === null) return validation(ctx, "Choose an existing folder.");
-  const documents = await deps.store.listDocuments(projectId);
-  const known = new Set(visibleFolders(await deps.store.listFolders(projectId), documents).map((item) => item.path));
-  if (folder && !known.has(folder)) return validation(ctx, "Choose an existing folder.");
-  const moved = { ...document, folder };
+  const hasFolder = Object.prototype.hasOwnProperty.call(ctx.body, "folder");
+  const hasSourceLabel = Object.prototype.hasOwnProperty.call(ctx.body, "sourceLabel");
+  if (!hasFolder && !hasSourceLabel) return validation(ctx, "folder or sourceLabel is required.");
+
+  let folder = document.folder;
+  if (hasFolder) {
+    const nextFolder = folderField(ctx.body.folder);
+    if (nextFolder === null) return validation(ctx, "Choose an existing folder.");
+    const documents = await deps.store.listDocuments(projectId);
+    const known = new Set(visibleFolders(await deps.store.listFolders(projectId), documents).map((item) => item.path));
+    if (nextFolder && !known.has(nextFolder)) return validation(ctx, "Choose an existing folder.");
+    folder = nextFolder;
+  }
+
+  let sourceLabel = document.sourceLabel;
+  if (hasSourceLabel) {
+    const parsed = parseSourceLabelField(ctx.body.sourceLabel);
+    if (parsed === undefined) return validation(ctx, "sourceLabel must be compass-upload, krisp, fireflies, other, or null.");
+    sourceLabel = parsed;
+  }
+
+  const moved = { ...document, folder, sourceLabel };
   await deps.store.putDocument(moved);
   await audit(deps, ctx, {
     customerId: document.customerId,
     projectId,
-    action: "document.moved",
+    action: hasFolder && folder !== document.folder ? "document.moved" : "document.updated",
     targetType: "document",
     targetId: documentId,
-    before: { folder: document.folder },
-    after: { folder },
+    before: { folder: document.folder, sourceLabel: document.sourceLabel },
+    after: { folder, sourceLabel },
   });
   return json(200, moved, ctx.correlationId);
 }
@@ -795,6 +855,10 @@ async function createDocument(deps: HandlerDeps, ctx: Ctx, projectId: string): P
   if (!file) return validation(ctx, "fileName, contentType, and sizeBytes are required.");
   const documentId = deps.newId();
   const versionId = deps.newId();
+  const sourceLabel = parseSourceLabelField(ctx.body.sourceLabel);
+  if (sourceLabel === undefined) {
+    return validation(ctx, "sourceLabel must be compass-upload, krisp, fireflies, other, or null.");
+  }
   const document: PortalDocument = {
     documentId,
     projectId,
@@ -804,6 +868,7 @@ async function createDocument(deps: HandlerDeps, ctx: Ctx, projectId: string): P
     currentVersionId: null,
     deletedAt: null,
     createdAt: deps.now().toISOString(),
+    sourceLabel: sourceLabel ?? null,
   };
   const version = newVersion(deps, ctx, document, versionId, file);
   await deps.store.createDocument(document);
@@ -969,6 +1034,20 @@ function folderField(value: unknown): string | null {
   if (folder.length > 120 || folder.includes("..") || folder.startsWith("/") || folder.endsWith("/")) return null;
   if (!/^[A-Za-z0-9 _./-]+$/.test(folder)) return null;
   return folder;
+}
+
+/**
+ * Parses a document vault source label.
+ * `undefined` means the value is present but invalid (unknown non-empty label).
+ * Omitted, null, or blank clears to null so the file stays out of the vault.
+ */
+function parseSourceLabelField(value: unknown): DocumentSourceLabel | null | undefined {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = documentSourceLabelFromStore(trimmed);
+  return parsed ?? undefined;
 }
 
 function newVersion(deps: HandlerDeps, ctx: Ctx, document: PortalDocument, versionId: string, file: FileFields): DocumentVersion {

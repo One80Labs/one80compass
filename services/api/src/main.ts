@@ -6,18 +6,23 @@ import { MAX_UPLOAD_BYTES } from "../../../packages/domain/src/index";
 import { createFileSigner } from "./files";
 import { createHandler } from "./router";
 import { DynamoStore } from "./store";
+import { createLoadVaultChunks, createObjectTextReader, createVaultIngestDeps } from "./vault-client";
 
 const tableName = required("TABLE_NAME");
 const userPoolId = required("USER_POOL_ID");
 const bucketName = required("BUCKET_NAME");
 const queueUrl = process.env.SYNC_QUEUE_URL ?? "";
+const vaultFunctionName = process.env.VAULT_FUNCTION_NAME ?? "";
 const files = createFileSigner(bucketName);
+const readObjectText = createObjectTextReader(bucketName);
 const sqs = new SQSClient({});
 const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET ?? "";
 const githubConfigured = Boolean(process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY && webhookSecret);
 
 const store = new DynamoStore(DynamoDBDocumentClient.from(new DynamoDBClient({})), tableName);
 const cognito = new CognitoIdentityProviderClient({});
+const vault = createVaultIngestDeps({ store, vaultFunctionName, readObjectText });
+const loadVaultChunks = createLoadVaultChunks({ vaultFunctionName });
 
 export const handler = createHandler({
   store,
@@ -26,6 +31,9 @@ export const handler = createHandler({
   maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES ?? MAX_UPLOAD_BYTES),
   signUpload: files.signUpload,
   signDownload: files.signDownload,
+  putReportText: files.putReportText,
+  vault: vault ?? undefined,
+  loadVaultChunks,
   webhookSecret,
   githubConfigured,
   listAdminUserIds: async () => {

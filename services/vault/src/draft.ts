@@ -1,0 +1,173 @@
+import type { SourceLabel, VaultChunk } from "./types";
+
+export type DraftWorkItem = {
+  issueId: string;
+  title: string;
+  status: string;
+  issueType: string | null;
+  startDate: string | null;
+  finishDate: string | null;
+  effort: number | null;
+  description: string | null;
+};
+
+export type DraftCitation = {
+  sourceLabel: SourceLabel;
+  documentId: string;
+  versionId: string;
+  excerpt: string;
+};
+
+export type DraftClaim = {
+  text: string;
+  workItemId?: string;
+  citation?: { sourceLabel: SourceLabel; documentId: string; versionId: string };
+};
+
+export type DraftStatusInput = {
+  customerId: string;
+  programId: string;
+  question: string;
+  workItems: DraftWorkItem[];
+  chunks: VaultChunk[];
+};
+
+export type DraftStatusResult = {
+  title: string;
+  body: string;
+  citations: DraftCitation[];
+  claims: DraftClaim[];
+};
+
+const EMPTY_BODY = "No filed source supports that.";
+
+/** Pure status draft from work items and filed chunks. Does not write issues or plans. */
+export function draftStatus(input: DraftStatusInput): DraftStatusResult {
+  const kept = input.chunks.filter(
+    (chunk) => chunk.customerId === input.customerId && chunk.programId === input.programId,
+  );
+  const claims: DraftClaim[] = [];
+  const citations: DraftCitation[] = [];
+
+  for (const item of input.workItems) {
+    if (!answersQuestion(input.question, workItemHaystack(item))) continue;
+    const text = workItemClaimText(item);
+    if (!text) continue;
+    claims.push({ text, workItemId: item.issueId });
+  }
+
+  for (const chunk of kept) {
+    if (!answersQuestion(input.question, chunk.body)) continue;
+    const excerpt = excerptOf(chunk.body);
+    if (!excerpt) continue;
+    const text = fileClaimText(chunk.body, excerpt);
+    const citation = {
+      sourceLabel: chunk.sourceLabel,
+      documentId: chunk.documentId,
+      versionId: chunk.versionId,
+    };
+    claims.push({ text, citation });
+    citations.push({ ...citation, excerpt });
+  }
+
+  if (claims.length === 0) {
+    return { title: "Status draft", body: EMPTY_BODY, citations: [], claims: [] };
+  }
+
+  const body = claims
+    .map((claim) => {
+      if (claim.workItemId) return `${claim.text} [work item ${claim.workItemId}]`;
+      if (claim.citation) {
+        const { sourceLabel, documentId, versionId } = claim.citation;
+        return `${claim.text} [${sourceLabel} ${documentId} ${versionId}]`;
+      }
+      return claim.text;
+    })
+    .join("\n");
+
+  return { title: "Status draft", body, citations, claims };
+}
+
+function workItemHaystack(item: DraftWorkItem): string {
+  return [
+    item.title,
+    item.status,
+    item.issueType ?? "",
+    item.startDate ?? "",
+    item.finishDate ?? "",
+    item.effort == null ? "" : String(item.effort),
+    item.description ?? "",
+  ].join(" ");
+}
+
+function workItemClaimText(item: DraftWorkItem): string | null {
+  const parts: string[] = [];
+  parts.push(`${item.title} is ${item.status}`);
+  if (item.issueType) parts.push(`issue type ${item.issueType}`);
+  if (item.startDate) parts.push(`starts ${item.startDate}`);
+  if (item.finishDate) parts.push(`finishes ${item.finishDate}`);
+  if (item.effort != null) parts.push(`effort ${item.effort}`);
+  if (item.description?.trim()) parts.push(item.description.trim());
+  const text = parts.join("; ");
+  return text.trim() ? `${text}.` : null;
+}
+
+function fileClaimText(body: string, excerpt: string): string {
+  const trimmed = body.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= 280) return trimmed.endsWith(".") ? trimmed : `${trimmed}.`;
+  return excerpt.endsWith(".") ? excerpt : `${excerpt}.`;
+}
+
+function excerptOf(body: string): string {
+  const cleaned = body.trim().replace(/\s+/g, " ");
+  if (!cleaned) return "";
+  return cleaned.length <= 160 ? cleaned : `${cleaned.slice(0, 157).trimEnd()}...`;
+}
+
+function answersQuestion(question: string, haystack: string): boolean {
+  const tokens = significantTokens(question);
+  if (tokens.length === 0) return false;
+  const hay = haystack.toLowerCase();
+  return tokens.some((token) => hay.includes(token));
+}
+
+function significantTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 2 && !STOP.has(token));
+}
+
+const STOP = new Set([
+  "the",
+  "and",
+  "for",
+  "are",
+  "was",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "how",
+  "does",
+  "did",
+  "about",
+  "with",
+  "from",
+  "that",
+  "this",
+  "have",
+  "has",
+  "had",
+  "any",
+  "all",
+  "our",
+  "you",
+  "your",
+  "status",
+  "report",
+  "please",
+  "tell",
+]);

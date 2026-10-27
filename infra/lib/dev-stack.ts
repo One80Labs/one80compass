@@ -25,6 +25,7 @@ import * as sources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as events from "aws-cdk-lib/aws-events";
 import * as targets from "aws-cdk-lib/aws-events-targets";
 import { Construct } from "constructs";
+import { VaultDatabase } from "./vault-database";
 
 const ADMIN_EMAIL = "nick@one80labs.com";
 const SITE_DOMAIN = "one80compass.ai";
@@ -193,7 +194,7 @@ export class DevStack extends cdk.Stack {
       projectRoot: path.join(__dirname, "../.."),
       depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
       runtime: lambda.Runtime.NODEJS_20_X,
-      timeout: cdk.Duration.seconds(15),
+      timeout: cdk.Duration.seconds(60),
       environment: {
         TABLE_NAME: table.tableName,
         USER_POOL_ID: pool.userPoolId,
@@ -313,7 +314,15 @@ export class DevStack extends cdk.Stack {
     new route53.ARecord(this, "WwwA", { zone, recordName: "www", target: alias });
     new route53.AaaaRecord(this, "WwwAaaa", { zone, recordName: "www", target: alias });
 
+    const vault = new VaultDatabase(this, "Vault", {
+      table,
+      documentsBucket: documents,
+    });
+    apiFunction.addEnvironment("VAULT_FUNCTION_NAME", vault.vaultFunction.functionName);
+    vault.vaultFunction.grantInvoke(apiFunction);
+
     new cdk.CfnOutput(this, "SiteUrl", { value: `https://${SITE_DOMAIN}` });
+    new cdk.CfnOutput(this, "VaultFunctionName", { value: vault.vaultFunction.functionName });
     new cdk.CfnOutput(this, "UserPoolId", { value: pool.userPoolId });
     new cdk.CfnOutput(this, "UserPoolClientId", { value: client.userPoolClientId });
     new cdk.CfnOutput(this, "ApiUrl", { value: httpApi.apiEndpoint });

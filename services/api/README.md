@@ -16,9 +16,9 @@ Routes for the first slice:
 - `GET /projects/{projectId}`
 - `GET /projects/{projectId}/applications`
 - `GET` and `PUT /projects/{projectId}/overview`
-- `GET` and `POST /projects/{projectId}/documents`. The list includes folders. A folder path on an older file is shown even when that folder was not created separately.
+- `GET` and `POST /projects/{projectId}/documents`. The list includes folders. A folder path on an older file is shown even when that folder was not created separately. Create may set `sourceLabel` to `compass-upload`, `krisp`, `fireflies`, `other`, or null. A null label keeps the file out of the staff vault.
 - `POST /projects/{projectId}/folders` creates a folder in the current parent. `POST .../folders/delete` removes an empty folder.
-- `PATCH /projects/{projectId}/documents/{documentId}` moves a file into an existing folder. An empty folder value moves it back to All documents.
+- `PATCH /projects/{projectId}/documents/{documentId}` moves a file into an existing folder, or sets `sourceLabel`. An empty folder value moves it back to All documents.
 - `POST /projects/{projectId}/documents/{documentId}/versions` and `.../complete`
 - `GET /projects/{projectId}/documents/{documentId}/download`
 - `POST /projects/{projectId}/documents/{documentId}/delete` and `.../restore`
@@ -38,9 +38,12 @@ Routes for the first slice:
 - `POST /projects/{projectId}/baselines` sets Baseline 1 when an administrator sends the explanation, or proposes the next baseline after Baseline 1 exists. `POST .../baselines/{baselineId}/approve` and `.../reject` are administrator only. Rejecting requires an explanation. The task list on an approved baseline is not rewritten.
 - `POST /webhooks/github` without a Cognito token; it checks the GitHub signature and queues the delivery
 - `GET` and `POST /projects/{projectId}/reports`
+- `POST /projects/{projectId}/reports/draft` builds a cited status draft from vault work items and filed chunks. Administrator only. The body needs `question`. The draft does not change plan issues. Requires `loadVaultChunks` on the handler deps.
 - `GET` and `PUT /projects/{projectId}/reports/{reportId}`
 - `POST /projects/{projectId}/reports/{reportId}/submit`, `/approve`, `/publish`, and `/revise`
+- `PUT /projects/{projectId}/vault-allowlist` records or clears that project on the staff vault allowlist. Administrator only. The API invokes the vault Lambda; it does not hold the vault secret.
+- `POST /projects/{projectId}/vault-ingest` copies the allowlisted program and its filed documents into the vault. Administrator only. Plan and document text are read from DynamoDB and S3; rows are saved through the vault Lambda.
 
-Publishing stores an immutable copy. A later revision edits the working draft and leaves that copy unchanged.
+Publishing stores an immutable copy and, when `putReportText` is wired, also writes that markdown under the documents bucket. A later revision edits the working draft and leaves that copy unchanged.
 
 A missing or foreign project returns 404. A View member who can open the project receives 403 `VIEW_ONLY` on any change. Administrator routes require the `one80-admin` group on a token API Gateway has already verified. The dev pool does not require MFA before that token exists. A customer id in the JSON body is ignored. Uploads are limited to 25 MiB. Restoring a document does not replace its current version.
