@@ -68,7 +68,7 @@ import {
   toggleIssueType,
   type KanbanIssueTypeFilter,
 } from "./kanban-filters";
-import { matchPlanIssues, planSearchKeepIds, PLAN_SEARCH_MIN } from "./plan-search";
+import { matchPlanIssues, planSearchIsActive, planSearchKeepIds } from "./plan-search";
 import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs } from "./ui";
 
 type PlanIssue = {
@@ -171,8 +171,9 @@ export function PlanPage({ session }: { session: Session | null }) {
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
   const issues = activePlanIssues(plan.data?.issues ?? []);
   const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
-  const searchActive = searchQuery.trim().length >= PLAN_SEARCH_MIN;
-  const searchMatches = searchActive ? matchPlanIssues(issues, searchQuery) : [];
+  const projectKey = plan.data?.projectKey ?? null;
+  const searchActive = planSearchIsActive(searchQuery);
+  const searchMatches = searchActive ? matchPlanIssues(issues, searchQuery, projectKey) : [];
   const searchKeepIds = searchActive ? planSearchKeepIds(issues, searchMatches) : null;
   const bands = filterPlanBands(planBands(issues.map(planNode), workstreamNumber), searchKeepIds);
   const [addKind, setAddKind] = useState<Exclude<PlanKind, "workstream"> | null>(null);
@@ -198,6 +199,7 @@ export function PlanPage({ session }: { session: Session | null }) {
         <div>
           <PlanTypeaheadSearch
             query={searchQuery}
+            projectKey={projectKey}
             issues={issues}
             matches={searchMatches}
             onQueryChange={setSearchQuery}
@@ -1541,12 +1543,14 @@ function scheduleLabel(issue: Parameters<typeof scheduleText>[0]): string {
 
 function PlanTypeaheadSearch({
   query,
+  projectKey,
   issues,
   matches,
   onQueryChange,
   onPick,
 }: {
   query: string;
+  projectKey: string | null;
   issues: PlanIssue[];
   matches: PlanIssue[];
   onQueryChange: (value: string) => void;
@@ -1555,7 +1559,7 @@ function PlanTypeaheadSearch({
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const active = query.trim().length >= PLAN_SEARCH_MIN;
+  const active = planSearchIsActive(query);
   const suggestions = matches.slice(0, 12);
   const showList = open && active;
 
@@ -1578,7 +1582,7 @@ function PlanTypeaheadSearch({
         <input
           type="search"
           value={query}
-          placeholder="Search plan (3+ characters)…"
+          placeholder="Search title or key (COMP-31)…"
           aria-label="Search plan"
           aria-autocomplete="list"
           aria-expanded={showList}
@@ -1622,7 +1626,9 @@ function PlanTypeaheadSearch({
           }}
         />
       </label>
-      {!active && query.trim().length > 0 && <p className="muted small plan-search-hint">Type at least 3 characters to search.</p>}
+      {!active && query.trim().length > 0 && (
+        <p className="muted small plan-search-hint">Type at least 3 characters, or a key number such as 31.</p>
+      )}
       {showList && (
         <ul className="plan-search-suggestions" id="plan-search-suggestions" role="listbox" aria-label="Matching plan items">
           {suggestions.length === 0 ? (
@@ -1646,7 +1652,14 @@ function PlanTypeaheadSearch({
                 >
                   <span className="plan-search-title">{issue.title}</span>
                   <span className="muted small">
-                    {[issue.issueType, issue.status, issue.number != null ? `#${issue.number}` : null].filter(Boolean).join(" · ")}
+                    {[
+                      actionItemKey(projectKey, issue.keyNumber),
+                      issue.issueType,
+                      issue.status,
+                      issue.number != null ? `#${issue.number}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </span>
                 </button>
               </li>
