@@ -2,10 +2,12 @@
 
 ## Read these project files before planning or coding
 
-1. `product/One80Labs_Portal_Product_Technical_Spec_v7.5.md` — authoritative consolidated **product requirements**, policies, architecture, and source-of-truth boundaries.
-2. `product/One80Labs_Portal_Implementation_Plan_v7.5.md` — **release boundaries**, workstreams, dependencies, exit criteria, and validation.
-3. `product/One80Labs_Portal_GitHub_Backlog_v7.5.csv` — seed backlog for task decomposition (not a substitute for the specification).
-4. `product/One80Labs_Portal_Overview_v7.5.md` — short introduction; **not the complete requirements**.
+1. `product/One80Compass_Unified_Release_Plan.md` — **single release plan** (portal R1–R4 + staff vault/MCP). Use this for sequencing.
+2. `product/One80Labs_Portal_Product_Technical_Spec_v7.5.md` — authoritative consolidated **product requirements**, policies, architecture, and source-of-truth boundaries.
+3. `product/One80Labs_Portal_Implementation_Plan_v7.5.md` — historical R1–R4 boundaries (superseded for sequencing by the unified plan).
+4. `product/One80Labs_Portal_GitHub_Backlog_v7.5.csv` — seed backlog for task decomposition (not a substitute for the specification).
+5. `product/One80Labs_Portal_Overview_v7.5.md` — short introduction; **not the complete requirements**.
+6. `sop/staff-vault.md` — how staff operate the vault today; `adr/0011` and `adr/0012` for Compass ownership and vault.
 
 The `.docx` versions are human-readable reference copies; read the Markdown versions for Cursor planning. All four of the above files should be physically present inside the **open Cursor workspace**, for example in `docs/`. A file existing in another chat or on the computer outside the workspace does not guarantee that Cursor has received its contents. Explicitly attach/reference each file using Cursor's file-context feature or ask Cursor to read them from workspace paths.
 

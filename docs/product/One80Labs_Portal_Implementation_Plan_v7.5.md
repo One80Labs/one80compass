@@ -2,6 +2,8 @@
 
 *Phased implementation plan & release gates  |  Version 7.5*
 
+> **Sequencing note (2026-10-27):** Release sequencing and vault/MCP backlog now live in [`One80Compass_Unified_Release_Plan.md`](./One80Compass_Unified_Release_Plan.md). Keep this v7.5 file as historical product release boundaries; update the unified plan when priorities change.
+
 ## 1. Delivery objective
 
 Ship a secure, customer-ready replacement for the Confluence application directory, with basic integrated Documents, Project Plan, Kanban and Status Reports. Deliver in thin vertical slices; advanced capabilities remain committed backlog items, not MVP blockers.
