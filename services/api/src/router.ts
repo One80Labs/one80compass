@@ -171,6 +171,9 @@ export function createHandler(deps: HandlerDeps) {
       const audit = path.match(/^\/admin\/customers\/([^/]+)\/audit$/);
       if (audit && method === "GET") return listAudit(deps, ctx, decodeURIComponent(audit[1]));
 
+      const rename = path.match(/^\/admin\/projects\/([^/]+)$/);
+      if (rename && method === "PATCH") return renameProject(deps, ctx, decodeURIComponent(rename[1]));
+
       const applications = path.match(/^\/admin\/projects\/([^/]+)\/applications$/);
       if (applications && method === "POST") return createApplication(deps, ctx, decodeURIComponent(applications[1]));
 
@@ -446,7 +449,7 @@ async function createProject(deps: HandlerDeps, ctx: Ctx, customerId: string): P
   const gate = requireAdmin(ctx);
   if (gate) return gate;
   const name = stringField(ctx.body, "name");
-  if (!name) return validation(ctx, "name is required.");
+  if (!name || name.length > 120) return validation(ctx, "A project name up to 120 characters is required.");
   const customer = await deps.store.getCustomer(customerId);
   if (!customer) return notFound(ctx);
   const project = { projectId: deps.newId(), customerId, name, createdAt: deps.now().toISOString() };
@@ -461,6 +464,29 @@ async function createProject(deps: HandlerDeps, ctx: Ctx, customerId: string): P
     after: { name, customerId },
   });
   return json(201, project, ctx.correlationId);
+}
+
+/** Administrator renames the selected project. The name is portal-owned and does not change GitHub. */
+async function renameProject(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
+  const gate = requireAdmin(ctx);
+  if (gate) return gate;
+  const name = stringField(ctx.body, "name");
+  if (!name || name.length > 120) return validation(ctx, "A project name up to 120 characters is required.");
+  const project = await deps.store.getProject(projectId);
+  if (!project) return notFound(ctx);
+  if (project.name === name) return json(200, project, ctx.correlationId);
+  const next = { ...project, name };
+  await deps.store.putProject(next);
+  await audit(deps, ctx, {
+    customerId: project.customerId,
+    action: "project.renamed",
+    targetType: "project",
+    projectId: project.projectId,
+    targetId: project.projectId,
+    before: { name: project.name },
+    after: { name },
+  });
+  return json(200, next, ctx.correlationId);
 }
 
 async function createApplication(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {

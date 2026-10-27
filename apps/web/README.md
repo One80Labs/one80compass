@@ -2,7 +2,7 @@
 
 Vite and React. Sign-in uses the Cognito user pool from the dev stack. The browser keeps that session, so a refresh stays signed in. The app sends the ID token. API Gateway checks that token. The dev pool accepts email and password. Set `VITE_MFA_REQUIRED=true` only for a build whose pool requires an authenticator.
 
-An administrator can open and change every project. A Contributor can edit, add, and upload on the projects they can open. View can open those same screens and cannot change them. The members list and the invite form set that access. The API refuses a View change even if a button is shown.
+An administrator can open and change every project. A Contributor can edit, add, and upload on the projects they can open. View can open those same screens and cannot change them. The members list and the invite form set that access. The API refuses a View change even if a button is shown. An administrator renames the selected project in Settings, under General.
 
 Overview stores health and notes. Documents uploads a file through a short-lived S3 URL, keeps older versions, and restores a soft-deleted file without replacing the current version. New folder creates a folder in the current location, including an empty one. A file can be moved into a folder that already exists. Each file can carry a vault source label (`compass-upload`, `krisp`, `fireflies`, or `other`). A file without a label stays out of the staff vault.
 

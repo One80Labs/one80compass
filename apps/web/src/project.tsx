@@ -4,7 +4,7 @@ import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import { usePortal } from "./shell";
 import { MilestonePanel } from "./plan";
-import { Notice, PageHead, Pill, Tabs, fileKind, formatSize, formatWhen } from "./ui";
+import { EditDrawer, Notice, PageHead, Pill, Tabs, fileKind, formatSize, formatWhen } from "./ui";
 import type { MilestoneView } from "../../../packages/domain/src/milestones";
 
 type Health = "green" | "yellow" | "red" | "";
@@ -60,6 +60,7 @@ export function OverviewPage({ session }: { session: Session | null }) {
   const [health, setHealth] = useState<Health>("");
   const [explanation, setExplanation] = useState("");
   const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -80,6 +81,7 @@ export function OverviewPage({ session }: { session: Session | null }) {
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!session) return;
+    setSaving(true);
     setError(null);
     try {
       await api(`/projects/${projectId}/overview`, session.idToken, {
@@ -88,10 +90,20 @@ export function OverviewPage({ session }: { session: Session | null }) {
       });
       const result = await api<OverviewResponse>(`/projects/${projectId}/overview`, session.idToken);
       setData(result);
+      setHealth(result.overview.health ?? "");
+      setExplanation(result.overview.healthExplanation ?? "");
+      setNotes(result.overview.notes);
+      setSaving(false);
       setEditing(false);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not save the overview.");
+      setSaving(false);
     }
+  }
+
+  function closeEdit() {
+    setSaving(false);
+    setEditing(false);
   }
 
   const name = data?.project.name ?? project?.name ?? "this project";
@@ -206,37 +218,27 @@ export function OverviewPage({ session }: { session: Session | null }) {
         </>
       )}
       {editing && canWrite && (
-        <div className="dialog-layer" onClick={() => setEditing(false)}>
-          <form className="dialog" role="dialog" aria-modal="true" aria-label="Edit overview" onClick={(event) => event.stopPropagation()} onSubmit={save}>
-            <h2>Edit overview</h2>
-            <p>Health and notes are saved for this project.</p>
-            <label>
-              Health
-              <select className="field" value={health} onChange={(event) => setHealth(event.target.value as Health)}>
-                <option value="">Not set</option>
-                <option value="green">Green</option>
-                <option value="yellow">Yellow</option>
-                <option value="red">Red</option>
-              </select>
-            </label>
-            <label>
-              Health explanation
-              <input className="field" value={explanation} onChange={(event) => setExplanation(event.target.value)} />
-            </label>
-            <label>
-              Notes
-              <textarea className="field" value={notes} onChange={(event) => setNotes(event.target.value)} />
-            </label>
-            <div className="dialog-actions">
-              <button className="btn" type="button" onClick={() => setEditing(false)}>
-                Cancel
-              </button>
-              <button className="btn primary" type="submit">
-                Save overview
-              </button>
-            </div>
-          </form>
-        </div>
+        <EditDrawer title="Edit overview" onClose={closeEdit} onSubmit={save} saving={saving}>
+          <p>Health and notes are saved for this project.</p>
+          <label>
+            Health
+            <select className="field" value={health} onChange={(event) => setHealth(event.target.value as Health)}>
+              <option value="">Not set</option>
+              <option value="green">Green</option>
+              <option value="yellow">Yellow</option>
+              <option value="red">Red</option>
+            </select>
+          </label>
+          <label>
+            Health explanation
+            <input className="field" value={explanation} onChange={(event) => setExplanation(event.target.value)} />
+          </label>
+          <label>
+            Notes
+            <textarea className="field" value={notes} onChange={(event) => setNotes(event.target.value)} />
+          </label>
+          {error && <p className="error">{error}</p>}
+        </EditDrawer>
       )}
     </>
   );

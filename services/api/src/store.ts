@@ -36,6 +36,8 @@ export interface Store {
   listCustomers(): Promise<Customer[]>;
   getCustomer(customerId: string): Promise<Customer | null>;
   createProject(project: Project): Promise<void>;
+  /** Overwrites the project META row (same keys as create). Used to rename. */
+  putProject(project: Project): Promise<void>;
   getProject(projectId: string): Promise<Project | null>;
   listProjects(customerId: string): Promise<Project[]>;
   putMembership(membership: Membership): Promise<void>;
@@ -138,6 +140,22 @@ export class DynamoStore implements Store {
           ...project,
         },
         ConditionExpression: "attribute_not_exists(pk)",
+      }),
+    );
+  }
+
+  async putProject(project: Project): Promise<void> {
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          pk: cust(project.customerId),
+          sk: projSk(project.projectId),
+          gsi1pk: proj(project.projectId),
+          gsi1sk: "META",
+          entity: "project",
+          ...project,
+        },
       }),
     );
   }

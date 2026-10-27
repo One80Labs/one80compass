@@ -62,6 +62,11 @@ function memoryStore(): Store & {
     async createProject(project) {
       projects.push(project);
     },
+    async putProject(project) {
+      const index = projects.findIndex((item) => item.projectId === project.projectId);
+      if (index >= 0) projects[index] = project;
+      else projects.push(project);
+    },
     async getProject(projectId) {
       return projects.find((project) => project.projectId === projectId) ?? null;
     },
@@ -386,6 +391,34 @@ describe("api router", () => {
     ]);
     const hidden = await handler(event({ method: "GET", path: "/admin/members", claims: employeeClaims }));
     expect(hidden.statusCode).toBe(403);
+  });
+
+  it("renames a project for an administrator and refuses a member", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    await handler(event({ method: "POST", path: "/admin/customers", claims: adminClaims, body: { name: "Acme" } }));
+    const customerId = store.customers[0].customerId;
+    await handler(event({ method: "POST", path: `/admin/customers/${customerId}/projects`, claims: adminClaims, body: { name: "Bridge" } }));
+    const projectId = store.projects[0].projectId;
+
+    const refused = await handler(
+      event({ method: "PATCH", path: `/admin/projects/${projectId}`, claims: employeeClaims, body: { name: "Harbor" } }),
+    );
+    expect(refused.statusCode).toBe(403);
+
+    const empty = await handler(event({ method: "PATCH", path: `/admin/projects/${projectId}`, claims: adminClaims, body: { name: "  " } }));
+    expect(empty.statusCode).toBe(400);
+
+    const renamed = await handler(
+      event({ method: "PATCH", path: `/admin/projects/${projectId}`, claims: adminClaims, body: { name: " Harbor " } }),
+    );
+    expect(renamed.statusCode).toBe(200);
+    expect(JSON.parse(renamed.body)).toMatchObject({ projectId, name: "Harbor" });
+    expect(store.projects[0].name).toBe("Harbor");
+    expect(store.audits.some((row) => row.action === "project.renamed" && row.after && (row.after as { name: string }).name === "Harbor")).toBe(true);
+
+    const listed = await handler(event({ method: "GET", path: `/customers/${customerId}/projects`, claims: adminClaims }));
+    expect(JSON.parse(listed.body).projects).toEqual(expect.arrayContaining([expect.objectContaining({ projectId, name: "Harbor" })]));
   });
 
   it("hides another customer's project from an employee", async () => {

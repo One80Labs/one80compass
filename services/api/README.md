@@ -6,6 +6,7 @@ Routes for the first slice:
 
 - `POST /admin/customers` and `GET /admin/customers`
 - `POST /admin/customers/{customerId}/projects`
+- `PATCH /admin/projects/{projectId}` renames a project. Administrator only. Body needs `name` (up to 120 characters).
 - `POST /admin/customers/{customerId}/invitations` invites a Contributor unless the body sets access to View.
 - `GET /admin/members` lists each membership with the customer name, the projects that person can open, and Administrator, Contributor, or View.
 - `PATCH /admin/customers/{customerId}/members/{userId}` sets the display name, sign-in email, project list, and access. Access is Contributor or View. A null project list means every current and future project. Changing a member email creates the new Cognito user, emails a temporary password when the address is new, and disables the old address when it has no membership left. An administrator email cannot be changed. Administrators can still open and change every project. A person saved before this change as an employee is read as a Contributor.

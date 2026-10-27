@@ -323,6 +323,7 @@ function activityTitle(action: string): string {
     "report.drafted": "Status report drafted",
     "member.invited": "Person invited",
     "project.created": "Project created",
+    "project.renamed": "Project renamed",
     "progress.overridden": "Progress overridden",
   };
   return labels[action] ?? action;
@@ -444,9 +445,10 @@ function SettingsPage({ session }: { session: Session | null }) {
         {tab === "General" && (
           <section className="panel">
             <h3>General</h3>
-            <p className="copy">
-              Customer: {customer?.name ?? "None selected"}. Project: {project?.name ?? "None selected"}.
-            </p>
+            <p className="copy">Customer: {customer?.name ?? "None selected"}.</p>
+            {!project && <p className="copy">Select a project to view or change its name.</p>}
+            {project && !session.adminGroup && <p className="copy">Project: {project.name}.</p>}
+            {project && session.adminGroup && <RenameProjectForm session={session} project={project} />}
           </section>
         )}
         {tab === "Catalog" && (
@@ -642,6 +644,55 @@ function NamedForm({ label, submit, onSubmit }: { label: string; submit: string;
       </label>
       {error && <p className="error">{error}</p>}
       <button type="submit">{submit}</button>
+    </form>
+  );
+}
+
+/** Administrator form on Settings → General. Saves the portal project name without changing GitHub. */
+function RenameProjectForm({ session, project }: { session: Session; project: Project }) {
+  const portal = usePortal();
+  const [name, setName] = useState(project.name);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setName(project.name);
+    setError(null);
+    setNotice(null);
+  }, [project.projectId, project.name]);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      const saved = await api<Project>(`/admin/projects/${project.projectId}`, session.idToken, {
+        method: "PATCH",
+        body: { name },
+      });
+      setName(saved.name);
+      setNotice("Project name saved.");
+      portal.reload();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Could not rename the project.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="toolbar progress-override" onSubmit={(event) => void save(event)}>
+      <label>
+        Project name
+        <input value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} />
+      </label>
+      <button className="btn primary" type="submit" disabled={busy || name.trim() === project.name}>
+        Save name
+      </button>
+      {error && <p className="error">{error}</p>}
+      {notice && <p className="muted small">{notice}</p>}
     </form>
   );
 }
