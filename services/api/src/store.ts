@@ -869,6 +869,7 @@ function asIssue(item: Item): PlanIssue {
     priority: priorityFromStore(item.priority),
     labels: labelIdsFromStore(item.labels),
     relationships: relationshipsFromStore(item.relationships),
+    planOrder: typeof item.planOrder === "number" && Number.isFinite(item.planOrder) ? Math.trunc(item.planOrder) : null,
     inProject: item.inProject !== false,
     updatedAt: String(item.updatedAt),
   };

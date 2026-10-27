@@ -253,6 +253,7 @@ export function githubFromEnv(now: () => Date): GitHubGateway {
           priority: null,
           labels: [],
           relationships: [],
+          planOrder: null,
           inProject: true,
           updatedAt: now().toISOString(),
         },
@@ -292,10 +293,11 @@ function toIssue(settings: ProjectSettings, item: GraphItem, updatedAt: string):
     assignees: assigneesOf(item),
     comments: commentText(values),
     predecessorIds: predecessorIds(item),
-    // GitHub has no priority, label, or relationship field. The reconcile save path restores stored values.
+    // GitHub has no priority, label, relationship, or planOrder field. The reconcile save path restores stored values.
     priority: null,
     labels: [],
     relationships: [],
+    planOrder: null,
     inProject: true,
     updatedAt,
   };

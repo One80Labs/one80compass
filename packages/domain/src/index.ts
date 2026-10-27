@@ -293,6 +293,11 @@ export type PlanIssue = {
   labels: string[];
   /** Links to other issues. Empty when none are stored. GitHub sync does not clear a stored list. */
   relationships: IssueRelationship[];
+  /**
+   * Manual Timeline order among siblings under the same parent. Lower comes first.
+   * Null means title order. GitHub sync does not clear a stored value.
+   */
+  planOrder: number | null;
   inProject: boolean;
   updatedAt: string;
 };

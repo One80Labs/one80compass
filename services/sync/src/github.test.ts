@@ -118,6 +118,7 @@ describe("readProject", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
     });
     expect(result.settings.recordSource).toBe("github");
     expect(result.settings.labels).toEqual([{ id: "L1", name: "Bug", color: null }]);

@@ -507,6 +507,7 @@ describe("api router", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
     store.reportVersions.push({
@@ -817,6 +818,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
     const missing = await handler(event({ method: "POST", path: `/projects/${projectId}/progress-override`, claims: employeeClaims, body: { percent: 80 } }));
@@ -867,6 +869,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       updatedAt: "2026-10-26T12:00:00.000Z",
     };
     store.issues.push(
@@ -920,6 +923,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       updatedAt: "2026-10-26T12:00:00.000Z",
     });
     const order = await handler(
@@ -1003,6 +1007,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       updatedAt: "2026-10-26T12:00:00.000Z",
     });
     const feature = await handler(
@@ -1083,6 +1088,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       updatedAt: "2026-10-26T12:00:00.000Z",
     };
     store.issues.push(
@@ -1153,6 +1159,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       updatedAt: "2026-10-24T12:00:00.000Z",
     });
     const early = await handler(event({ method: "POST", path: `/projects/${projectId}/milestones/M_1/confirm`, claims: employeeClaims, body: {} }));
@@ -1214,6 +1221,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       updatedAt: "2026-10-26T12:00:00.000Z",
     });
     const blocked = await handler(event({ method: "POST", path: `/projects/${projectId}/baselines`, claims: employeeClaims, body: { explanation: "First cut." } }));
@@ -1277,6 +1285,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       inProject: true,
       updatedAt: "2026-10-27T00:00:00.000Z",
     };
@@ -1313,6 +1322,69 @@ describe("plan and webhooks", () => {
       severity: "high",
       notes: "Watch it.",
     });
+  });
+
+  it("saves Timeline sibling planOrder for Compass projects", async () => {
+    queued.length = 0;
+    const store = memoryStore();
+    const handler = handlerFor(store);
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.settings.push({
+      ...mappedSettings(projectId, customerId, "compass"),
+      projectNodeId: null,
+    });
+    const base = {
+      itemId: null,
+      projectId,
+      customerId,
+      effort: 1,
+      issueState: "open" as const,
+      archived: false,
+      deletedAt: null,
+      parentIssueId: "feat",
+      issueType: "Task",
+      description: null,
+      iterationTitle: null,
+      iterationStart: null,
+      iterationDuration: null,
+      iterationId: null,
+      assignees: [],
+      comments: null,
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: null,
+      finishDate: null,
+      predecessorIds: [] as string[],
+      inProject: true,
+      priority: null,
+      labels: [] as string[],
+      relationships: [] as { id: string; kind: string; otherIssueId: string }[],
+      planOrder: null as number | null,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    };
+    store.issues.push(
+      { ...base, issueId: "docs", number: 3, title: "Document Cursor", status: "Ready", planOrder: 0 },
+      { ...base, issueId: "tools", number: 4, title: "MCP tools", status: "Ready", planOrder: 1 },
+      { ...base, issueId: "other", number: 5, title: "Other parent", status: "Ready", parentIssueId: "other-feat", planOrder: 0 },
+    );
+    const saved = await handler(
+      event({ method: "PUT", path: `/projects/${projectId}/plan-order`, claims: employeeClaims, body: { orderedIssueIds: ["tools", "docs"] } }),
+    );
+    expect(saved.statusCode).toBe(200);
+    expect(store.issues.find((row) => row.issueId === "tools")?.planOrder).toBe(0);
+    expect(store.issues.find((row) => row.issueId === "docs")?.planOrder).toBe(1);
+    expect(queued).toHaveLength(0);
+    const mixed = await handler(
+      event({
+        method: "PUT",
+        path: `/projects/${projectId}/plan-order`,
+        claims: employeeClaims,
+        body: { orderedIssueIds: ["tools", "other"] },
+      }),
+    );
+    expect(mixed.statusCode).toBe(400);
   });
 
   it("stores Compass plan edits without queueing GitHub", async () => {
@@ -1371,6 +1443,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       milestone: null,
       milestoneId: null,
       milestoneDueOn: null,
@@ -1572,6 +1645,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       updatedAt: "2026-10-26T12:00:00.000Z",
     });
     const updated = await handler(
@@ -1691,6 +1765,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: [],
       relationships: [],
+      planOrder: null,
       milestone: null,
       milestoneId: null,
       milestoneDueOn: null,
@@ -1771,6 +1846,7 @@ describe("plan and webhooks", () => {
       priority: null,
       labels: ["risk"],
       relationships: [],
+      planOrder: null,
       inProject: true,
       updatedAt: "2026-10-26T12:00:00.000Z",
     });

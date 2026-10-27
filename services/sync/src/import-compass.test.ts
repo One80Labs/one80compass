@@ -61,6 +61,7 @@ function issue(partial: Partial<PlanIssue> & Pick<PlanIssue, "issueId" | "title"
     priority: null,
     labels: [],
     relationships: [],
+    planOrder: null,
     inProject: true,
     updatedAt: "2026-10-26T12:00:00.000Z",
     ...partial,

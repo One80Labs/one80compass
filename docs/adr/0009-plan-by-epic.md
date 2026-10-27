@@ -6,4 +6,6 @@ An Epic is a GitHub issue whose type is EPIC. The name match ignores capitalizat
 
 The Timeline uses that order. A task with no Epic ancestor is shown under Outside an Epic. The Kanban board stays grouped by status.
 
+Writers can drag Timeline row labels to reorder siblings that share the same parent and kind. The new order is stored as Compass `planOrder` on each issue and is kept across GitHub sync. Dropping onto a row under a different parent is rejected.
+
 Adding a row creates the GitHub issue, sets the issue type to EPIC, Feature, or Task, and sends the same GitHub fields the edit drawer uses for that type: description, status, effort, iteration, assignee, comments, and Start and Finish. An Epic or Feature keeps the dates entered at creation until a Task or Subtask is added under it. Then those dates are replaced by the span of those tasks. A Subtask is created with no type. A parent is still marked Done in GitHub when every task under it is Done.

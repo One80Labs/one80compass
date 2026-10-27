@@ -62,8 +62,26 @@ export function parentStatusChanges(
   return changes;
 }
 
+/** Sort siblings by manual planOrder when set, otherwise by title. */
+export function comparePlanSiblings<T extends { issueId: string; title: string; planOrder?: number | null }>(left: T, right: T): number {
+  const leftOrder = typeof left.planOrder === "number" && Number.isFinite(left.planOrder) ? left.planOrder : null;
+  const rightOrder = typeof right.planOrder === "number" && Number.isFinite(right.planOrder) ? right.planOrder : null;
+  if (leftOrder != null && rightOrder != null && leftOrder !== rightOrder) return leftOrder - rightOrder;
+  if (leftOrder != null && rightOrder == null) return -1;
+  if (leftOrder == null && rightOrder != null) return 1;
+  return left.title.localeCompare(right.title) || left.issueId.localeCompare(right.issueId);
+}
+
+/** Rewrite planOrder for the listed sibling ids (0..n-1). Other issues are unchanged. */
+export function applyPlanOrder<T extends { issueId: string; planOrder?: number | null }>(issues: T[], orderedIssueIds: string[]): T[] {
+  const order = new Map(orderedIssueIds.map((id, index) => [id, index]));
+  return issues.map((issue) => (order.has(issue.issueId) ? { ...issue, planOrder: order.get(issue.issueId)! } : issue));
+}
+
 /** Parents first, then each child, with a cycle-safe depth for indentation. */
-export function orderedIssues<T extends { issueId: string; parentIssueId: string | null; title: string }>(issues: T[]): Array<T & { depth: number }> {
+export function orderedIssues<T extends { issueId: string; parentIssueId: string | null; title: string; planOrder?: number | null }>(
+  issues: T[],
+): Array<T & { depth: number }> {
   const ids = new Set(issues.map((issue) => issue.issueId));
   const children = new Map<string, T[]>();
   const roots: T[] = [];
@@ -76,16 +94,16 @@ export function orderedIssues<T extends { issueId: string; parentIssueId: string
       roots.push(issue);
     }
   }
-  const byTitle = (list: T[]) => [...list].sort((left, right) => left.title.localeCompare(right.title) || left.issueId.localeCompare(right.issueId));
+  const bySibling = (list: T[]) => [...list].sort(comparePlanSiblings);
   const ordered: Array<T & { depth: number }> = [];
   const seen = new Set<string>();
   const visit = (issue: T, depth: number) => {
     if (seen.has(issue.issueId)) return;
     seen.add(issue.issueId);
     ordered.push({ ...issue, depth });
-    for (const child of byTitle(children.get(issue.issueId) ?? [])) visit(child, depth + 1);
+    for (const child of bySibling(children.get(issue.issueId) ?? [])) visit(child, depth + 1);
   };
-  for (const root of byTitle(roots)) visit(root, 0);
+  for (const root of bySibling(roots)) visit(root, 0);
   return ordered;
 }
 
@@ -128,6 +146,8 @@ export type PlanNode = {
   parentIssueId: string | null;
   number: number | null;
   issueType: string | null;
+  /** Manual Timeline order among siblings. Null keeps title order. */
+  planOrder?: number | null;
 };
 
 const PLAN_INDENT: Record<PlanKind, number> = { workstream: 0, epic: 0, feature: 1, issue: 2, subtask: 3 };
@@ -185,9 +205,9 @@ export function planRows<T extends PlanNode>(issues: T[], workstreamNumber: numb
   const rank: Record<PlanKind, number> = { feature: 0, issue: 1, subtask: 2, epic: 3, workstream: 4 };
   const orderedChildren = (id: string) =>
     [...(children.get(id) ?? [])].sort(
-      (left, right) => rank[left.kind] - rank[right.kind] || left.title.localeCompare(right.title) || left.issueId.localeCompare(right.issueId),
+      (left, right) => rank[left.kind] - rank[right.kind] || comparePlanSiblings(left, right),
     );
-  const byTitle = (list: typeof visible) => [...list].sort((left, right) => left.title.localeCompare(right.title) || left.issueId.localeCompare(right.issueId));
+  const bySibling = (list: typeof visible) => [...list].sort(comparePlanSiblings);
   const ordered: typeof visible = [];
   const seen = new Set<string>();
   const visit = (issue: (typeof visible)[number]) => {
@@ -196,8 +216,8 @@ export function planRows<T extends PlanNode>(issues: T[], workstreamNumber: numb
     ordered.push(issue);
     for (const child of orderedChildren(issue.issueId)) visit(child);
   };
-  for (const epic of byTitle(roots.filter((issue) => issue.kind === "epic"))) visit(epic);
-  for (const row of byTitle(roots.filter((issue) => issue.kind !== "epic"))) visit(row);
+  for (const epic of bySibling(roots.filter((issue) => issue.kind === "epic"))) visit(epic);
+  for (const row of bySibling(roots.filter((issue) => issue.kind !== "epic"))) visit(row);
   return ordered;
 }
 

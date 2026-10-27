@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
-import { orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
+import { applyPlanOrder, orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { catalogColorHex } from "../../../packages/domain/src/index";
 import type { LinkType, ProposedShift } from "../../../packages/domain/src/dependencies";
 import {
@@ -93,6 +93,7 @@ type PlanIssue = {
   priority?: string | null;
   labels?: string[];
   relationships?: { id: string; kind: string; otherIssueId: string }[];
+  planOrder?: number | null;
   inProject?: boolean;
   archived?: boolean;
   deletedAt?: string | null;
@@ -211,6 +212,7 @@ export function PlanPage({ session }: { session: Session | null }) {
             leadingActions={plan.data && canWrite ? <AddPlanBar onAdd={setAddKind} /> : null}
             onLinkPredecessor={plan.linkPredecessor}
             onSaveRelationships={canWrite ? (issueId, relationships) => plan.saveIssue(issueId, { relationships }) : null}
+            onReorder={canWrite ? (orderedIssueIds) => plan.reorderPlan(orderedIssueIds) : null}
             onEdit={canWrite ? setEditingId : null}
             onSchedule={
               canWrite
@@ -1426,6 +1428,23 @@ function usePlan(session: Session | null) {
         setBusy(false);
       }
     },
+    async reorderPlan(orderedIssueIds: string[]) {
+      if (!session) return;
+      setError(null);
+      setBusy(true);
+      const previous = data;
+      if (previous) setData({ ...previous, issues: applyPlanOrder(previous.issues, orderedIssueIds) });
+      try {
+        await api(`/projects/${projectId}/plan-order`, session.idToken, { method: "PUT", body: { orderedIssueIds } });
+        await reload();
+      } catch (caught) {
+        if (previous) setData(previous);
+        setError(message(caught));
+        throw caught;
+      } finally {
+        setBusy(false);
+      }
+    },
     async createPlanItem(kind: Exclude<PlanKind, "workstream">, title: string, parentIssueId: string | null, draft: PlanDraft) {
       if (!session) return;
       const before = new Set((data?.issues ?? []).map((issue) => issue.issueId));
@@ -1636,6 +1655,7 @@ function TimelineChart({
   leadingActions,
   onLinkPredecessor,
   onSaveRelationships,
+  onReorder,
   onEdit,
   onSchedule,
 }: {
@@ -1648,6 +1668,7 @@ function TimelineChart({
       status: string;
       depth: number;
       kind: PlanKind;
+      parentIssueId: string | null;
       startDate: string | null;
       finishDate: string | null;
       iterationTitle?: string | null;
@@ -1666,6 +1687,8 @@ function TimelineChart({
   leadingActions: ReactNode;
   onLinkPredecessor: (issueId: string, predecessorId: string, action: "add" | "remove") => Promise<void>;
   onSaveRelationships: ((issueId: string, relationships: { id: string; kind: string; otherIssueId: string }[]) => Promise<void>) | null;
+  /** Persist a new sibling order after a Timeline row drag. */
+  onReorder: ((orderedIssueIds: string[]) => Promise<void>) | null;
   onEdit: ((issueId: string) => void) | null;
   onSchedule: ((issueId: string, startDate: string, finishDate: string) => Promise<void>) | null;
 }) {
@@ -1694,11 +1717,67 @@ function TimelineChart({
   const [focusedRiskId, setFocusedRiskId] = useState<string | null>(null);
   const [anchors, setAnchors] = useState<Record<string, BarAnchor>>({});
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+  const [rowDragId, setRowDragId] = useState<string | null>(null);
+  const [rowDropId, setRowDropId] = useState<string | null>(null);
   const anchorSignature = useRef("");
   const issuesRef = useRef(issues);
   issuesRef.current = issues;
   const riskCursor = useRef(-1);
   const linkStart = useRef({ x: 0, y: 0, moved: false }); // pointer origin of the active link drag
+  const flatRows = useMemo(() => bands.flatMap((band) => band.rows), [bands]);
+
+  /** Same-parent, same-kind sibling list with the dragged row moved onto the drop target. */
+  function siblingOrderAfterDrop(draggedId: string, targetId: string): string[] | null {
+    if (draggedId === targetId) return null;
+    const dragged = flatRows.find((row) => row.issueId === draggedId);
+    const target = flatRows.find((row) => row.issueId === targetId);
+    if (!dragged || !target) return null;
+    if (dragged.parentIssueId !== target.parentIssueId || dragged.kind !== target.kind) return null;
+    const siblings = flatRows.filter((row) => row.parentIssueId === dragged.parentIssueId && row.kind === dragged.kind);
+    const ids = siblings.map((row) => row.issueId);
+    const from = ids.indexOf(draggedId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return null;
+    const next = [...ids];
+    next.splice(from, 1);
+    next.splice(to, 0, draggedId);
+    return next;
+  }
+
+  function beginRowDrag(issueId: string, event: DragEvent<HTMLElement>) {
+    if (!onReorder || busy) return;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plan-row", issueId);
+    setRowDragId(issueId);
+  }
+
+  function overRow(targetId: string, event: DragEvent<HTMLElement>) {
+    if (!rowDragId || !onReorder) return;
+    const next = siblingOrderAfterDrop(rowDragId, targetId);
+    if (!next) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (rowDropId !== targetId) setRowDropId(targetId);
+  }
+
+  function dropOnRow(targetId: string, event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    const draggedId = event.dataTransfer.getData("text/plan-row") || rowDragId;
+    setRowDragId(null);
+    setRowDropId(null);
+    if (!draggedId || !onReorder) return;
+    const next = siblingOrderAfterDrop(draggedId, targetId);
+    if (!next) {
+      setToast("Only rows under the same parent can be reordered.");
+      return;
+    }
+    void onReorder(next).catch((caught) => setToast(message(caught)));
+  }
+
+  function endRowDrag() {
+    setRowDragId(null);
+    setRowDropId(null);
+  }
 
   useEffect(() => {
     setDragSpan(null);
@@ -2087,13 +2166,27 @@ function TimelineChart({
             return (
               <div className="phase active" key={band.key}>
                 <div
-                  className="timeline-row"
+                  className={[
+                    "timeline-row",
+                    epic && rowDragId === epic.issueId ? "row-dragging" : "",
+                    epic && rowDropId === epic.issueId ? "row-drop-target" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   data-row-id={epic?.issueId}
                   tabIndex={epic ? -1 : undefined}
                   style={epic ? rowFocusStyle(epic.issueId) : undefined}
+                  onDragOver={epic ? (event) => overRow(epic.issueId, event) : undefined}
+                  onDrop={epic ? (event) => dropOnRow(epic.issueId, event) : undefined}
                 >
-                  <div>
+                  <div
+                    className="timeline-row-drag"
+                    draggable={Boolean(canWrite && onReorder && epic)}
+                    onDragStart={epic ? (event) => beginRowDrag(epic.issueId, event) : undefined}
+                    onDragEnd={endRowDrag}
+                  >
                     <div className="taskline">
+                      {canWrite && onReorder && epic && <span className="row-drag-handle" aria-hidden="true" title="Drag to reorder" />}
                       <strong>{band.title}</strong>
                       {epic && riskIcon(epic.issueId)}
                     </div>
@@ -2135,18 +2228,35 @@ function TimelineChart({
                       const editable = Boolean(canWrite && onSchedule && range && (!rollup || ownDates));
                       return (
                         <div
-                          className={matchIds?.has(row.issueId) ? "timeline-row search-match" : "timeline-row"}
+                          className={[
+                            matchIds?.has(row.issueId) ? "timeline-row search-match" : "timeline-row",
+                            rowDragId === row.issueId ? "row-dragging" : "",
+                            rowDropId === row.issueId ? "row-drop-target" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
                           key={row.issueId}
                           data-row-id={row.issueId}
                           tabIndex={-1}
                           style={rowFocusStyle(row.issueId)}
+                          onDragOver={(event) => overRow(row.issueId, event)}
+                          onDrop={(event) => dropOnRow(row.issueId, event)}
                         >
-                          <div className="taskline" style={{ paddingLeft: row.depth * 16 }}>
-                            <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
-                              {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
-                            </span>
-                            <span>{row.title}</span>
-                            {riskIcon(row.issueId)}
+                          <div
+                            className="timeline-row-drag"
+                            style={{ paddingLeft: row.depth * 16 }}
+                            draggable={Boolean(canWrite && onReorder)}
+                            onDragStart={(event) => beginRowDrag(row.issueId, event)}
+                            onDragEnd={endRowDrag}
+                          >
+                            <div className="taskline">
+                              {canWrite && onReorder && <span className="row-drag-handle" aria-hidden="true" title="Drag to reorder" />}
+                              <span className={`status-icon ${row.status === "Done" ? "done" : row.status === "In Progress" ? "review" : ""}`}>
+                                {row.status === "Done" ? "●" : row.status === "In Progress" ? "◐" : "○"}
+                              </span>
+                              <span>{row.title}</span>
+                              {riskIcon(row.issueId)}
+                            </div>
                           </div>
                           <div className="timeline-status">
                             <TimelineStatus title={row.title} status={row.status} issueId={row.issueId} onEdit={onEdit} />

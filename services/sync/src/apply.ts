@@ -17,6 +17,7 @@ export function keepStoredPlanFields(incoming: PlanIssue, stored: PlanIssue | un
     priority: stored.priority,
     labels: [...stored.labels],
     relationships: stored.relationships.map((link) => ({ ...link })),
+    planOrder: stored.planOrder,
   };
 }
 
@@ -157,6 +158,7 @@ function blankIssue(settings: ProjectSettings, issueId: string, now: string): Pl
     priority: null,
     labels: [],
     relationships: [],
+    planOrder: null,
     inProject: false,
     updatedAt: now,
   };

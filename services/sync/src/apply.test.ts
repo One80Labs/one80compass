@@ -70,6 +70,7 @@ describe("applyGithubDelivery", () => {
         priority: "high",
         labels: ["bug"],
         relationships: [{ id: "rel-1", kind: "blocked_by", otherIssueId: "I_9" }],
+        planOrder: null,
         inProject: true,
         updatedAt: "2026-10-24T00:00:00.000Z",
       },
@@ -228,6 +229,7 @@ function currentIssue(): PlanIssue {
     priority: "high",
     labels: ["bug"],
     relationships: [{ id: "rel-1", kind: "blocked_by", otherIssueId: "I_9" }],
+    planOrder: null,
     inProject: true,
     updatedAt: "2026-10-24T00:00:00.000Z",
   };

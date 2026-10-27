@@ -9,7 +9,7 @@ import {
   type SyncMessage,
   type SyncState,
 } from "../../../packages/domain/src/index";
-import { createdIssueType, parentDoneBlocked, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
+import { applyPlanOrder, createdIssueType, parentDoneBlocked, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { dependencyCycle, dependencyReview, scheduleConflicts } from "../../../packages/domain/src/dependencies";
 import { baselineSnapshot, type BaselineRecord } from "../../../packages/domain/src/baselines";
 import { tracedComment } from "../../../packages/domain/src/comments";
@@ -63,6 +63,8 @@ export async function handlePlan(ctx: PlanCtx): Promise<HttpResult | null> {
   if (baselines && ctx.method === "POST") return createBaseline(ctx, decodeURIComponent(baselines[1]));
   const risk = ctx.path.match(/^\/projects\/([^/]+)\/risks\/([^/]+)$/);
   if (risk && ctx.method === "PUT") return saveRisk(ctx, decodeURIComponent(risk[1]), decodeURIComponent(risk[2]));
+  const planOrder = ctx.path.match(/^\/projects\/([^/]+)\/plan-order$/);
+  if (planOrder && ctx.method === "PUT") return savePlanOrder(ctx, decodeURIComponent(planOrder[1]));
   return null;
 }
 
@@ -674,6 +676,50 @@ async function decideBaseline(ctx: PlanCtx, projectId: string, baselineId: strin
   return json(200, { baseline }, ctx.correlationId);
 }
 
+/** Reorder Timeline siblings under one parent. Writers may drag rows; order is Compass-owned. */
+async function savePlanOrder(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  const project = opened;
+  if (!project) return notFound(ctx.correlationId);
+  if (!Array.isArray(ctx.body.orderedIssueIds) || ctx.body.orderedIssueIds.length < 2) {
+    return json(400, { code: "VALIDATION", message: "Choose at least two rows to reorder.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const orderedIssueIds = [...new Set(ctx.body.orderedIssueIds.map((id) => String(id).trim()).filter(Boolean))];
+  if (orderedIssueIds.length < 2 || orderedIssueIds.length > 200) {
+    return json(400, { code: "VALIDATION", message: "Choose at least two rows to reorder.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const issues = await ctx.deps.store.listIssues(projectId);
+  const byId = new Map(issues.map((issue) => [issue.issueId, issue]));
+  const selected = orderedIssueIds.map((id) => byId.get(id) ?? null);
+  if (selected.some((issue) => !issue || !issue.inProject || issue.archived || issue.deletedAt)) {
+    return json(400, { code: "VALIDATION", message: "Every row in the order must be an active plan item.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const parentIssueId = selected[0]!.parentIssueId;
+  if (selected.some((issue) => issue!.parentIssueId !== parentIssueId)) {
+    return json(400, { code: "VALIDATION", message: "Only rows under the same parent can be reordered together.", correlationId: ctx.correlationId }, ctx.correlationId);
+  }
+  const now = ctx.deps.now().toISOString();
+  const next = applyPlanOrder(selected as PlanIssue[], orderedIssueIds);
+  for (const issue of next) {
+    await ctx.deps.store.putIssue({ ...issue, planOrder: issue.planOrder ?? null, updatedAt: now });
+  }
+  await ctx.deps.store.putAudit({
+    eventId: ctx.deps.newId(),
+    customerId: project.customerId,
+    projectId,
+    actorUserId: ctx.principal.userId,
+    action: "plan.reordered",
+    targetType: "project",
+    targetId: projectId,
+    before: { parentIssueId, orderedIssueIds: selected.map((issue) => issue!.issueId) },
+    after: { parentIssueId, orderedIssueIds },
+    at: now,
+    correlationId: ctx.correlationId,
+  });
+  return json(200, { orderedIssueIds }, ctx.correlationId);
+}
+
 /** Administrators edit risk register fields. Schedule-linked ids are accepted before the first save. */
 async function saveRisk(ctx: PlanCtx, projectId: string, riskId: string): Promise<HttpResult> {
   if (adminAccess(ctx.principal) !== "ok") {
@@ -927,6 +973,7 @@ async function createCompassPlanItem(
       labels: [],
       relationships: [],
       predecessorIds: [],
+      planOrder: null,
       inProject: true,
       updatedAt: now,
     },

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { createdIssueType, orderedIssues, parentDoneBlocked, parentStatusChanges, planBands, planKind, rollupTargets, type HierarchyIssue } from "./hierarchy";
+import {
+  applyPlanOrder,
+  createdIssueType,
+  orderedIssues,
+  parentDoneBlocked,
+  parentStatusChanges,
+  planBands,
+  planKind,
+  planRows,
+  rollupTargets,
+  type HierarchyIssue,
+} from "./hierarchy";
 
 const done = ["Done"];
 
@@ -115,6 +126,37 @@ describe("orderedIssues", () => {
       ["Parent", 0],
       ["Child", 1],
     ]);
+  });
+
+  it("orders siblings by planOrder before title", () => {
+    const ordered = orderedIssues([
+      { issueId: "b", parentIssueId: "parent", title: "Alpha", planOrder: 1 },
+      { issueId: "a", parentIssueId: "parent", title: "Zulu", planOrder: 0 },
+      { issueId: "parent", parentIssueId: null, title: "Parent", planOrder: 0 },
+    ]);
+    expect(ordered.map((issue) => issue.issueId)).toEqual(["parent", "a", "b"]);
+    // applyPlanOrder only rewrites planOrder; array order stays until the next orderedIssues/planRows pass.
+    expect(applyPlanOrder(ordered, ["b", "a"]).map((issue) => [issue.issueId, issue.planOrder])).toEqual([
+      ["parent", 0],
+      ["a", 1],
+      ["b", 0],
+    ]);
+    expect(orderedIssues(applyPlanOrder(ordered, ["b", "a"])).map((issue) => issue.issueId)).toEqual(["parent", "b", "a"]);
+  });
+});
+
+describe("planRows planOrder", () => {
+  it("keeps manual task order under a feature", () => {
+    const rows = planRows(
+      [
+        { issueId: "epic", title: "R3", parentIssueId: null, number: 1, issueType: "Epic", planOrder: 0 },
+        { issueId: "feature", title: "MCP", parentIssueId: "epic", number: 2, issueType: "Feature", planOrder: 0 },
+        { issueId: "docs", title: "Document Cursor and Claude MCP registration", parentIssueId: "feature", number: 3, issueType: "Task", planOrder: 1 },
+        { issueId: "tools", title: "MCP tools for allowlist ingest and chunk search", parentIssueId: "feature", number: 4, issueType: "Task", planOrder: 0 },
+      ],
+      null,
+    );
+    expect(rows.filter((row) => row.kind === "issue").map((row) => row.issueId)).toEqual(["tools", "docs"]);
   });
 });
 
