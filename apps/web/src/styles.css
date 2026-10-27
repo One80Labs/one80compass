@@ -1480,13 +1480,43 @@ button.backlink {
   background: #f7f4f1;
 }
 
-.panel .catalog-section h3 {
+.catalog-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.catalog-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.panel .catalog-section h3,
+.catalog-section-toggle h3 {
   margin: 0;
   font-size: 15px;
 }
 
-.catalog-section header p {
-  margin: 4px 0 0;
+.catalog-section-body {
+  display: grid;
+  gap: 12px;
+}
+
+.catalog-section-body > p {
+  margin: 0;
 }
 
 .catalog-row {

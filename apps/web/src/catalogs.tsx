@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { IterationChoice, ProjectCatalogs } from "../../../packages/domain/src/index";
 import { CATALOG_COLORS } from "../../../packages/domain/src/index";
 import { api, putCatalogs } from "./api";
@@ -11,8 +11,8 @@ type MilestoneRow = { id: string; title: string; dueOn: string };
 
 /**
  * Catalog editor for a Compass project. An administrator adds a row and edits its name.
- * Status rows can be marked Done. Iterations have a start date and a duration in days.
- * Milestones have an optional due date. Save replaces the catalogs.
+ * Each list starts collapsed. Status rows can be marked Done. Iterations have a start date
+ * and a duration in days. Milestones have an optional due date. Save replaces the catalogs.
  */
 export function Catalogs({
   projectId,
@@ -94,11 +94,7 @@ export function Catalogs({
       <p className="muted small">
         These lists belong to {projectName?.trim() || "this project"}. Add a row, edit it, and save. Saving replaces the catalogs for this project.
       </p>
-      <section className="catalog-section">
-        <header>
-          <h3>Status</h3>
-          <p className="muted small">Board columns. Mark Done when work in that status is finished.</p>
-        </header>
+      <CatalogSection title="Status" detail="Board columns. Mark Done when work in that status is finished." count={statusOptions.length} unit="status">
         {statusOptions.map((row, index) => (
           <div className="catalog-row status" key={row.id}>
             <label>
@@ -127,12 +123,8 @@ export function Catalogs({
         <button className="btn small" type="button" onClick={() => setStatusOptions([...statusOptions, blankNamed()])}>
           Add status
         </button>
-      </section>
-      <section className="catalog-section">
-        <header>
-          <h3>Iterations</h3>
-          <p className="muted small">Each iteration needs a name, a start date, and a length in days.</p>
-        </header>
+      </CatalogSection>
+      <CatalogSection title="Iterations" detail="Each iteration needs a name, a start date, and a length in days." count={iterations.length} unit="iteration">
         {iterations.map((row, index) => (
           <div className="catalog-row iteration" key={row.id}>
             <label>
@@ -177,15 +169,11 @@ export function Catalogs({
         >
           Add iteration
         </button>
-      </section>
-      <ColoredCatalog title="Labels" detail="A color outlines the tag on the issue editor." addLabel="Add label" rows={labels} onChange={setLabels} />
-      <ColoredCatalog title="Issue types" detail="A color fills that type's bar on the timeline." addLabel="Add issue type" rows={issueTypes} onChange={setIssueTypes} />
-      <NamedCatalog title="Priorities" detail="Choices stored on an issue." addLabel="Add priority" rows={priorityOptions} onChange={setPriorityOptions} />
-      <section className="catalog-section">
-        <header>
-          <h3>Milestones</h3>
-          <p className="muted small">A name and an optional due date.</p>
-        </header>
+      </CatalogSection>
+      <ColoredCatalog title="Labels" detail="A color outlines the tag on the issue editor." addLabel="Add label" unit="label" rows={labels} onChange={setLabels} />
+      <ColoredCatalog title="Issue types" detail="A color fills that type's bar on the timeline." addLabel="Add issue type" unit="issue type" rows={issueTypes} onChange={setIssueTypes} />
+      <NamedCatalog title="Priorities" detail="Choices stored on an issue." addLabel="Add priority" unit="priority" rows={priorityOptions} onChange={setPriorityOptions} />
+      <CatalogSection title="Milestones" detail="A name and an optional due date." count={milestones.length} unit="milestone">
         {milestones.map((row, index) => (
           <div className="catalog-row milestone" key={row.id}>
             <label>
@@ -215,7 +203,7 @@ export function Catalogs({
         <button className="btn small" type="button" onClick={() => setMilestones([...milestones, { id: crypto.randomUUID(), title: "", dueOn: "" }])}>
           Add milestone
         </button>
-      </section>
+      </CatalogSection>
       <button className="btn primary catalog-save" type="submit" disabled={saving}>
         {saving ? "Saving…" : "Save catalogs"}
       </button>
@@ -232,21 +220,19 @@ function NamedCatalog({
   title,
   detail,
   addLabel,
+  unit,
   rows,
   onChange,
 }: {
   title: string;
   detail: string;
   addLabel: string;
+  unit: string;
   rows: NamedRow[];
   onChange: (rows: NamedRow[]) => void;
 }) {
   return (
-    <section className="catalog-section">
-      <header>
-        <h3>{title}</h3>
-        <p className="muted small">{detail}</p>
-      </header>
+    <CatalogSection title={title} detail={detail} count={rows.length} unit={unit}>
       {rows.map((row, index) => (
         <div className="catalog-row named" key={row.id}>
           <label>
@@ -267,7 +253,7 @@ function NamedCatalog({
       <button className="btn small" type="button" onClick={() => onChange([...rows, blankNamed()])}>
         {addLabel}
       </button>
-    </section>
+    </CatalogSection>
   );
 }
 
@@ -275,21 +261,19 @@ function ColoredCatalog({
   title,
   detail,
   addLabel,
+  unit,
   rows,
   onChange,
 }: {
   title: string;
   detail: string;
   addLabel: string;
+  unit: string;
   rows: ColoredRow[];
   onChange: (rows: ColoredRow[]) => void;
 }) {
   return (
-    <section className="catalog-section">
-      <header>
-        <h3>{title}</h3>
-        <p className="muted small">{detail}</p>
-      </header>
+    <CatalogSection title={title} detail={detail} count={rows.length} unit={unit}>
       {rows.map((row, index) => (
         <div className="catalog-row colored" key={row.id}>
           <label>
@@ -327,7 +311,62 @@ function ColoredCatalog({
       <button className="btn small" type="button" onClick={() => onChange([...rows, blankColored()])}>
         {addLabel}
       </button>
+    </CatalogSection>
+  );
+}
+
+/** One catalog list. Collapsed by default so the page stays scannable. */
+function CatalogSection({
+  title,
+  detail,
+  count,
+  unit,
+  children,
+}: {
+  title: string;
+  detail: string;
+  count: number;
+  unit: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const bodyId = `catalog-${title.toLowerCase().replace(/\s+/g, "-")}-body`;
+  const summary = count === 0 ? "None yet" : `${count} ${unit}${count === 1 ? "" : "s"}`;
+
+  return (
+    <section className="catalog-section">
+      <button
+        type="button"
+        className="catalog-section-toggle"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="catalog-section-heading">
+          <h3>{title}</h3>
+          {!open && <span className="muted small">{summary}</span>}
+        </span>
+        <CatalogExpandIcon expanded={open} />
+      </button>
+      {open && (
+        <div id={bodyId} className="catalog-section-body">
+          <p className="muted small">{detail}</p>
+          {children}
+        </div>
+      )}
     </section>
+  );
+}
+
+function CatalogExpandIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      {expanded ? (
+        <path fill="currentColor" d="M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
+      ) : (
+        <path fill="currentColor" d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
+      )}
+    </svg>
   );
 }
 
