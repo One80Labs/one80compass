@@ -38,7 +38,7 @@ import type { MilestoneView } from "../../../packages/domain/src/milestones";
 import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
-import type { RiskRegisterRow, RiskSeverity } from "../../../packages/domain/src/risks";
+import { activeScheduleConflicts, type RiskRegisterRow, type RiskSeverity } from "../../../packages/domain/src/risks";
 import { BaselinesPanel } from "./baselines";
 import { CompassIssueDrawer } from "./compass-drawer";
 import {
@@ -207,6 +207,7 @@ export function PlanPage({ session }: { session: Session | null }) {
             canWrite={canWrite}
             busy={plan.busy}
             issues={issues}
+            risks={plan.data?.risks ?? []}
             leadingActions={plan.data && canWrite ? <AddPlanBar onAdd={setAddKind} /> : null}
             onLinkPredecessor={plan.linkPredecessor}
             onSaveRelationships={canWrite ? (issueId, relationships) => plan.saveIssue(issueId, { relationships }) : null}
@@ -1631,6 +1632,7 @@ function TimelineChart({
   canWrite,
   busy,
   issues,
+  risks,
   leadingActions,
   onLinkPredecessor,
   onSaveRelationships,
@@ -1658,6 +1660,8 @@ function TimelineChart({
   canWrite: boolean;
   busy: boolean;
   issues: PlanIssue[];
+  /** Risk register rows; cleared schedule risks keep history but suppress Timeline icons. */
+  risks: RiskRegisterRow[];
   /** Add Epic/Feature/Task controls rendered on the same row as dependency toggles. */
   leadingActions: ReactNode;
   onLinkPredecessor: (issueId: string, predecessorId: string, action: "add" | "remove") => Promise<void>;
@@ -1825,10 +1829,13 @@ function TimelineChart({
   }, [draggingFrom]);
 
   const issueById = useMemo(() => new Map(issues.map((issue) => [issue.issueId, issue])), [issues]);
-  // Hard conflicts only; icons render on the successor row whether or not lines are shown.
+  // Hard conflicts only; cleared risk-register rows stay in history but do not keep Timeline icons.
   const conflictById = useMemo(
-    () => new Map(scheduleConflicts(dependencyIssues(issues)).map((conflict) => [conflict.issueId, conflict])),
-    [issues],
+    () =>
+      new Map(
+        activeScheduleConflicts(scheduleConflicts(dependencyIssues(issues)), risks).map((conflict) => [conflict.issueId, conflict]),
+      ),
+    [issues, risks],
   );
   const edges = useMemo<LinkEdge[]>(
     () => [

@@ -85,7 +85,7 @@ export function RiskRegisterPanel({
     <section className="panel">
       <h3>Risk register</h3>
       <p className="copy">
-        Hard blocker date conflicts from the Timeline appear here automatically. Soft dependencies do not. An administrator can edit the risk name, severity, description, date cleared, and notes.
+        Hard blocker date conflicts from the Timeline appear here automatically. Soft dependencies do not. Cleared risks stay in this register for history, and their Timeline warning icons are removed. An administrator can edit the risk name, severity, description, date cleared, and notes.
       </p>
       {error && (
         <p className="error small" role="alert">

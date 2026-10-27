@@ -113,3 +113,22 @@ export function mergeRiskRegister(stored: RiskRecord[], conflicts: ScheduleConfl
     return left.title.localeCompare(right.title);
   });
 }
+
+/** Schedule conflict keys (`issueId:predecessorId`) that an administrator has cleared. Cleared risks stay in the register but leave Timeline icons. */
+export function clearedScheduleRiskKeys(risks: Pick<RiskRegisterRow, "status" | "issueId" | "predecessorId">[]): Set<string> {
+  const keys = new Set<string>();
+  for (const row of risks) {
+    if (row.status !== "cleared" || !row.issueId || !row.predecessorId) continue;
+    keys.add(`${row.issueId}:${row.predecessorId}`);
+  }
+  return keys;
+}
+
+/** Live blocker conflicts that should still show Timeline risk icons. */
+export function activeScheduleConflicts(
+  conflicts: ScheduleConflict[],
+  risks: Pick<RiskRegisterRow, "status" | "issueId" | "predecessorId">[],
+): ScheduleConflict[] {
+  const cleared = clearedScheduleRiskKeys(risks);
+  return conflicts.filter((conflict) => !cleared.has(`${conflict.issueId}:${conflict.predecessorId}`));
+}
