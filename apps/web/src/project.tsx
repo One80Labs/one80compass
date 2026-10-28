@@ -311,22 +311,7 @@ export function DocumentsPage({ session }: { session: Session | null }) {
 
   return (
     <>
-      <PageHead
-        title="Documents."
-        subtitle={`Manage project documents and versions for ${projectName}.`}
-        action={
-          canWrite && browsing ? (
-            <div className="row">
-              <button className="btn" type="button" onClick={() => setCreatingFolder(true)}>
-                New folder
-              </button>
-              <button className="btn primary" type="button" onClick={() => setUploading(true)}>
-                Upload document
-              </button>
-            </div>
-          ) : undefined
-        }
-      />
+      <PageHead title="Documents." subtitle={`Manage project documents and versions for ${projectName}.`} />
       {!session && <p>Sign in to open documents.</p>}
       {error && <p className="error">{error}</p>}
       {session?.adminGroup && <VaultStaffControls session={session} projectId={projectId} />}
@@ -350,8 +335,18 @@ export function DocumentsPage({ session }: { session: Session | null }) {
               })}
             </nav>
           )}
-          <div className="toolbar">
+          <div className="toolbar documents-toolbar">
             <input type="search" value={query} placeholder="Search documents…" aria-label="Search documents" onChange={(event) => setQuery(event.target.value)} />
+            {canWrite && browsing && (
+              <div className="row">
+                <button className="btn" type="button" onClick={() => setCreatingFolder(true)}>
+                  New folder
+                </button>
+                <button className="btn primary" type="button" onClick={() => setUploading(true)}>
+                  Upload document
+                </button>
+              </div>
+            )}
           </div>
           <div className="table-wrap">
             <table>

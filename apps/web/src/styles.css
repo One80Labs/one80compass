@@ -1297,6 +1297,16 @@ button.tab.active {
   min-width: 220px;
 }
 
+/* Documents: search on the left, New folder / Upload immediately to its right. */
+.documents-toolbar input {
+  margin-left: 0;
+  flex: 0 1 280px;
+}
+
+.documents-toolbar .row {
+  margin-left: 0;
+}
+
 .kanban-filter-panel {
   margin: 16px 0 12px;
 }
