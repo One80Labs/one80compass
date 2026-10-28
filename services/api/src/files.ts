@@ -8,7 +8,11 @@ export function createFileSigner(bucket: string) {
     signUpload(objectKey: string, sizeBytes: number) {
       return getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: objectKey, ContentLength: sizeBytes }), { expiresIn: 300 });
     },
-    signDownload(objectKey: string, fileName: string, contentType: string) {
+    /**
+     * Signs a GET URL. Use disposition `inline` for in-app preview (PDF/image/text);
+     * `attachment` forces a download.
+     */
+    signDownload(objectKey: string, fileName: string, contentType: string, disposition: "attachment" | "inline" = "attachment") {
       const safeName = fileName.replace(/["\r\n]/g, "");
       return getSignedUrl(
         s3,
@@ -16,7 +20,7 @@ export function createFileSigner(bucket: string) {
           Bucket: bucket,
           Key: objectKey,
           ResponseContentType: contentType,
-          ResponseContentDisposition: `attachment; filename="${safeName}"`,
+          ResponseContentDisposition: `${disposition}; filename="${safeName}"`,
         }),
         { expiresIn: 300 },
       );

@@ -42,8 +42,10 @@ Routes for the first slice:
 - `POST /projects/{projectId}/reports/draft` builds a cited status draft from vault work items and filed chunks. Administrator only. The body needs `question`. The draft does not change plan issues. Requires `loadVaultChunks` on the handler deps.
 - `GET` and `PUT /projects/{projectId}/reports/{reportId}`
 - `POST /projects/{projectId}/reports/{reportId}/submit` and `/revise` for project writers; `/approve` and `/publish` are platform-admin only
+- `GET /projects/{projectId}/vault-allowlist` returns `{ customerId, programId, enabled }` for whether that project is on the staff vault allowlist. Administrator only.
 - `PUT /projects/{projectId}/vault-allowlist` records or clears that project on the staff vault allowlist. Administrator only. The API invokes the vault Lambda; it does not hold the vault secret.
 - `POST /projects/{projectId}/vault-ingest` copies the allowlisted program and its filed documents into the vault. Administrator only. Plan and document text are read from DynamoDB and S3; rows are saved through the vault Lambda.
+- Auto-ingest (same pipeline, best-effort): after upload complete when the document has a vault `sourceLabel`, or after `sourceLabel` is set to a vault label while a stored current version exists — only when the project is on the vault allowlist. Failures are logged and do not fail the document API.
 
 Publishing stores an immutable copy and, when `putReportText` is wired, also writes that markdown under the documents bucket. A later revision edits the working draft and leaves that copy unchanged.
 

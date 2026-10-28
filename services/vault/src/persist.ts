@@ -5,8 +5,30 @@ import { EMBEDDING_DIMENSIONS } from "./types";
 import { createVaultDb, type VaultDb } from "./db";
 import type { SqlParameter } from "@aws-sdk/client-rds-data";
 
-const PROGRAM_TABLES = ["chunk", "relation", "work_item", "milestone", "document", "transcript", "artifact", "program"] as const;
-const ENTITY_TABLE_NAMES = ["program", "work_item", "milestone", "document", "transcript", "artifact"] as const;
+const PROGRAM_TABLES = [
+  "chunk",
+  "relation",
+  "work_item",
+  "milestone",
+  "risk",
+  "decision",
+  "person",
+  "document",
+  "transcript",
+  "artifact",
+  "program",
+] as const;
+const ENTITY_TABLE_NAMES = [
+  "program",
+  "work_item",
+  "milestone",
+  "risk",
+  "decision",
+  "person",
+  "document",
+  "transcript",
+  "artifact",
+] as const;
 const ENTITY_TABLES = new Set<string>(ENTITY_TABLE_NAMES);
 const DOCUMENT_LIKE_TABLES = new Set<string>(["document", "transcript", "artifact"]);
 
@@ -99,7 +121,11 @@ function assertSafeIngestResult(result: IngestResult): void {
   }
 }
 
-/** Chunks for one customer and program. Embeddings are omitted from the response body list used by drafts. */
+/**
+ * Chunks for one customer and program. Embeddings are omitted from the response body list used by drafts.
+ * TODO(Data API): add listRelations(customerId, programId) using LIST_RELATIONS_SQL in multi-hop.ts
+ * and a vault `list-relations` event so drafts can hop without relying on predecessorIds alone.
+ */
 export async function listChunks(customerId: string, programId: string, db: VaultDb = createVaultDb()): Promise<VaultChunk[]> {
   const result = await db.execute(
     `SELECT id, customer_id, program_id, source_label, document_id, version_id, source_type, source_id, body, recorded_at
@@ -169,6 +195,33 @@ async function insertEntity(db: VaultDb, row: VaultEntityRow, transactionId: str
     );
     return;
   }
+  if (row.table === "risk") {
+    await db.execute(
+      `INSERT INTO risk (id, customer_id, program_id, source_type, source_id, recorded_at, title, body)
+       VALUES (:id, :customer_id, :program_id, :source_type, :source_id, :recorded_at::timestamptz, :title, :body)`,
+      [...base, str("title", row.title ?? ""), str("body", row.body ?? row.description ?? null)],
+      transactionId,
+    );
+    return;
+  }
+  if (row.table === "decision") {
+    await db.execute(
+      `INSERT INTO decision (id, customer_id, program_id, source_type, source_id, recorded_at, title, body)
+       VALUES (:id, :customer_id, :program_id, :source_type, :source_id, :recorded_at::timestamptz, :title, :body)`,
+      [...base, str("title", row.title ?? ""), str("body", row.body ?? row.description ?? null)],
+      transactionId,
+    );
+    return;
+  }
+  if (row.table === "person") {
+    await db.execute(
+      `INSERT INTO person (id, customer_id, program_id, source_type, source_id, recorded_at, name, email)
+       VALUES (:id, :customer_id, :program_id, :source_type, :source_id, :recorded_at::timestamptz, :name, :email)`,
+      [...base, str("name", row.name ?? ""), str("email", row.email ?? null)],
+      transactionId,
+    );
+    return;
+  }
   if (!DOCUMENT_LIKE_TABLES.has(row.table)) throw new Error(`Unsupported vault entity table: ${row.table}`);
   const tableSql =
     row.table === "document"
@@ -199,9 +252,9 @@ async function insertRelation(db: VaultDb, row: VaultRelationRow, transactionId:
       str("customer_id", row.customerId),
       str("program_id", row.programId),
       str("kind", row.kind),
-      str("from_type", "work_item"),
+      str("from_type", row.fromType),
       str("from_id", row.fromSourceId),
-      str("to_type", "work_item"),
+      str("to_type", row.toType),
       str("to_id", row.toSourceId),
       str("source_type", row.sourceType),
       str("source_id", row.sourceId),

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { deterministicEmbed } from "./embed";
-import { ingestProgram, type IngestDocument, type IngestIssue, type IngestVersion } from "./ingest";
+import {
+  ingestProgram,
+  type IngestDocument,
+  type IngestIssue,
+  type IngestRisk,
+  type IngestVersion,
+} from "./ingest";
 
 const RECORDED = "2026-10-26T12:00:00.000Z";
 const CUSTOMER = "cust-1";
@@ -63,6 +69,105 @@ describe("ingestProgram", () => {
     }
     expect(result.chunks.find((chunk) => chunk.documentId === "doc-upload")?.versionId).toBe("ver-upload");
     expect(result.chunks.find((chunk) => chunk.documentId === "doc-flies")?.sourceLabel).toBe("fireflies");
+  });
+
+  it("emits risk, person, and decision rows with tenant keys and natural relations", () => {
+    const result = ingestProgram({
+      allowlist: [{ customerId: CUSTOMER, programId: PROGRAM }],
+      program: { customerId: CUSTOMER, programId: PROGRAM, title: "Alpha" },
+      issues: [
+        issue({
+          issueId: "issue-1",
+          title: "Ship vault",
+          assignees: [
+            { id: "U_ada", login: "ada", name: "Ada" },
+            { id: "U_bob", login: "bob", name: null },
+          ],
+          predecessorIds: ["issue-0"],
+        }),
+        issue({
+          issueId: "issue-dec",
+          title: "Choose Aurora",
+          description: "Use Serverless v2",
+          issueType: "Decision",
+          assignees: [{ id: "U_ada", login: "ada", name: "Ada" }],
+        }),
+      ],
+      milestones: [],
+      risks: [
+        risk({
+          riskId: "risk-1",
+          title: "Schedule slip",
+          description: "Blocked by predecessor",
+          notes: "Watch weekly",
+          severity: "high",
+          issueId: "issue-1",
+        }),
+        risk({
+          riskId: "risk-manual",
+          title: "Vendor delay",
+          description: "No linked issue",
+          issueId: null,
+        }),
+      ],
+      documents: [],
+      versions: [],
+      recordedAt: RECORDED,
+    });
+
+    const riskRow = result.rows.find((row) => row.table === "risk" && row.sourceId === "risk-1");
+    expect(riskRow).toMatchObject({
+      customerId: CUSTOMER,
+      programId: PROGRAM,
+      title: "Schedule slip",
+      body: "Blocked by predecessor\n\nWatch weekly\n\nSeverity: high",
+    });
+    expect(result.rows.some((row) => row.table === "risk" && row.sourceId === "risk-manual")).toBe(true);
+
+    const people = result.rows.filter((row) => row.table === "person");
+    expect(people).toHaveLength(2);
+    expect(people.find((row) => row.sourceId === "U_ada")).toMatchObject({
+      name: "Ada",
+      customerId: CUSTOMER,
+      programId: PROGRAM,
+    });
+    expect(people.find((row) => row.sourceId === "U_bob")?.name).toBe("bob");
+
+    expect(result.rows.some((row) => row.table === "work_item" && row.sourceId === "issue-dec")).toBe(true);
+    expect(result.rows.find((row) => row.table === "decision" && row.sourceId === "issue-dec")).toMatchObject({
+      title: "Choose Aurora",
+      body: "Use Serverless v2",
+      customerId: CUSTOMER,
+      programId: PROGRAM,
+    });
+    expect(result.rows.some((row) => row.table === "decision" && row.sourceId === "issue-1")).toBe(false);
+
+    expect(result.relations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "blocks",
+          fromType: "work_item",
+          toType: "work_item",
+          fromSourceId: "issue-0",
+          toSourceId: "issue-1",
+        }),
+        expect.objectContaining({
+          kind: "part_of",
+          fromType: "person",
+          toType: "work_item",
+          fromSourceId: "U_ada",
+          toSourceId: "issue-1",
+        }),
+        expect.objectContaining({
+          kind: "part_of",
+          fromType: "risk",
+          toType: "work_item",
+          fromSourceId: "risk-1",
+          toSourceId: "issue-1",
+        }),
+      ]),
+    );
+    expect(result.relations.some((row) => row.fromSourceId === "risk-manual")).toBe(false);
   });
 
   it("scopes chunk ids by customer and program so tenants cannot collide on document id", () => {
@@ -171,6 +276,18 @@ function issue(partial: Partial<IngestIssue> & Pick<IngestIssue, "issueId" | "ti
     startDate: null,
     finishDate: null,
     predecessorIds: [],
+    assignees: [],
+    ...partial,
+  };
+}
+
+function risk(partial: Partial<IngestRisk> & Pick<IngestRisk, "riskId" | "title">): IngestRisk {
+  return {
+    description: "",
+    notes: "",
+    severity: null,
+    issueId: null,
+    dateCleared: null,
     ...partial,
   };
 }

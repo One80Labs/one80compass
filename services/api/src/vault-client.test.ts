@@ -32,11 +32,30 @@ describe("vault client wiring", () => {
               startDate: null,
               finishDate: null,
               predecessorIds: [],
+              assignees: [{ id: "U_ada", login: "ada", name: "Ada" }],
             },
           ];
         },
         async getSettings() {
           return { milestones: [{ id: "m1", title: "Launch", dueOn: "2026-12-01" }] };
+        },
+        async listRisks() {
+          return [
+            {
+              riskId: "risk-1",
+              projectId: "prog-1",
+              customerId: "cust-1",
+              title: "Slip",
+              severity: "high",
+              description: "Dates collide",
+              dateCleared: null,
+              notes: "",
+              issueId: "issue-1",
+              predecessorId: null,
+              updatedAt: "2026-10-26T00:00:00.000Z",
+              updatedBy: "admin",
+            },
+          ];
         },
         async listDocuments() {
           return [];
@@ -61,6 +80,18 @@ describe("vault client wiring", () => {
     await deps!.saveRows({ rows: [], relations: [], chunks: [] });
     const plan = await deps!.loadPlan("prog-1");
     expect(plan?.milestones).toEqual([{ id: "m1", title: "Launch", dueOn: "2026-12-01" }]);
+    expect(plan?.issues[0]?.assignees).toEqual([{ id: "U_ada", login: "ada", name: "Ada" }]);
+    expect(plan?.risks).toEqual([
+      {
+        riskId: "risk-1",
+        title: "Slip",
+        description: "Dates collide",
+        notes: "",
+        severity: "high",
+        issueId: "issue-1",
+        dateCleared: null,
+      },
+    ]);
     expect(events.map((event) => event.type)).toEqual(["read-allowlist", "save-allowlist", "save-rows"]);
   });
 

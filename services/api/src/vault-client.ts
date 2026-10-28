@@ -1,7 +1,14 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { AllowlistEntry } from "../../vault/src/allowlist";
-import type { IngestDocument, IngestIssue, IngestMilestone, IngestResult, IngestVersion } from "../../vault/src/ingest";
+import type {
+  IngestDocument,
+  IngestIssue,
+  IngestMilestone,
+  IngestResult,
+  IngestRisk,
+  IngestVersion,
+} from "../../vault/src/ingest";
 import type { VaultChunk } from "../../vault/src/types";
 import type { Store } from "./store";
 import type { VaultIngestDeps } from "./vault-ingest";
@@ -57,7 +64,11 @@ export function createVaultIngestDeps(options: {
     async loadPlan(projectId) {
       const project = await store.getProject(projectId);
       if (!project) return null;
-      const [issues, settings] = await Promise.all([store.listIssues(projectId), store.getSettings(projectId)]);
+      const [issues, settings, risks] = await Promise.all([
+        store.listIssues(projectId),
+        store.getSettings(projectId),
+        store.listRisks(projectId),
+      ]);
       const mappedIssues: IngestIssue[] = issues.map((issue) => ({
         issueId: issue.issueId,
         title: issue.title,
@@ -67,16 +78,31 @@ export function createVaultIngestDeps(options: {
         startDate: issue.startDate,
         finishDate: issue.finishDate,
         predecessorIds: issue.predecessorIds ?? [],
+        assignees: (issue.assignees ?? []).map((person) => ({
+          id: person.id,
+          login: person.login,
+          name: person.name,
+        })),
       }));
       const milestones: IngestMilestone[] = (settings?.milestones ?? []).map((milestone) => ({
         id: milestone.id,
         title: milestone.title,
         dueOn: milestone.dueOn,
       }));
+      const mappedRisks: IngestRisk[] = risks.map((risk) => ({
+        riskId: risk.riskId,
+        title: risk.title,
+        description: risk.description,
+        notes: risk.notes,
+        severity: risk.severity,
+        issueId: risk.issueId,
+        dateCleared: risk.dateCleared,
+      }));
       return {
         project: { customerId: project.customerId, projectId: project.projectId, name: project.name },
         issues: mappedIssues,
         milestones,
+        risks: mappedRisks,
       };
     },
     async loadDocuments(projectId) {

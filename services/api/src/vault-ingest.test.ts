@@ -1,9 +1,52 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Principal } from "../../../packages/authz/src/index";
 import type { AllowlistEntry } from "../../vault/src/allowlist";
 import type { IngestDocument, IngestResult, IngestVersion } from "../../vault/src/ingest";
 import type { HandlerDeps } from "./router";
-import { handleVaultIngest, type VaultIngestDeps } from "./vault-ingest";
+import {
+  handleVaultIngest,
+  ingestAllowlistedProgram,
+  isVaultSourceLabel,
+  maybeAutoIngestProgram,
+  type VaultIngestDeps,
+} from "./vault-ingest";
+
+describe("vault ingest helpers", () => {
+  it("recognizes vault source labels only", () => {
+    expect(isVaultSourceLabel("compass-upload")).toBe(true);
+    expect(isVaultSourceLabel("krisp")).toBe(true);
+    expect(isVaultSourceLabel(null)).toBe(false);
+    expect(isVaultSourceLabel("unknown")).toBe(false);
+  });
+
+  it("ingestAllowlistedProgram skips when the project is not allowlisted", async () => {
+    const { vault } = harness({ groups: ["one80-admin"], allowlistSeed: [] });
+    const outcome = await ingestAllowlistedProgram(vault, "prog-1", "2026-10-26T12:00:00.000Z");
+    expect(outcome.status).toBe("not_allowlisted");
+  });
+
+  it("maybeAutoIngestProgram swallows save failures", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { vault } = harness({
+      groups: ["one80-admin"],
+      allowlistSeed: [{ customerId: "cust-1", programId: "prog-1" }],
+      onSave: () => {
+        throw new Error("save blew up");
+      },
+    });
+    await expect(
+      maybeAutoIngestProgram({
+        vault,
+        projectId: "prog-1",
+        recordedAt: "2026-10-26T12:00:00.000Z",
+        correlationId: "corr-1",
+        reason: "test",
+      }),
+    ).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+});
 
 describe("handleVaultIngest", () => {
   it("rejects non-admin allowlist updates with 403", async () => {
@@ -13,6 +56,55 @@ describe("handleVaultIngest", () => {
       vault,
     );
     expect(result?.statusCode).toBe(403);
+  });
+
+  it("rejects non-admin allowlist reads with 403", async () => {
+    const { ctx, vault } = harness({ groups: [] });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "GET", path: "/projects/prog-1/vault-allowlist", body: {} },
+      vault,
+    );
+    expect(result?.statusCode).toBe(403);
+  });
+
+  it("returns 404 when reading allowlist for a missing project", async () => {
+    const { ctx, vault } = harness({ groups: ["one80-admin"] });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "GET", path: "/projects/missing/vault-allowlist", body: {} },
+      vault,
+    );
+    expect(result?.statusCode).toBe(404);
+  });
+
+  it("returns enabled true when the project is on the allowlist", async () => {
+    const { ctx, vault } = harness({
+      groups: ["one80-admin"],
+      allowlistSeed: [{ customerId: "cust-1", programId: "prog-1" }],
+    });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "GET", path: "/projects/prog-1/vault-allowlist", body: {} },
+      vault,
+    );
+    expect(result?.statusCode).toBe(200);
+    expect(JSON.parse(result!.body)).toEqual({
+      customerId: "cust-1",
+      programId: "prog-1",
+      enabled: true,
+    });
+  });
+
+  it("returns enabled false when the project is not on the allowlist", async () => {
+    const { ctx, vault } = harness({ groups: ["one80-admin"], allowlistSeed: [] });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "GET", path: "/projects/prog-1/vault-allowlist", body: {} },
+      vault,
+    );
+    expect(result?.statusCode).toBe(200);
+    expect(JSON.parse(result!.body)).toEqual({
+      customerId: "cust-1",
+      programId: "prog-1",
+      enabled: false,
+    });
   });
 
   it("records allowlist for an admin", async () => {
@@ -129,9 +221,11 @@ function harness(options: {
             startDate: null,
             finishDate: null,
             predecessorIds: [],
+            assignees: [],
           },
         ],
         milestones: [],
+        risks: [],
       };
     },
     async loadDocuments() {

@@ -312,7 +312,7 @@ const employeeClaims = { sub: "user-a", email: "ada@example.com", amr: '["authen
 
 const queued: unknown[] = [];
 
-function handlerFor(store: Store, extras: Partial<Pick<HandlerDeps, "inviteUser" | "disableLogin" | "githubConfigured">> = {}) {
+function handlerFor(store: Store, extras: Partial<HandlerDeps> = {}) {
   let n = 0;
   return createHandler({
     store,
@@ -322,7 +322,8 @@ function handlerFor(store: Store, extras: Partial<Pick<HandlerDeps, "inviteUser"
     now: () => new Date("2026-10-24T12:00:00.000Z"),
     maxUploadBytes: 100,
     signUpload: async (objectKey) => `https://files.example/upload/${objectKey}`,
-    signDownload: async (objectKey) => `https://files.example/download/${objectKey}`,
+    signDownload: async (objectKey, _fileName, _contentType, disposition = "attachment") =>
+      `https://files.example/download/${objectKey}?disposition=${disposition}`,
     objectExists: async () => true,
     enqueue: async (message) => {
       queued.push(message);
@@ -638,6 +639,19 @@ describe("api router", () => {
       event({ method: "GET", path: `/projects/${projectId}/documents/${first.documentId}/versions`, claims: employeeClaims }),
     );
     expect(JSON.parse(versions.body).versions).toHaveLength(2);
+    const listedVersions = await handler(event({ method: "GET", path: `/projects/${projectId}/documents`, claims: employeeClaims }));
+    expect(JSON.parse(listedVersions.body).documents[0]).toMatchObject({ versionNumber: 2, versionCount: 2 });
+    const renamedDoc = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/documents/${first.documentId}`,
+        claims: employeeClaims,
+        body: { name: "Plan (final)" },
+      }),
+    );
+    expect(renamedDoc.statusCode).toBe(200);
+    expect(JSON.parse(renamedDoc.body).name).toBe("Plan (final)");
+    expect(store.audits.some((row) => row.action === "document.renamed")).toBe(true);
 
     await handler(
       event({ method: "POST", path: `/projects/${projectId}/documents/${first.documentId}/delete`, claims: employeeClaims, body: {} }),
@@ -670,8 +684,35 @@ describe("api router", () => {
     );
     expect(moved.statusCode).toBe(200);
     expect(store.documents[0].folder).toBe("Specs/Drafts");
+    const renamed = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/folders/rename`,
+        claims: employeeClaims,
+        body: { path: "Specs", name: "Specifications" },
+      }),
+    );
+    expect(renamed.statusCode).toBe(200);
+    expect(JSON.parse(renamed.body)).toMatchObject({ path: "Specifications", previousPath: "Specs" });
+    expect(store.documents[0].folder).toBe("Specifications/Drafts");
+    expect(store.folders.map((folder) => folder.path).sort()).toEqual(["Specifications", "Specifications/Drafts"]);
+    await handler(
+      event({ method: "POST", path: `/projects/${projectId}/folders`, claims: employeeClaims, body: { name: "Other", parent: "" } }),
+    );
+    const renameClash = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/folders/rename`,
+        claims: employeeClaims,
+        body: { path: "Other", name: "Specifications" },
+      }),
+    );
+    expect(renameClash.statusCode).toBe(409);
+    await handler(
+      event({ method: "POST", path: `/projects/${projectId}/folders/delete`, claims: employeeClaims, body: { path: "Other" } }),
+    );
     const blocked = await handler(
-      event({ method: "POST", path: `/projects/${projectId}/folders/delete`, claims: employeeClaims, body: { path: "Specs/Drafts" } }),
+      event({ method: "POST", path: `/projects/${projectId}/folders/delete`, claims: employeeClaims, body: { path: "Specifications/Drafts" } }),
     );
     expect(blocked.statusCode).toBe(409);
     const removed = await handler(
@@ -682,11 +723,25 @@ describe("api router", () => {
       event({ method: "POST", path: `/projects/${projectId}/folders/delete`, claims: employeeClaims, body: { path: "Empty" } }),
     );
     expect(gone.statusCode).toBe(200);
-    expect(store.folders.map((folder) => folder.path)).toEqual(["Specs/Drafts"]);
+    expect(store.folders.map((folder) => folder.path).sort()).toEqual(["Specifications", "Specifications/Drafts"]);
     const foreign = await handler(
       event({ method: "GET", path: `/projects/${projectId}/documents/${first.documentId}/download`, claims: { ...employeeClaims, sub: "user-b" } }),
     );
     expect(foreign.statusCode).toBe(404);
+    const preview = await handler(
+      event({
+        method: "GET",
+        path: `/projects/${projectId}/documents/${first.documentId}/download`,
+        claims: employeeClaims,
+        query: { inline: "1" },
+      }),
+    );
+    expect(preview.statusCode).toBe(200);
+    expect(JSON.parse(preview.body)).toMatchObject({
+      disposition: "inline",
+      contentType: "application/pdf",
+      url: expect.stringContaining("disposition=inline"),
+    });
   });
 
   it("updates an employee name, email, and project list", async () => {
@@ -825,6 +880,237 @@ async function seedProject(handler: (event: HttpEvent) => Promise<{ statusCode: 
   });
   return store.projects[0].projectId;
 }
+
+/** Fake vault deps that record saveRows and optionally fail. */
+function autoIngestVault(options: {
+  store: ReturnType<typeof memoryStore>;
+  allowlisted: boolean;
+  failSave?: boolean;
+  onSave?: () => void;
+}): NonNullable<HandlerDeps["vault"]> {
+  return {
+    async loadPlan(projectId) {
+      const project = options.store.projects.find((row) => row.projectId === projectId);
+      if (!project) return null;
+      return {
+        project: { customerId: project.customerId, projectId: project.projectId, name: project.name },
+        issues: [],
+        milestones: [],
+        risks: [],
+      };
+    },
+    async loadDocuments(projectId) {
+      return options.store.documents
+        .filter((document) => document.projectId === projectId)
+        .map((document) => ({
+          documentId: document.documentId,
+          customerId: document.customerId,
+          projectId: document.projectId,
+          name: document.name,
+          sourceLabel: document.sourceLabel,
+          deletedAt: document.deletedAt,
+          currentVersionId: document.currentVersionId,
+        }));
+    },
+    async loadVersionText(documentId, versionId) {
+      const version = options.store.versions.find((row) => row.documentId === documentId && row.versionId === versionId);
+      if (!version) return null;
+      return {
+        versionId: version.versionId,
+        documentId: version.documentId,
+        contentType: version.contentType,
+        fileName: version.fileName,
+        status: version.status,
+        text: "filed notes",
+      };
+    },
+    async readAllowlist() {
+      if (!options.allowlisted || options.store.projects.length === 0) return [];
+      const project = options.store.projects[0];
+      return [{ customerId: project.customerId, programId: project.projectId }];
+    },
+    async saveAllowlist() {
+      return;
+    },
+    async saveRows() {
+      if (options.failSave) throw new Error("vault save failed");
+      options.onSave?.();
+    },
+  };
+}
+
+describe("vault auto-ingest triggers", () => {
+  it("re-ingests when a labeled upload completes on an allowlisted project", async () => {
+    const store = memoryStore();
+    let saves = 0;
+    const handler = handlerFor(store, { vault: autoIngestVault({ store, allowlisted: true, onSave: () => saves++ }) });
+    const projectId = await seedProject(handler, store);
+
+    const created = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents`,
+        claims: adminClaims,
+        body: {
+          name: "Notes",
+          fileName: "notes.txt",
+          contentType: "text/plain",
+          sizeBytes: 10,
+          sourceLabel: "compass-upload",
+        },
+      }),
+    );
+    expect(created.statusCode).toBe(201);
+    const { documentId, versionId } = JSON.parse(created.body) as { documentId: string; versionId: string };
+    expect(saves).toBe(0);
+
+    const completed = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents/${documentId}/versions/${versionId}/complete`,
+        claims: employeeClaims,
+      }),
+    );
+    expect(completed.statusCode).toBe(200);
+    expect(saves).toBe(1);
+  });
+
+  it("does not ingest when the completed upload has no vault source label", async () => {
+    const store = memoryStore();
+    let saves = 0;
+    const handler = handlerFor(store, { vault: autoIngestVault({ store, allowlisted: true, onSave: () => saves++ }) });
+    const projectId = await seedProject(handler, store);
+
+    const created = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents`,
+        claims: employeeClaims,
+        body: { name: "Notes", fileName: "notes.txt", contentType: "text/plain", sizeBytes: 10 },
+      }),
+    );
+    const { documentId, versionId } = JSON.parse(created.body) as { documentId: string; versionId: string };
+    const completed = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents/${documentId}/versions/${versionId}/complete`,
+        claims: employeeClaims,
+      }),
+    );
+    expect(completed.statusCode).toBe(200);
+    expect(saves).toBe(0);
+  });
+
+  it("does not ingest when the project is not on the vault allowlist", async () => {
+    const store = memoryStore();
+    let saves = 0;
+    const handler = handlerFor(store, { vault: autoIngestVault({ store, allowlisted: false, onSave: () => saves++ }) });
+    const projectId = await seedProject(handler, store);
+
+    const created = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents`,
+        claims: adminClaims,
+        body: {
+          name: "Notes",
+          fileName: "notes.txt",
+          contentType: "text/plain",
+          sizeBytes: 10,
+          sourceLabel: "fireflies",
+        },
+      }),
+    );
+    const { documentId, versionId } = JSON.parse(created.body) as { documentId: string; versionId: string };
+    const completed = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents/${documentId}/versions/${versionId}/complete`,
+        claims: employeeClaims,
+      }),
+    );
+    expect(completed.statusCode).toBe(200);
+    expect(saves).toBe(0);
+  });
+
+  it("keeps upload success when auto-ingest fails", async () => {
+    const store = memoryStore();
+    const handler = handlerFor(store, { vault: autoIngestVault({ store, allowlisted: true, failSave: true }) });
+    const projectId = await seedProject(handler, store);
+
+    const created = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents`,
+        claims: adminClaims,
+        body: {
+          name: "Notes",
+          fileName: "notes.txt",
+          contentType: "text/plain",
+          sizeBytes: 10,
+          sourceLabel: "krisp",
+        },
+      }),
+    );
+    const { documentId, versionId } = JSON.parse(created.body) as { documentId: string; versionId: string };
+    const completed = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents/${documentId}/versions/${versionId}/complete`,
+        claims: employeeClaims,
+      }),
+    );
+    expect(completed.statusCode).toBe(200);
+    expect(JSON.parse(completed.body).currentVersionId).toBe(versionId);
+    expect(store.versions.find((row) => row.versionId === versionId)?.status).toBe("stored");
+  });
+
+  it("re-ingests when a stored document gains a vault source label", async () => {
+    const store = memoryStore();
+    let saves = 0;
+    const handler = handlerFor(store, { vault: autoIngestVault({ store, allowlisted: true, onSave: () => saves++ }) });
+    const projectId = await seedProject(handler, store);
+
+    const created = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents`,
+        claims: employeeClaims,
+        body: { name: "Notes", fileName: "notes.txt", contentType: "text/plain", sizeBytes: 10 },
+      }),
+    );
+    const { documentId, versionId } = JSON.parse(created.body) as { documentId: string; versionId: string };
+    await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/documents/${documentId}/versions/${versionId}/complete`,
+        claims: employeeClaims,
+      }),
+    );
+    expect(saves).toBe(0);
+
+    const refused = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/documents/${documentId}`,
+        claims: employeeClaims,
+        body: { sourceLabel: "other" },
+      }),
+    );
+    expect(refused.statusCode).toBe(403);
+
+    const labeled = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/documents/${documentId}`,
+        claims: adminClaims,
+        body: { sourceLabel: "other" },
+      }),
+    );
+    expect(labeled.statusCode).toBe(200);
+    expect(saves).toBe(1);
+  });
+});
 
 describe("plan and webhooks", () => {
   it("rejects a progress override without an explanation and records one with the calculated value", async () => {

@@ -86,7 +86,14 @@ To remove the program from the allowlist, send `"enabled":false`.
 
 ### 3. Ingest the program into the vault
 
-After labels and allowlist are set, run ingest. This replaces prior vault rows for that program (work items, milestones, filed files, chunks).
+**Auto-ingest (allowlisted programs):** When a document becomes vault-eligible, Compass re-ingests that program in the background:
+
+- Upload completes (`…/versions/{versionId}/complete`) **and** the document already has a vault source label
+- Document `sourceLabel` is set or changed to a vault label while a stored current version exists
+
+Auto-ingest is best-effort: a vault failure is logged and does **not** fail the upload or label API. Manual ingest remains available and is still the reliable path after plan-only changes (issues/milestones) or when you need to force a refresh.
+
+**Manual ingest:** After labels and allowlist are set (or anytime you want to force a refresh), run ingest. This replaces prior vault rows for that program (work items, milestones, filed files, chunks).
 
 ```bash
 curl -sS -X POST \
@@ -99,10 +106,10 @@ curl -sS -X POST \
 Expected: `200` with `rowCount`, `relationCount`, and `chunkCount`.  
 If the project is not allowlisted: `409` with message that the project is not on the vault allowlist.
 
-**When to re-ingest**
+**When to re-ingest manually**
 
-- After plan or document changes that should appear in the next draft
-- After adding or changing source labels on files
+- After plan changes (issues, milestones) that should appear in the next draft without a document mutation
+- If auto-ingest was skipped (project not allowlisted yet) or appears stale in drafts
 
 ### 4. Draft a cited status report
 
@@ -179,9 +186,9 @@ Engineer notes: [services/vault/README.md](../../services/vault/README.md).
 Tracked in the [unified release plan](../product/One80Compass_Unified_Release_Plan.md):
 
 - **Phase 10:** Staff vault MCP server for Cursor and Claude (allowlist, ingest, search/list chunks, optional cited draft)
-- Allowlist/ingest UI in Compass (today these are API-only)
-- Scheduled or upload-triggered ingest
-- Richer ontology rows (risks, decisions, people)
+- Allowlist/ingest UI in Compass — **Done** (Documents → Staff vault for admins)
+- Upload/label-triggered ingest — **Done** for allowlisted programs; EventBridge cron still residual
+- Richer ontology (risks, decisions, people) + multi-hop retrieval — **Done**
 
 ## Revision
 
@@ -189,3 +196,5 @@ Tracked in the [unified release plan](../product/One80Compass_Unified_Release_Pl
 | --- | --- |
 | 2026-10-26 | Initial SOP after vault deploy and Lambda wiring |
 | 2026-10-27 | Added Phase 10 MCP to release backlog |
+| 2026-10-27 | Auto-ingest on labeled upload / label change for allowlisted programs |
+| 2026-10-27 | Marked allowlist UI, ontology, and multi-hop complete; EventBridge cron residual |

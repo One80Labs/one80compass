@@ -27,8 +27,9 @@ The portal API sets `VAULT_FUNCTION_NAME` and may only `lambda:InvokeFunction`. 
 Pure modules build the vault rows; `persist.ts` writes them through the Data API:
 
 - `allowlist.ts` — a program is copied only when it is on the allowlist.
-- `ingest.ts` — copies the allowlisted program, work items, milestones, and filed files. A file needs a `sourceLabel` of `compass-upload`, `krisp`, `fireflies`, or `other`, plus a stored current version. Unlabeled or foreign-customer files are skipped.
-- `retrieve.ts` — filters by `customer_id` and `program_id` before similarity ranking.
-- `draft.ts` — builds a cited status draft from work items and chunks. Claims without a filed source are refused.
+- `ingest.ts` — copies the allowlisted program, work items, milestones, risks, people (unique issue assignees), decisions (issues whose `issueType` is `Decision`, case-insensitive), and filed files. A file needs a `sourceLabel` of `compass-upload`, `krisp`, `fireflies`, or `other`, plus a stored current version. Unlabeled or foreign-customer files are skipped. Relations include predecessor `blocks`, assignee `part_of` (person → work_item), and risk `part_of` (risk → linked work_item when `issueId` is set).
+- `retrieve.ts` — filters by `customer_id` and `program_id` before similarity ranking. Re-exports `expandRelatedEntityIds` for post-hit hops.
+- `multi-hop.ts` — pure 1-hop expansion over relation edges (`fromId` ↔ `toId`) scoped to the same `customerId`+`programId`. Empty relations are a no-op; cross-tenant edges never expand. Two-hop is not supported in v1. Includes a `LIST_RELATIONS_SQL` sketch until the Lambda exposes `list-relations`.
+- `draft.ts` — builds a cited status draft from work items and chunks. After primary work-item hits, expands via relations (or in-memory `predecessorIds` → `blocks`) and may mention related blockers only when that work item is already in the draft input. Claims without a filed source are refused.
 
 Every write and query must keep `customer_id` and `program_id`.

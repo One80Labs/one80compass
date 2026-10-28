@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.4 — 2026-10-27.*
+*Single plan for the portal product and the staff AI vault. Version 1.6 — 2026-10-27.*
 
 This document **combines**:
 
@@ -19,9 +19,9 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | R2 Project Management + Compass ownership (Phases 1–6) | **Complete** |
 | R3 vault core (Phases 7–9) — Postgres, ingest, cited draft | **Complete** (deployed) |
 | R3 Phase 10 — Staff vault MCP | **Not started** (next) |
-| R3 backlog — ingest UI, scheduled ingest, richer ontology | **Not started** |
+| R3 backlog — ingest UI, upload-triggered ingest, richer ontology | **Complete** (EventBridge cron residual) |
 | R1 pilot / first external customer gate | **Not started** |
-| Security hardening follow-ups (Oct 2026 review) | **Complete** in code (deploy + PEM rotate still ops) |
+| Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod) |
 | Gantt dependency enhancements (post-v1) | **Not started** |
 | R4 Recovery & Governance | **Not started** |
 
@@ -78,7 +78,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | **R1 — MVP** | Cognito, tenant isolation, admin, navigation, Overview, Documents, GitHub-connected plan/Kanban, progress, basic milestones, manual reports, soft delete, audit | **Complete** in AWS dev | Pilot can complete main workflows without Confluence |
 | **R2 — Project Management** | Hierarchy, Gantt/timeline, dependencies, baselines, milestones, Compass-owned catalogs and full issue editor, GitHub → Compass import | **Complete** in AWS dev | Schedule usable in reviews; Compass can own live work |
-| **R3 — AI & Automation** | Staff vault (Postgres, ingest, cited draft), vault MCP, allowlist/ingest UX, richer ontology | **Core complete** (7–9); **MCP and UX backlog open** | Staff AI drafts are auditable; agents can use the vault via MCP when Phase 10 ships |
+| **R3 — AI & Automation** | Staff vault (Postgres, ingest, cited draft), vault MCP, allowlist/ingest UX, richer ontology | **Core + UX/ontology complete** (7–9 + backlog); **MCP next**; EventBridge cron residual | Staff AI drafts are auditable; agents can use the vault via MCP when Phase 10 ships |
 | **R4 — Recovery & Governance** | Selective restore, bulk partial success, conflict retries, advanced document governance | **Not started** | Rich recovery without overwriting active work |
 
 ---
@@ -145,14 +145,14 @@ Staff SOP: [docs/sop/staff-vault.md](../sop/staff-vault.md).
 - [ ] Monitoring/alerts proven for critical paths
 - [ ] Pilot with one test customer; retire associated Confluence links
 
-### G2 — Security hardening follow-ups (Oct 2026 review) — Complete (code)
+### G2 — Security hardening follow-ups (Oct 2026 review) — Complete
 
-Code review + security scan closed Critical/High defects, then this slice landed the remaining G2 items in-repo. **Ops still required:** review the CDK change set before deploy; rotate any GitHub PEM that lived in Lambda env; flip Cognito to `Mfa.REQUIRED` on a dedicated stage/prod stack (dev stack is `OPTIONAL` with software tokens so existing users are not locked out).
+Code review + security scan closed Critical/High defects, then this slice landed the remaining G2 items (including **COMP-31** GitHub App PEM / webhook secret → Secrets Manager). Stage/prod Cognito should still use `Mfa.REQUIRED` on a stack without password-only admins (dev stays `OPTIONAL` with software tokens).
 
 | Item | Severity | Notes | Status |
 | --- | --- | --- | --- |
-| Cognito MFA on live DNS | Critical | Dev stack: `Mfa.OPTIONAL` + software OTP. Stage/prod must use `REQUIRED` on a stack without password-only admins | **Done** (code; REQUIRED cutover is ops) |
-| GitHub secrets in Secrets Manager | Critical | Secret `one80compass-dev-github`; Lambdas read `GITHUB_SECRET_ARN`; env remains bootstrap fallback. Rotate prior PEMs after deploy | **Done** (code; rotate is ops) |
+| Cognito MFA on live DNS | Critical | Dev stack: `Mfa.OPTIONAL` + software OTP. Stage/prod must use `REQUIRED` on a stack without password-only admins | **Done** (code; REQUIRED cutover is stage/prod) |
+| GitHub secrets in Secrets Manager (COMP-31) | Critical | Secret `one80compass-dev-github`; Lambdas read `GITHUB_SECRET_ARN`; PEM not in Lambda env | **Done** |
 | DynamoDB query pagination | High | `queryAll` / `queryUpTo` in `services/api/src/store.ts` (shared with sync) | **Done** |
 | Baseline number concurrency | High | `BASELINE_SEQ` ADD + conditional put; `409` on race | **Done** |
 | Prod CORS without localhost | Medium | `BROWSER_ORIGINS` / `prodOriginsOnly` / `PROD_ORIGINS_ONLY` → only `https://one80compass.ai` (+ www) | **Done** |
@@ -164,14 +164,15 @@ Code review + security scan closed Critical/High defects, then this slice landed
 | Customer audit PII scope | Medium | Non-admins: metadata only (`before`/`after` null) on customer audit + overview activity; admins full | **Done** |
 | Report approve/publish roles | Medium | Approve/publish platform-admin only; contributors draft/submit/revise | **Done** |
 
-### H — Release backlog (R3+) — Not started
+### H — Release backlog (R3+) — Partially complete
 
 | Item | Notes | Status |
 | --- | --- | --- |
 | **Phase 10 — Staff vault MCP** | Cursor/Claude: allowlist, ingest, search/list chunks, optional cited draft. Admin auth; filter by customer/program; no vault secret in MCP; no live-plan writes | **Not started — next vault build** |
-| Allowlist / ingest UI in Compass | Today API-only (`PUT .../vault-allowlist`, `POST .../vault-ingest`) | Not started |
-| Scheduled or upload-triggered ingest | Today manual ingest only | Not started |
-| Richer ontology | Populate risks, decisions, people; multi-hop retrieval | Not started |
+| Allowlist / ingest UI in Compass | Admin Documents panel; `GET`/`PUT .../vault-allowlist`, `POST .../vault-ingest` | **Done** |
+| Upload-triggered ingest | Auto re-ingest on labeled upload complete / sourceLabel change for allowlisted programs; manual POST remains | **Done** |
+| EventBridge / cron scheduled ingest | Periodic re-ingest for plan-only changes (no document mutation); optional re-ingest on allowlist enable | Not started (residual) |
+| Richer ontology | Populate risks, decisions, people; multi-hop retrieval via relations | **Done** |
 | Customer-login AI | Separate product later | Out of scope |
 | Live Krisp / Fireflies connectors | File exports only for now | Out of scope |
 | GitHub export from Compass | — | Out of scope |
@@ -237,8 +238,8 @@ Build an MCP server so staff can use the vault from Cursor and Claude.
 | Cross-tenant vault leaks | Filter every vault query by `customerId` and `programId`; automated tests |
 | Vault cost (Aurora idle) | Serverless v2 floor; monitor ACU and Data API usage |
 | MVP / R3 scope creep | Protect exit gates; MCP and ontology stay backlog until asked |
-| Manual ingest drift | Document SOP; backlog scheduled ingest |
-| Secrets in Lambda env / MFA off on prod DNS | Secrets Manager landed; rotate PEM after deploy; MFA.REQUIRED on dedicated stage/prod (§5 G2) |
+| Manual ingest drift | Upload/label auto-ingest shipped; EventBridge cron still residual |
+| MFA off on prod DNS | COMP-31 Secrets Manager done; MFA.REQUIRED still required on dedicated stage/prod (§5 G2) |
 | Silent Dynamo truncation | Mitigated by `queryAll` (§5 G2) |
 
 ---
@@ -266,3 +267,5 @@ Build an MCP server so staff can use the vault from Cursor and Claude.
 | 2026-10-27 | v1.3 Marked §5 G2 complete in code (infra MFA OPTIONAL, Secrets Manager, CORS/RETAIN/PITR/SSE, API pagination/baselines/audit/reports, web token refresh, vault chunk PKs, sync reconcile paging) |
 | 2026-10-27 | v1.3 Marked G2 done: DynamoDB query pagination, baseline number concurrency, customer audit PII redaction, report approve/publish admin-only |
 | 2026-10-27 | v1.4 Dropped §5 I “Sync soft Dependencies to GitHub” (Compass owns plan; soft deps stay portal-only) |
+| 2026-10-27 | v1.5 Marked COMP-31 (GitHub App PEM / webhook → Secrets Manager) **Done** in MD + in-app plan; removed PEM-rotate “ops” wording |
+| 2026-10-27 | v1.6 Vault UX + ontology backlog: allowlist/ingest UI, upload-triggered ingest, richer ontology + multi-hop **Done**; EventBridge cron residual; Phase 10 MCP still next |

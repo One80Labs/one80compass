@@ -23,7 +23,7 @@ import { handlePlan } from "./plan";
 import { handleCatalogs } from "./catalogs";
 import { handleReports } from "./reports";
 import { handleVaultDraft } from "./vault-draft";
-import { handleVaultIngest, type VaultIngestDeps } from "./vault-ingest";
+import { handleVaultIngest, isVaultSourceLabel, maybeAutoIngestProgram, type VaultIngestDeps } from "./vault-ingest";
 import type { Store } from "./store";
 import type { VaultChunk } from "../../vault/src/types";
 import { acceptWebhook } from "./webhook";
@@ -55,7 +55,7 @@ export type HandlerDeps = {
   newId: () => string;
   now: () => Date;
   signUpload: (objectKey: string, sizeBytes: number) => Promise<string>;
-  signDownload: (objectKey: string, fileName: string, contentType: string) => Promise<string>;
+  signDownload: (objectKey: string, fileName: string, contentType: string, disposition?: "attachment" | "inline") => Promise<string>;
   /** Confirms a pending upload object exists in the documents bucket before marking stored. */
   objectExists?: (objectKey: string, expectedBytes?: number) => Promise<boolean>;
   /** Optional: store published report markdown in the documents bucket. */
@@ -139,6 +139,7 @@ export function createHandler(deps: HandlerDeps) {
                 finishDate: issue.finishDate,
                 effort: issue.effort,
                 description: issue.description,
+                predecessorIds: issue.predecessorIds ?? [],
               })),
             loadChunks: (customerId, programId) => deps.loadVaultChunks!(customerId, programId),
             createReport: (report) => deps.store.createReport(report),
@@ -223,6 +224,9 @@ export function createHandler(deps: HandlerDeps) {
 
       const removeFolder = path.match(/^\/projects\/([^/]+)\/folders\/delete$/);
       if (removeFolder && method === "POST") return deleteFolder(deps, ctx, decodeURIComponent(removeFolder[1]));
+
+      const renameFolderPath = path.match(/^\/projects\/([^/]+)\/folders\/rename$/);
+      if (renameFolderPath && method === "POST") return renameFolder(deps, ctx, decodeURIComponent(renameFolderPath[1]));
 
       const folders = path.match(/^\/projects\/([^/]+)\/folders$/);
       if (folders && method === "POST") return createFolder(deps, ctx, decodeURIComponent(folders[1]));
@@ -776,8 +780,20 @@ async function listProjectDocuments(deps: HandlerDeps, ctx: Ctx, projectId: stri
   const documents = (await deps.store.listDocuments(projectId)).filter((document) => Boolean(document.deletedAt) === deleted);
   const listed = await Promise.all(
     documents.map(async (document) => {
-      const version = document.currentVersionId ? await deps.store.getVersion(document.documentId, document.currentVersionId) : null;
-      return { ...document, currentFileName: version?.fileName ?? null };
+      const stored = (await deps.store.listVersions(document.documentId))
+        .filter((version) => version.status === "stored")
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      const current = document.currentVersionId
+        ? stored.find((version) => version.versionId === document.currentVersionId) ?? null
+        : null;
+      const versionNumber = current ? stored.findIndex((version) => version.versionId === current.versionId) + 1 : 0;
+      return {
+        ...document,
+        currentFileName: current?.fileName ?? null,
+        updatedAt: current?.createdAt ?? document.createdAt,
+        versionNumber,
+        versionCount: stored.length,
+      };
     }),
   );
   const folders = visibleFolders(await deps.store.listFolders(projectId), documents);
@@ -853,6 +869,84 @@ async function deleteFolder(deps: HandlerDeps, ctx: Ctx, projectId: string): Pro
   return json(200, { path }, ctx.correlationId);
 }
 
+/** Renames a folder and remaps nested folder paths plus every document that lives under it. */
+async function renameFolder(deps: HandlerDeps, ctx: Ctx, projectId: string): Promise<HttpResult> {
+  const project = await readableProject(deps, ctx, projectId);
+  if (!project) return notFound(ctx);
+  const blocked = await rejectView(deps, ctx, project);
+  if (blocked) return blocked;
+  const path = folderField(ctx.body.path);
+  if (!path) return validation(ctx, "Choose a folder to rename.");
+  const name = folderName(ctx.body.name);
+  if (!name) return validation(ctx, "A folder name can use letters, numbers, spaces, and . _ -.");
+
+  const documents = await deps.store.listDocuments(projectId);
+  const stored = await deps.store.listFolders(projectId);
+  const known = visibleFolders(stored, documents);
+  const current = known.find((item) => item.path === path);
+  if (!current) return notFound(ctx);
+
+  const newPath = current.parent ? `${current.parent}/${name}` : name;
+  if (newPath.length > 120) return validation(ctx, "That folder path is too long.");
+  if (newPath === path) return json(200, { path, name: current.name, parent: current.parent }, ctx.correlationId);
+  if (known.some((item) => item.path === newPath)) {
+    return conflict(ctx, "A folder with that name already exists here.");
+  }
+
+  const prefix = `${path}/`;
+  const remap = (value: string): string => {
+    if (value === path) return newPath;
+    if (value.startsWith(prefix)) return `${newPath}${value.slice(path.length)}`;
+    return value;
+  };
+
+  const foldersToRewrite = stored.filter((folder) => folder.path === path || folder.path.startsWith(prefix));
+  if (!foldersToRewrite.some((folder) => folder.path === path)) {
+    foldersToRewrite.push({
+      projectId,
+      customerId: project.customerId,
+      path,
+      name: current.name,
+      parent: current.parent,
+      createdAt: current.createdAt,
+    });
+  }
+  foldersToRewrite.sort((left, right) => right.path.length - left.path.length);
+
+  for (const folder of foldersToRewrite) {
+    const nextPath = remap(folder.path);
+    const segments = nextPath.split("/");
+    const nextName = segments[segments.length - 1] ?? nextPath;
+    const nextParent = segments.slice(0, -1).join("/");
+    if (stored.some((item) => item.path === folder.path)) {
+      await deps.store.deleteFolder(projectId, folder.path);
+    }
+    await deps.store.putFolder({
+      ...folder,
+      path: nextPath,
+      name: nextName,
+      parent: nextParent,
+    });
+  }
+
+  for (const document of documents) {
+    if (!document.folder || (document.folder !== path && !document.folder.startsWith(prefix))) continue;
+    await deps.store.putDocument({ ...document, folder: remap(document.folder) });
+  }
+
+  await audit(deps, ctx, {
+    customerId: project.customerId,
+    projectId,
+    action: "folder.renamed",
+    targetType: "folder",
+    targetId: newPath,
+    before: { path, name: current.name, parent: current.parent },
+    after: { path: newPath, name, parent: current.parent },
+  });
+  return json(200, { path: newPath, name, parent: current.parent, previousPath: path }, ctx.correlationId);
+}
+
+/** Patches document name, folder, and/or vault source label. Source labels are administrator-only. */
 async function moveDocumentToFolder(deps: HandlerDeps, ctx: Ctx, projectId: string, documentId: string): Promise<HttpResult> {
   const document = await activeDocument(deps, ctx, projectId, documentId);
   if (!document) return notFound(ctx);
@@ -860,7 +954,15 @@ async function moveDocumentToFolder(deps: HandlerDeps, ctx: Ctx, projectId: stri
   if (blocked) return blocked;
   const hasFolder = Object.prototype.hasOwnProperty.call(ctx.body, "folder");
   const hasSourceLabel = Object.prototype.hasOwnProperty.call(ctx.body, "sourceLabel");
-  if (!hasFolder && !hasSourceLabel) return validation(ctx, "folder or sourceLabel is required.");
+  const hasName = Object.prototype.hasOwnProperty.call(ctx.body, "name");
+  if (!hasFolder && !hasSourceLabel && !hasName) return validation(ctx, "name, folder, or sourceLabel is required.");
+
+  let name = document.name;
+  if (hasName) {
+    const nextName = stringField(ctx.body, "name");
+    if (!nextName || nextName.length > 200) return validation(ctx, "name is required.");
+    name = nextName;
+  }
 
   let folder = document.folder;
   if (hasFolder) {
@@ -874,22 +976,43 @@ async function moveDocumentToFolder(deps: HandlerDeps, ctx: Ctx, projectId: stri
 
   let sourceLabel = document.sourceLabel;
   if (hasSourceLabel) {
+    const gate = requireAdmin(ctx);
+    if (gate) return gate;
     const parsed = parseSourceLabelField(ctx.body.sourceLabel);
     if (parsed === undefined) return validation(ctx, "sourceLabel must be compass-upload, krisp, fireflies, other, or null.");
     sourceLabel = parsed;
   }
 
-  const moved = { ...document, folder, sourceLabel };
+  const moved = { ...document, name, folder, sourceLabel };
   await deps.store.putDocument(moved);
+  const renamedOnly = hasName && name !== document.name && !hasFolder && !hasSourceLabel;
+  const movedFolder = hasFolder && folder !== document.folder;
   await audit(deps, ctx, {
     customerId: document.customerId,
     projectId,
-    action: hasFolder && folder !== document.folder ? "document.moved" : "document.updated",
+    action: renamedOnly ? "document.renamed" : movedFolder ? "document.moved" : "document.updated",
     targetType: "document",
     targetId: documentId,
-    before: { folder: document.folder, sourceLabel: document.sourceLabel },
-    after: { folder, sourceLabel },
+    before: { name: document.name, folder: document.folder, sourceLabel: document.sourceLabel },
+    after: { name, folder, sourceLabel },
   });
+
+  // Label set/changed to a vault label with a stored current version → re-ingest allowlisted programs.
+  const labelBecameVaultEligible =
+    hasSourceLabel && isVaultSourceLabel(sourceLabel) && sourceLabel !== document.sourceLabel;
+  if (labelBecameVaultEligible && document.currentVersionId) {
+    const current = await deps.store.getVersion(document.documentId, document.currentVersionId);
+    if (current?.status === "stored") {
+      await maybeAutoIngestProgram({
+        vault: deps.vault,
+        projectId,
+        recordedAt: deps.now().toISOString(),
+        correlationId: ctx.correlationId,
+        reason: "document.sourceLabel",
+      });
+    }
+  }
+
   return json(200, moved, ctx.correlationId);
 }
 
@@ -939,6 +1062,11 @@ async function createDocument(deps: HandlerDeps, ctx: Ctx, projectId: string): P
   const sourceLabel = parseSourceLabelField(ctx.body.sourceLabel);
   if (sourceLabel === undefined) {
     return validation(ctx, "sourceLabel must be compass-upload, krisp, fireflies, other, or null.");
+  }
+  // Vault filing labels are staff-only; contributors upload without a label.
+  if (sourceLabel !== null) {
+    const gate = requireAdmin(ctx);
+    if (gate) return gate;
   }
   const document: PortalDocument = {
     documentId,
@@ -1001,6 +1129,18 @@ async function completeDocumentVersion(deps: HandlerDeps, ctx: Ctx, projectId: s
     before: { currentVersionId: previousVersionId },
     after: { currentVersionId: versionId, fileName: version.fileName, sizeBytes: version.sizeBytes },
   });
+
+  // Upload complete + vault source label → re-ingest when the project is allowlisted.
+  if (isVaultSourceLabel(updated.sourceLabel)) {
+    await maybeAutoIngestProgram({
+      vault: deps.vault,
+      projectId,
+      recordedAt: deps.now().toISOString(),
+      correlationId: ctx.correlationId,
+      reason: "document.upload_complete",
+    });
+  }
+
   return json(200, { documentId, versionId, currentVersionId: versionId }, ctx.correlationId);
 }
 
@@ -1018,8 +1158,14 @@ async function downloadDocument(deps: HandlerDeps, ctx: Ctx, projectId: string, 
   if (!versionId) return notFound(ctx);
   const version = await deps.store.getVersion(documentId, versionId);
   if (!version || version.status !== "stored" || version.projectId !== projectId) return notFound(ctx);
-  const url = await deps.signDownload(version.objectKey, version.fileName, version.contentType);
-  return json(200, { url, fileName: version.fileName, versionId }, ctx.correlationId);
+  // `inline=1` signs for browser preview; default remains a download attachment.
+  const disposition = ctx.query.inline === "1" || ctx.query.inline === "true" ? "inline" : "attachment";
+  const url = await deps.signDownload(version.objectKey, version.fileName, version.contentType, disposition);
+  return json(
+    200,
+    { url, fileName: version.fileName, versionId, contentType: version.contentType, disposition },
+    ctx.correlationId,
+  );
 }
 
 async function deleteDocument(deps: HandlerDeps, ctx: Ctx, projectId: string, documentId: string): Promise<HttpResult> {

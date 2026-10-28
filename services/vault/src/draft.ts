@@ -1,3 +1,4 @@
+import { expandRelatedEntityIds, type MultiHopRelation } from "./multi-hop";
 import type { SourceLabel, VaultChunk } from "./types";
 
 export type DraftWorkItem = {
@@ -9,6 +10,8 @@ export type DraftWorkItem = {
   finishDate: string | null;
   effort: number | null;
   description: string | null;
+  /** Optional Compass predecessors; used to build in-memory `blocks` hops when `relations` is omitted. */
+  predecessorIds?: string[];
 };
 
 export type DraftCitation = {
@@ -30,6 +33,11 @@ export type DraftStatusInput = {
   question: string;
   workItems: DraftWorkItem[];
   chunks: VaultChunk[];
+  /**
+   * Optional relation edges for 1-hop expansion after primary work-item hits.
+   * When omitted, `blocks` edges are derived from each work item's `predecessorIds`.
+   */
+  relations?: MultiHopRelation[];
 };
 
 export type DraftStatusResult = {
@@ -48,12 +56,16 @@ export function draftStatus(input: DraftStatusInput): DraftStatusResult {
   );
   const claims: DraftClaim[] = [];
   const citations: DraftCitation[] = [];
+  const claimedWorkItems = new Set<string>();
+  const primaryWorkItemIds: string[] = [];
 
   for (const item of input.workItems) {
     if (!answersQuestion(input.question, workItemHaystack(item))) continue;
     const text = workItemClaimText(item);
     if (!text) continue;
     claims.push({ text, workItemId: item.issueId });
+    claimedWorkItems.add(item.issueId);
+    primaryWorkItemIds.push(item.issueId);
   }
 
   for (const chunk of kept) {
@@ -68,6 +80,31 @@ export function draftStatus(input: DraftStatusInput): DraftStatusResult {
     };
     claims.push({ text, citation });
     citations.push({ ...citation, excerpt });
+  }
+
+  // 1-hop via filed relations only: related work must already be in workItems (no invented claims).
+  const relations = input.relations ?? blockerRelationsFromWorkItems(input);
+  const relatedIds = new Set(
+    expandRelatedEntityIds({
+      customerId: input.customerId,
+      programId: input.programId,
+      seedIds: primaryWorkItemIds,
+      relations,
+    }),
+  );
+  const workById = new Map(input.workItems.map((item) => [item.issueId, item]));
+  for (const relatedId of relatedIds) {
+    if (claimedWorkItems.has(relatedId)) continue;
+    const item = workById.get(relatedId);
+    if (!item) continue;
+    const base = workItemClaimText(item);
+    if (!base) continue;
+    const kind = relationKindBetween(relations, primaryWorkItemIds, relatedId) ?? "related";
+    claims.push({
+      text: `Related (${kind}): ${base}`,
+      workItemId: item.issueId,
+    });
+    claimedWorkItems.add(item.issueId);
   }
 
   if (claims.length === 0) {
@@ -86,6 +123,40 @@ export function draftStatus(input: DraftStatusInput): DraftStatusResult {
     .join("\n");
 
   return { title: "Status draft", body, citations, claims };
+}
+
+function blockerRelationsFromWorkItems(input: DraftStatusInput): MultiHopRelation[] {
+  const relations: MultiHopRelation[] = [];
+  for (const item of input.workItems) {
+    for (const predecessorId of item.predecessorIds ?? []) {
+      if (!predecessorId) continue;
+      relations.push({
+        customerId: input.customerId,
+        programId: input.programId,
+        kind: "blocks",
+        fromId: predecessorId,
+        toId: item.issueId,
+      });
+    }
+  }
+  return relations;
+}
+
+function relationKindBetween(
+  relations: readonly MultiHopRelation[],
+  seeds: readonly string[],
+  relatedId: string,
+): string | null {
+  const seedSet = new Set(seeds);
+  for (const edge of relations) {
+    if (
+      (seedSet.has(edge.fromId) && edge.toId === relatedId) ||
+      (seedSet.has(edge.toId) && edge.fromId === relatedId)
+    ) {
+      return edge.kind;
+    }
+  }
+  return null;
 }
 
 function workItemHaystack(item: DraftWorkItem): string {

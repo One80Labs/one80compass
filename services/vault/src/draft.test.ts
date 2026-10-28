@@ -129,4 +129,118 @@ describe("draftStatus", () => {
     expect(result.claims[0]?.text).toContain("Discovery interviews");
     expect(result.claims[0]?.text).toContain("In Progress");
   });
+
+  it("hops to a filed predecessor blocker after a primary work-item hit", () => {
+    const result = draftStatus({
+      customerId: "cust-1",
+      programId: "prog-1",
+      question: "How is pavement pour progressing?",
+      workItems: [
+        {
+          issueId: "I_pour",
+          title: "Pavement pour",
+          status: "Blocked",
+          issueType: "Task",
+          startDate: null,
+          finishDate: null,
+          effort: null,
+          description: null,
+          predecessorIds: ["I_permit"],
+        },
+        {
+          issueId: "I_permit",
+          title: "Permit approval",
+          status: "In Progress",
+          issueType: "Task",
+          startDate: null,
+          finishDate: null,
+          effort: null,
+          description: null,
+        },
+      ],
+      chunks: [],
+    });
+    expect(result.claims.map((claim) => claim.workItemId)).toEqual(["I_pour", "I_permit"]);
+    expect(result.body).toContain("Related (blocks):");
+    expect(result.body).toContain("Permit approval");
+    expect(result.body).toContain("[work item I_permit]");
+  });
+
+  it("does not hop across tenants even when relations point at a seed id", () => {
+    const result = draftStatus({
+      customerId: "cust-1",
+      programId: "prog-1",
+      question: "How is pavement pour progressing?",
+      workItems: [
+        {
+          issueId: "I_pour",
+          title: "Pavement pour",
+          status: "Blocked",
+          issueType: "Task",
+          startDate: null,
+          finishDate: null,
+          effort: null,
+          description: null,
+        },
+        {
+          issueId: "I_secret",
+          title: "Secret blocker",
+          status: "Todo",
+          issueType: "Task",
+          startDate: null,
+          finishDate: null,
+          effort: null,
+          description: null,
+        },
+      ],
+      relations: [
+        {
+          customerId: "cust-other",
+          programId: "prog-1",
+          kind: "blocks",
+          fromId: "I_secret",
+          toId: "I_pour",
+        },
+      ],
+      chunks: [],
+    });
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims[0]?.workItemId).toBe("I_pour");
+    expect(result.body).not.toContain("Secret blocker");
+  });
+
+  it("no-ops hop expansion when relations are empty", () => {
+    const result = draftStatus({
+      customerId: "cust-1",
+      programId: "prog-1",
+      question: "How is pavement pour progressing?",
+      workItems: [
+        {
+          issueId: "I_pour",
+          title: "Pavement pour",
+          status: "Blocked",
+          issueType: "Task",
+          startDate: null,
+          finishDate: null,
+          effort: null,
+          description: null,
+        },
+        {
+          issueId: "I_permit",
+          title: "Permit approval",
+          status: "In Progress",
+          issueType: "Task",
+          startDate: null,
+          finishDate: null,
+          effort: null,
+          description: null,
+        },
+      ],
+      relations: [],
+      chunks: [],
+    });
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims[0]?.workItemId).toBe("I_pour");
+    expect(result.body).not.toContain("Permit approval");
+  });
 });

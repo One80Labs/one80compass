@@ -1,4 +1,8 @@
+import { expandRelatedEntityIds, type MultiHopQuery, type MultiHopRelation } from "./multi-hop";
 import type { VaultChunk } from "./types";
+
+export type { MultiHopQuery, MultiHopRelation };
+export { expandRelatedEntityIds };
 
 export type RetrieveQuery = {
   customerId: string;
@@ -10,6 +14,9 @@ export type RetrieveQuery = {
 /**
  * Filters by customer and program before scoring. A closest embedding from another
  * customer must never win.
+ *
+ * After primary hits, callers may pass seed entity ids (e.g. work_item source ids) through
+ * `expandRelatedEntityIds` for a 1-hop relation expansion in the same tenant — see multi-hop.ts.
  */
 export function retrieveChunks(chunks: VaultChunk[], query: RetrieveQuery): VaultChunk[] {
   const scoped = chunks.filter(

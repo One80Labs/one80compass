@@ -92,8 +92,51 @@ describe("vault persist", () => {
           sourceLabel: "compass-upload",
           versionId: "ver-1",
         },
+        {
+          table: "risk",
+          customerId: "cust-1",
+          programId: "prog-1",
+          sourceType: "compass",
+          sourceId: "risk-1",
+          recordedAt: "2026-10-26T00:00:00.000Z",
+          title: "Slip",
+          body: "Blocked",
+        },
+        {
+          table: "decision",
+          customerId: "cust-1",
+          programId: "prog-1",
+          sourceType: "compass",
+          sourceId: "issue-dec",
+          recordedAt: "2026-10-26T00:00:00.000Z",
+          title: "Choose Aurora",
+          body: "Serverless v2",
+        },
+        {
+          table: "person",
+          customerId: "cust-1",
+          programId: "prog-1",
+          sourceType: "compass",
+          sourceId: "U_ada",
+          recordedAt: "2026-10-26T00:00:00.000Z",
+          name: "Ada",
+          email: null,
+        },
       ],
-      relations: [],
+      relations: [
+        {
+          customerId: "cust-1",
+          programId: "prog-1",
+          sourceType: "compass",
+          sourceId: "risk:risk-1->issue-1",
+          recordedAt: "2026-10-26T00:00:00.000Z",
+          kind: "part_of",
+          fromType: "risk",
+          toType: "work_item",
+          fromSourceId: "risk-1",
+          toSourceId: "issue-1",
+        },
+      ],
       chunks: [
         {
           id: "cust-1:prog-1:doc-1:ver-1:0",
@@ -112,8 +155,15 @@ describe("vault persist", () => {
     };
     await saveIngestResult(result, db);
     expect(calls.some((call) => call.sql.includes("DELETE FROM chunk"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM risk"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM decision"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM person"))).toBe(true);
     expect(calls.some((call) => call.sql.includes("INSERT INTO program"))).toBe(true);
     expect(calls.some((call) => call.sql.includes("INSERT INTO document"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO risk"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO decision"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO person"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO relation") && call.sql.includes(":from_type"))).toBe(true);
     expect(calls.some((call) => call.sql.includes("INSERT INTO chunk"))).toBe(true);
     expect(calls.every((call) => !call.sql.includes("DELETE FROM") || call.transactionId === "tx-1")).toBe(true);
   });

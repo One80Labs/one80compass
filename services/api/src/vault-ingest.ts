@@ -1,10 +1,12 @@
 import { adminAccess, type Principal } from "../../../packages/authz/src/index";
+import { DOCUMENT_SOURCE_LABELS, type DocumentSourceLabel } from "../../../packages/domain/src/index";
 import {
   ingestProgram,
   type IngestDocument,
   type IngestIssue,
   type IngestMilestone,
   type IngestResult,
+  type IngestRisk,
   type IngestVersion,
 } from "../../vault/src/ingest";
 import type { AllowlistEntry } from "../../vault/src/allowlist";
@@ -25,6 +27,7 @@ export type VaultIngestDeps = {
     project: { customerId: string; projectId: string; name: string };
     issues: IngestIssue[];
     milestones: IngestMilestone[];
+    risks: IngestRisk[];
   } | null>;
   loadDocuments: (projectId: string) => Promise<IngestDocument[]>;
   loadVersionText: (documentId: string, versionId: string) => Promise<IngestVersion | null>;
@@ -33,55 +36,36 @@ export type VaultIngestDeps = {
   saveRows: (result: IngestResult) => Promise<void>;
 };
 
+/** Outcome of loading a program and writing vault rows (shared by admin POST and auto-ingest). */
+export type IngestProgramOutcome =
+  | { status: "ok"; result: IngestResult }
+  | { status: "not_found" }
+  | { status: "not_allowlisted" };
+
+const VAULT_LABEL_SET = new Set<string>(DOCUMENT_SOURCE_LABELS);
+
+/** True when the document label is one of the vault source labels (not null/cleared). */
+export function isVaultSourceLabel(label: DocumentSourceLabel | string | null | undefined): label is DocumentSourceLabel {
+  return typeof label === "string" && VAULT_LABEL_SET.has(label);
+}
+
 /**
- * Admin vault routes. Returns null when the path is not a vault route.
- * Parent wires this beside plan/catalogs/reports in router.ts.
+ * Copy an allowlisted Compass program into the vault using the same pipeline as POST vault-ingest.
+ * Does not enforce admin auth — callers decide who may trigger ingest.
  */
-export async function handleVaultIngest(ctx: VaultCtx, vault: VaultIngestDeps): Promise<HttpResult | null> {
-  const allowlistMatch = ctx.path.match(/^\/projects\/([^/]+)\/vault-allowlist$/);
-  if (allowlistMatch && ctx.method === "PUT") {
-    return putAllowlist(ctx, vault, decodeURIComponent(allowlistMatch[1]));
-  }
-  const ingestMatch = ctx.path.match(/^\/projects\/([^/]+)\/vault-ingest$/);
-  if (ingestMatch && ctx.method === "POST") {
-    return postIngest(ctx, vault, decodeURIComponent(ingestMatch[1]));
-  }
-  return null;
-}
-
-async function putAllowlist(ctx: VaultCtx, vault: VaultIngestDeps, projectId: string): Promise<HttpResult> {
-  const forbidden = requireAdmin(ctx);
-  if (forbidden) return forbidden;
-  const project = await ctx.deps.store.getProject(projectId);
-  if (!project) return notFound(ctx.correlationId);
-  if (typeof ctx.body.enabled !== "boolean") {
-    return validation(ctx.correlationId, "enabled must be a boolean.");
-  }
-  await vault.saveAllowlist({ customerId: project.customerId, programId: project.projectId }, ctx.body.enabled);
-  return json(200, { customerId: project.customerId, programId: project.projectId, enabled: ctx.body.enabled }, ctx.correlationId);
-}
-
-async function postIngest(ctx: VaultCtx, vault: VaultIngestDeps, projectId: string): Promise<HttpResult> {
-  const forbidden = requireAdmin(ctx);
-  if (forbidden) return forbidden;
+export async function ingestAllowlistedProgram(
+  vault: VaultIngestDeps,
+  projectId: string,
+  recordedAt: string,
+): Promise<IngestProgramOutcome> {
   const plan = await vault.loadPlan(projectId);
-  if (!plan) return notFound(ctx.correlationId);
+  if (!plan) return { status: "not_found" };
 
   const allowlist = await vault.readAllowlist();
   const allowed = allowlist.some(
     (entry) => entry.customerId === plan.project.customerId && entry.programId === plan.project.projectId,
   );
-  if (!allowed) {
-    return json(
-      409,
-      {
-        code: "CONFLICT",
-        message: "Project is not on the vault allowlist.",
-        correlationId: ctx.correlationId,
-      },
-      ctx.correlationId,
-    );
-  }
+  if (!allowed) return { status: "not_allowlisted" };
 
   const documents = (await vault.loadDocuments(projectId)).filter(
     (document) => document.customerId === plan.project.customerId,
@@ -102,11 +86,115 @@ async function postIngest(ctx: VaultCtx, vault: VaultIngestDeps, projectId: stri
     },
     issues: plan.issues,
     milestones: plan.milestones,
+    risks: plan.risks,
     documents,
     versions,
-    recordedAt: ctx.deps.now().toISOString(),
+    recordedAt,
   });
   await vault.saveRows(result);
+  return { status: "ok", result };
+}
+
+/**
+ * Best-effort re-ingest after a document becomes vault-eligible.
+ * Never throws: failures are logged so upload/label APIs keep succeeding.
+ */
+export async function maybeAutoIngestProgram(options: {
+  vault: VaultIngestDeps | undefined;
+  projectId: string;
+  recordedAt: string;
+  correlationId: string;
+  reason: string;
+}): Promise<void> {
+  if (!options.vault) return;
+  try {
+    const outcome = await ingestAllowlistedProgram(options.vault, options.projectId, options.recordedAt);
+    if (outcome.status === "ok") {
+      console.info(
+        JSON.stringify({
+          correlationId: options.correlationId,
+          message: "vault auto-ingest completed",
+          projectId: options.projectId,
+          reason: options.reason,
+          rowCount: outcome.result.rows.length,
+          chunkCount: outcome.result.chunks.length,
+        }),
+      );
+    }
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        correlationId: options.correlationId,
+        message: "vault auto-ingest failed",
+        projectId: options.projectId,
+        reason: options.reason,
+        error: error instanceof Error ? error.message : "error",
+      }),
+    );
+  }
+}
+
+/**
+ * Admin vault routes. Returns null when the path is not a vault route.
+ * Parent wires this beside plan/catalogs/reports in router.ts.
+ */
+export async function handleVaultIngest(ctx: VaultCtx, vault: VaultIngestDeps): Promise<HttpResult | null> {
+  const allowlistMatch = ctx.path.match(/^\/projects\/([^/]+)\/vault-allowlist$/);
+  if (allowlistMatch && ctx.method === "GET") {
+    return getAllowlist(ctx, vault, decodeURIComponent(allowlistMatch[1]));
+  }
+  if (allowlistMatch && ctx.method === "PUT") {
+    return putAllowlist(ctx, vault, decodeURIComponent(allowlistMatch[1]));
+  }
+  const ingestMatch = ctx.path.match(/^\/projects\/([^/]+)\/vault-ingest$/);
+  if (ingestMatch && ctx.method === "POST") {
+    return postIngest(ctx, vault, decodeURIComponent(ingestMatch[1]));
+  }
+  return null;
+}
+
+/** Read whether customerId+programId is already on the staff vault allowlist. */
+async function getAllowlist(ctx: VaultCtx, vault: VaultIngestDeps, projectId: string): Promise<HttpResult> {
+  const forbidden = requireAdmin(ctx);
+  if (forbidden) return forbidden;
+  const project = await ctx.deps.store.getProject(projectId);
+  if (!project) return notFound(ctx.correlationId);
+  const allowlist = await vault.readAllowlist();
+  const enabled = allowlist.some(
+    (entry) => entry.customerId === project.customerId && entry.programId === project.projectId,
+  );
+  return json(200, { customerId: project.customerId, programId: project.projectId, enabled }, ctx.correlationId);
+}
+
+async function putAllowlist(ctx: VaultCtx, vault: VaultIngestDeps, projectId: string): Promise<HttpResult> {
+  const forbidden = requireAdmin(ctx);
+  if (forbidden) return forbidden;
+  const project = await ctx.deps.store.getProject(projectId);
+  if (!project) return notFound(ctx.correlationId);
+  if (typeof ctx.body.enabled !== "boolean") {
+    return validation(ctx.correlationId, "enabled must be a boolean.");
+  }
+  await vault.saveAllowlist({ customerId: project.customerId, programId: project.projectId }, ctx.body.enabled);
+  return json(200, { customerId: project.customerId, programId: project.projectId, enabled: ctx.body.enabled }, ctx.correlationId);
+}
+
+async function postIngest(ctx: VaultCtx, vault: VaultIngestDeps, projectId: string): Promise<HttpResult> {
+  const forbidden = requireAdmin(ctx);
+  if (forbidden) return forbidden;
+  const outcome = await ingestAllowlistedProgram(vault, projectId, ctx.deps.now().toISOString());
+  if (outcome.status === "not_found") return notFound(ctx.correlationId);
+  if (outcome.status === "not_allowlisted") {
+    return json(
+      409,
+      {
+        code: "CONFLICT",
+        message: "Project is not on the vault allowlist.",
+        correlationId: ctx.correlationId,
+      },
+      ctx.correlationId,
+    );
+  }
+  const { result } = outcome;
   return json(
     200,
     {

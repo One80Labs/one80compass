@@ -1666,12 +1666,42 @@ button.backlink {
   min-height: 380px;
 }
 
+.preview.preview-media {
+  padding: 0;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.preview.preview-empty {
+  align-items: center;
+}
+
+.preview-frame {
+  width: 100%;
+  min-height: 520px;
+  border: 0;
+  background: #fff;
+}
+
+.preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: min(70vh, 720px);
+  margin: auto;
+  object-fit: contain;
+  background: #2f3032;
+}
+
 .paper {
   background: white;
   box-shadow: 0 8px 24px #0003;
   padding: 34px 28px;
   width: min(100%, 360px);
-  min-height: 330px;
+  min-height: 220px;
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  align-content: start;
 }
 
 .paper strong {
@@ -1680,9 +1710,9 @@ button.backlink {
 
 .paper small {
   display: block;
-  margin-top: 12px;
   font-size: 11px;
   color: var(--oc-muted);
+  line-height: 1.5;
 }
 
 .detail-list {
@@ -2095,7 +2125,8 @@ button.drawer-close {
   color: #8d1d1d;
 }
 
-.drawer .check {
+.drawer .check,
+.panel .check {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2183,6 +2214,56 @@ form.dialog {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 22px;
+}
+
+/* Document upload: click or drag a file into the dialog. */
+.upload-dropzone {
+  position: relative;
+  margin-top: 14px;
+  padding: 22px 16px;
+  border: 1.5px dashed var(--oc-divider);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--oc-bg, #f6f5f2) 70%, #fff);
+  text-align: center;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.upload-dropzone.dragging {
+  border-color: var(--oc-ink, #1c1b19);
+  background: #fff;
+}
+
+.upload-dropzone.has-file {
+  border-style: solid;
+}
+
+.upload-file-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.upload-dropzone-hint,
+.upload-dropzone-file {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--oc-muted);
+}
+
+.upload-dropzone-file {
+  display: grid;
+  gap: 2px;
+}
+
+.upload-dropzone-file strong {
+  color: var(--oc-ink, #1c1b19);
+  font-size: 13px;
+  word-break: break-word;
 }
 
 .btn.small {
