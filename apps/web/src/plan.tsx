@@ -798,7 +798,8 @@ const noDecisionDocuments: { documentId: string; fileName: string }[] = [];
 
 /**
  * Count of Decision Register rows linked to the issue open in the edit drawer.
- * Opens the same detail drawer the register uses. Does not add plan issues.
+ * Opens the same detail drawer the register uses, on the right, and shifts this drawer left.
+ * Does not add plan issues.
  */
 function IssueDecisionMarker({
   projectId,
@@ -821,6 +822,7 @@ function IssueDecisionMarker({
 }) {
   const [rows, setRows] = useState<DecisionRecord[]>([]);
   const [pickedId, setPickedId] = useState<string | null>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const idToken = session?.idToken ?? null;
   const linked = rows.filter((row) => row.issueId === issueId);
   const picked = rows.find((row) => row.decisionId === pickedId) ?? null;
@@ -891,8 +893,24 @@ function IssueDecisionMarker({
 
   const label = linked.length === 1 ? "1 Decision Register row" : `${linked.length} Decision Register rows`;
 
+  // The decision panel is a second drawer on the right. Mark the work-item drawer so it shifts left.
+  useLayoutEffect(() => {
+    const form = anchorRef.current?.closest("form.drawer");
+    const layer = anchorRef.current?.closest(".drawer-layer");
+    if (!(form instanceof HTMLElement) || !(layer instanceof HTMLElement)) return;
+    const open = picked != null;
+    form.classList.toggle("drawer-shifted", open);
+    layer.classList.toggle("has-companion", open);
+    form.setAttribute("aria-modal", open ? "false" : "true");
+    return () => {
+      form.classList.remove("drawer-shifted");
+      layer.classList.remove("has-companion");
+      form.setAttribute("aria-modal", "true");
+    };
+  }, [picked]);
+
   return (
-    <>
+    <div ref={anchorRef}>
       <button
         type="button"
         className="decision-plan-marker"
@@ -904,10 +922,10 @@ function IssueDecisionMarker({
       </button>
       {blocking && <p>An outstanding decision blocks this work.</p>}
       {linked.length > 1 && (
-        <ul>
+        <ul className="decision-plan-links">
           {linked.map((row) => (
             <li key={row.decisionId}>
-              <button type="button" onClick={() => setPickedId(row.decisionId)}>
+              <button type="button" aria-pressed={picked?.decisionId === row.decisionId} onClick={() => setPickedId(row.decisionId)}>
                 {row.statement}
               </button>
             </li>
@@ -932,10 +950,11 @@ function IssueDecisionMarker({
             onComment={onComment}
             onArchive={onArchive}
             onDuplicate={onDuplicate}
+            layout="companion"
           />,
           document.body,
         )}
-    </>
+    </div>
   );
 }
 

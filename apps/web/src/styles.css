@@ -2092,6 +2092,20 @@ form.drawer {
   padding: 0;
   box-shadow: -12px 0 36px #0002;
   overflow: hidden;
+  transition: margin-right 0.18s ease, width 0.18s ease;
+}
+
+/* Work-item drawer slides left while a linked decision drawer occupies the right. */
+form.drawer.drawer-shifted {
+  width: min(420px, 50%);
+  margin-right: min(420px, 50%);
+}
+
+.drawer-layer.drawer-companion {
+  left: auto;
+  width: min(420px, 50%);
+  background: transparent;
+  z-index: 110;
 }
 
 .drawer-head {
@@ -2634,6 +2648,28 @@ form.dialog {
   outline: 2px solid #c9683e;
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+.decision-plan-links {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.decision-plan-links button {
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.decision-plan-links button[aria-pressed="true"] {
+  outline: 2px solid #fff;
+  outline-offset: -4px;
 }
 
 .decision-warning {

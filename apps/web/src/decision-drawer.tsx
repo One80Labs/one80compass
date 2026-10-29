@@ -89,8 +89,10 @@ export function DecisionDrawer(props: {
   onComment: (decisionId: string, body: string) => Promise<void>;
   onArchive: (decisionId: string, reason: string) => Promise<void>;
   onDuplicate: (decisionId: string, duplicateOfId: string) => Promise<void>;
+  /** Beside an open work-item drawer. The register itself keeps the single overlay. */
+  layout?: "overlay" | "companion";
 }): JSX.Element {
-  const { record, issues, members, documents, canWrite, canArchive, currentUserId, siblings, onClose, onCreate, onSave, onComment, onArchive, onDuplicate } = props;
+  const { record, issues, members, documents, canWrite, canArchive, currentUserId, siblings, onClose, onCreate, onSave, onComment, onArchive, onDuplicate, layout = "overlay" } = props;
   const recordKey = record?.decisionId ?? "new";
   const [seenKey, setSeenKey] = useState(recordKey);
   const [draft, setDraft] = useState(() => toDraft(record, currentUserId));
@@ -223,7 +225,7 @@ export function DecisionDrawer(props: {
   }
 
   return (
-    <EditDrawer key={recordKey} title={title} onClose={onClose} onSubmit={onSubmit} saving={pending === "save"}>
+    <EditDrawer key={recordKey} title={title} onClose={onClose} onSubmit={onSubmit} saving={pending === "save"} layout={layout}>
       <div ref={panelRef}>
         <label>
           Statement

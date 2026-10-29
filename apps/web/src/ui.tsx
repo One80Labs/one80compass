@@ -74,6 +74,37 @@ function drawerIsDirty(form: HTMLFormElement | null, initial: string | null): bo
   return form != null && initial != null && formSnapshot(form) !== initial;
 }
 
+const COMPANION_HOLD = "one80-drawer-companion-hold";
+const COMPANION_DISMISS = "one80-drawer-companion-dismiss";
+
+type CompanionHoldDetail = {
+  hold: () => void;
+  release: () => void;
+};
+
+/**
+ * A companion drawer sits to the right of the drawer that opened it.
+ * Closing the first drawer asks the companion first, so unsaved decision edits are not dropped.
+ * No companion is listening: allow the close.
+ */
+function companionAllowsParentClose(): boolean {
+  let heard = false;
+  let released = false;
+  window.dispatchEvent(
+    new CustomEvent<CompanionHoldDetail>(COMPANION_HOLD, {
+      detail: {
+        hold: () => {
+          heard = true;
+        },
+        release: () => {
+          released = true;
+        },
+      },
+    }),
+  );
+  return !heard || released;
+}
+
 /** X used to dismiss an edit drawer. */
 function CloseIcon() {
   return (
@@ -98,12 +129,18 @@ export function EditDrawer({
   onClose,
   onSubmit,
   saving = false,
+  layout = "overlay",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   onSubmit: (event: FormEvent) => void;
   saving?: boolean;
+  /**
+   * Companion opens on the right of a drawer that is already open.
+   * That drawer shifts left so both stay visible. Overlay is the single full-height panel.
+   */
+  layout?: "overlay" | "companion";
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const initialSnapshot = useRef<string | null>(null);
@@ -114,6 +151,8 @@ export function EditDrawer({
   }, []);
 
   const requestClose = useCallback(() => {
+    const layer = formRef.current?.closest(".drawer-layer");
+    if (layer?.classList.contains("has-companion") && !companionAllowsParentClose()) return;
     if (drawerIsDirty(formRef.current, initialSnapshot.current)) {
       setConfirming(true);
       return;
@@ -122,17 +161,42 @@ export function EditDrawer({
   }, [onClose]);
 
   useEffect(() => {
+    if (layout !== "companion") return;
+    function onHold(event: Event) {
+      const detail = (event as CustomEvent<CompanionHoldDetail>).detail;
+      detail.hold();
+      if (confirming || drawerIsDirty(formRef.current, initialSnapshot.current)) {
+        setConfirming(true);
+        return;
+      }
+      detail.release();
+    }
+    function onDismiss() {
+      requestClose();
+    }
+    window.addEventListener(COMPANION_HOLD, onHold);
+    window.addEventListener(COMPANION_DISMISS, onDismiss);
+    return () => {
+      window.removeEventListener(COMPANION_HOLD, onHold);
+      window.removeEventListener(COMPANION_DISMISS, onDismiss);
+    };
+  }, [confirming, layout, requestClose]);
+
+  useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
+      // Capture so Escape closes the decision drawer and leaves the work item drawer open.
+      if (layout === "companion") event.stopImmediatePropagation();
       if (confirming) {
         setConfirming(false);
         return;
       }
       requestClose();
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [confirming, requestClose]);
+    const capture = layout === "companion";
+    window.addEventListener("keydown", onKey, capture);
+    return () => window.removeEventListener("keydown", onKey, capture);
+  }, [confirming, requestClose, layout]);
 
   function saveUnsaved() {
     setConfirming(false);
@@ -146,8 +210,18 @@ export function EditDrawer({
 
   return (
     <>
-      <div className="drawer-layer" onClick={requestClose}>
-        <form ref={formRef} className="drawer" role="dialog" aria-modal="true" aria-label={title} onClick={(event) => event.stopPropagation()} onSubmit={onSubmit}>
+      <div
+        className={layout === "companion" ? "drawer-layer drawer-companion" : "drawer-layer"}
+        onClick={() => {
+          // The dimmed page closes the decision drawer and leaves the work item drawer open.
+          if (formRef.current?.closest(".drawer-layer")?.classList.contains("has-companion")) {
+            window.dispatchEvent(new CustomEvent(COMPANION_DISMISS));
+            return;
+          }
+          requestClose();
+        }}
+      >
+        <form ref={formRef} className="drawer" role="dialog" aria-modal={layout === "overlay"} aria-label={title} onClick={(event) => event.stopPropagation()} onSubmit={onSubmit}>
           <div className="drawer-head">
             <h2>{title}</h2>
             <button className="icon-button drawer-close" type="button" aria-label="Close" onClick={requestClose}>
