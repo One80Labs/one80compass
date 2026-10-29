@@ -1,14 +1,20 @@
 import type { ReactNode } from "react";
 
+export type MarkdownDocProps = {
+  source: string;
+  /** When set, markdown links of the form `faq:tile-id` switch FAQ tiles in-app instead of opening a new tab. */
+  onFaqLink?: (tileId: string) => void;
+};
+
 /**
  * Lightweight Markdown → React for FAQ SOP viewers.
  * Covers headings, paragraphs, emphasis, code, lists, tables, rules, and links.
  */
-export function MarkdownDoc({ source }: { source: string }) {
-  return <div className="md-doc">{renderBlocks(source.replace(/\r\n/g, "\n").trim())}</div>;
+export function MarkdownDoc({ source, onFaqLink }: MarkdownDocProps) {
+  return <div className="md-doc">{renderBlocks(source.replace(/\r\n/g, "\n").trim(), onFaqLink)}</div>;
 }
 
-function renderBlocks(source: string): ReactNode[] {
+function renderBlocks(source: string, onFaqLink?: (tileId: string) => void): ReactNode[] {
   const lines = source.split("\n");
   const nodes: ReactNode[] = [];
   let i = 0;
@@ -47,7 +53,7 @@ function renderBlocks(source: string): ReactNode[] {
     const heading = /^(#{1,3})\s+(.+)$/.exec(line);
     if (heading) {
       const level = heading[1].length;
-      const text = inline(heading[2]);
+      const text = inline(heading[2], onFaqLink);
       if (level === 1) nodes.push(<h1 key={key++}>{text}</h1>);
       else if (level === 2) nodes.push(<h2 key={key++}>{text}</h2>);
       else nodes.push(<h3 key={key++}>{text}</h3>);
@@ -78,7 +84,7 @@ function renderBlocks(source: string): ReactNode[] {
               <thead>
                 <tr>
                   {head.map((cell, index) => (
-                    <th key={index}>{inline(cell)}</th>
+                    <th key={index}>{inline(cell, onFaqLink)}</th>
                   ))}
                 </tr>
               </thead>
@@ -86,7 +92,7 @@ function renderBlocks(source: string): ReactNode[] {
                 {body.map((row, rowIndex) => (
                   <tr key={rowIndex}>
                     {row.map((cell, cellIndex) => (
-                      <td key={cellIndex}>{inline(cell)}</td>
+                      <td key={cellIndex}>{inline(cell, onFaqLink)}</td>
                     ))}
                   </tr>
                 ))}
@@ -107,7 +113,7 @@ function renderBlocks(source: string): ReactNode[] {
       nodes.push(
         <ul key={key++}>
           {items.map((item, index) => (
-            <li key={index}>{inline(item)}</li>
+            <li key={index}>{inline(item, onFaqLink)}</li>
           ))}
         </ul>,
       );
@@ -123,7 +129,7 @@ function renderBlocks(source: string): ReactNode[] {
       nodes.push(
         <ol key={key++}>
           {items.map((item, index) => (
-            <li key={index}>{inline(item)}</li>
+            <li key={index}>{inline(item, onFaqLink)}</li>
           ))}
         </ol>,
       );
@@ -145,7 +151,7 @@ function renderBlocks(source: string): ReactNode[] {
       para.push(lines[i]);
       i += 1;
     }
-    nodes.push(<p key={key++}>{inline(para.join(" "))}</p>);
+    nodes.push(<p key={key++}>{inline(para.join(" "), onFaqLink)}</p>);
   }
 
   return nodes;
@@ -161,7 +167,13 @@ function isTableSeparator(line: string): boolean {
   return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
-function inline(text: string): ReactNode[] {
+function faqTileId(href: string): string | null {
+  if (!href.startsWith("faq:")) return null;
+  const id = href.slice(4).trim();
+  return id || null;
+}
+
+function inline(text: string, onFaqLink?: (tileId: string) => void): ReactNode[] {
   const nodes: ReactNode[] = [];
   const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
   let last = 0;
@@ -177,11 +189,28 @@ function inline(text: string): ReactNode[] {
     } else {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
       if (link) {
-        nodes.push(
-          <a key={key++} href={link[2]} target="_blank" rel="noreferrer">
-            {link[1]}
-          </a>,
-        );
+        const tileId = faqTileId(link[2]);
+        if (tileId && onFaqLink) {
+          nodes.push(
+            <button
+              key={key++}
+              type="button"
+              className="md-faq-link"
+              onClick={() => onFaqLink(tileId)}
+            >
+              {link[1]}
+            </button>,
+          );
+        } else if (tileId) {
+          // Viewer without a handler: keep readable text, avoid a broken new-tab URL.
+          nodes.push(<span key={key++}>{link[1]}</span>);
+        } else {
+          nodes.push(
+            <a key={key++} href={link[2]} target="_blank" rel="noreferrer">
+              {link[1]}
+            </a>,
+          );
+        }
       }
     }
     last = match.index + token.length;

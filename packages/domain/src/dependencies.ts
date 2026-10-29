@@ -1,8 +1,34 @@
 import { addDays, isIsoDate } from "./schedule";
+import {
+  blockerEdgeFor,
+  normalizeLagDays,
+  requiredSuccessorFinish,
+  requiredSuccessorStart,
+  type BlockerEdge,
+  type BlockerLinkKind,
+} from "./blocker-edge";
 
-/** Finish-to-start. A task starts the day after the task that blocks it finishes. ADR 0007. */
+export { criticalPath, criticalPathIssueIds } from "./critical-path";
+export type { CriticalPathEdge, CriticalPathIssue, CriticalPathResult } from "./critical-path";
+
+/** Hard Blocker scheduling (FS / SS / FF / SF + lag) and soft visual-only Dependency. ADR 0007. */
 
 export const SOFT_DEPENDENCY_KIND = "dependency";
+
+export type { BlockerEdge, BlockerLinkKind, LinkKindEnds } from "./blocker-edge";
+export {
+  blockerEdgeFor,
+  blockerEdgesFromStore,
+  linkKindEnds,
+  MAX_ABS_LAG_DAYS,
+  normalizeBlockerLinkKind,
+  normalizeLagDays,
+  requiredSuccessorFinish,
+  requiredSuccessorStart,
+  syncBlockerEdges,
+  withBlockerLag,
+  withBlockerLinkKind,
+} from "./blocker-edge";
 
 type Relationship = { id: string; kind: string; otherIssueId: string };
 
@@ -20,6 +46,8 @@ export type DependencyIssue = {
   startDate: string | null;
   finishDate: string | null;
   predecessorIds: string[];
+  /** Optional per-predecessor lag / link-kind. Missing ⇒ FS + 0. */
+  blockerEdges?: BlockerEdge[] | null;
   inProject: boolean;
   archived: boolean;
   deletedAt: string | null;
@@ -104,20 +132,31 @@ export function removeSoftDependencyRelationship(
   );
 }
 
-/** True when a successor starts before the day after its blocker's finish. */
+/**
+ * True when the successor's dates violate one Hard Blocker edge.
+ * Optional lagDays / linkKind match blockerEdges (default FS + 0 = v1 day-after-finish).
+ * Soft dependencies never call this.
+ */
 export function datesOverlapForBlocker(
-  predecessor: { finishDate: string | null },
-  successor: { startDate: string | null },
+  predecessor: { finishDate: string | null; startDate?: string | null },
+  successor: { startDate: string | null; finishDate?: string | null },
+  options?: { lagDays?: number; linkKind?: BlockerLinkKind },
 ): boolean {
-  if (
-    !predecessor.finishDate ||
-    !successor.startDate ||
-    !isIsoDate(predecessor.finishDate) ||
-    !isIsoDate(successor.startDate)
-  ) {
-    return false;
+  const linkKind = options?.linkKind ?? "FS";
+  const lagDays = normalizeLagDays(options?.lagDays ?? 0);
+  const pred = {
+    startDate: predecessor.startDate ?? null,
+    finishDate: predecessor.finishDate,
+  };
+  if (linkKind === "FF" || linkKind === "SF") {
+    const requiredFinish = requiredSuccessorFinish({ linkKind, lagDays, predecessor: pred });
+    if (!requiredFinish || !successor.finishDate || !isIsoDate(successor.finishDate)) return false;
+    return successor.finishDate < requiredFinish;
   }
-  return successor.startDate < addDays(predecessor.finishDate, 1);
+  if (!successor.startDate || !isIsoDate(successor.startDate)) return false;
+  const requiredStart = requiredSuccessorStart({ linkKind, lagDays, predecessor: pred });
+  if (!requiredStart) return false;
+  return successor.startDate < requiredStart;
 }
 
 /**
@@ -163,18 +202,55 @@ function daySpan(from: string, to: string): number {
   return Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
 }
 
+/** Inclusive day count when both ends are scheduled; otherwise null. */
+function inclusiveDays(start: string | null | undefined, finish: string | null | undefined): number | null {
+  if (!start || !finish || !isIsoDate(start) || !isIsoDate(finish) || finish < start) return null;
+  return daySpan(start, finish) + 1;
+}
+
+/**
+ * Most constraining Hard Blocker on a successor, expressed as an earliest legal start
+ * (duration-preserving for FF / SF when successorInclusiveDays is known).
+ */
 function blockingFinish(
   predecessorIds: string[],
   dates: Map<string, Dates>,
   titles: Map<string, string>,
-): { requiredStart: string; predecessorId: string; predecessorTitle: string } | null {
-  let best: { requiredStart: string; predecessorId: string; predecessorTitle: string } | null = null;
+  edges?: BlockerEdge[] | null,
+  successorInclusiveDays?: number | null,
+): { requiredStart: string; predecessorId: string; predecessorTitle: string; linkKind: BlockerLinkKind } | null {
+  let best: {
+    requiredStart: string;
+    predecessorId: string;
+    predecessorTitle: string;
+    linkKind: BlockerLinkKind;
+  } | null = null;
   for (const predecessorId of predecessorIds) {
-    const finish = dates.get(predecessorId)?.finish;
-    if (!finish || !isIsoDate(finish)) continue;
-    const requiredStart = addDays(finish, 1);
+    const predDates = dates.get(predecessorId);
+    if (!predDates) continue;
+    const edge = blockerEdgeFor(predecessorId, edges);
+    let requiredStart = requiredSuccessorStart({
+      linkKind: edge.linkKind,
+      lagDays: edge.lagDays,
+      predecessor: { startDate: predDates.start, finishDate: predDates.finish },
+      successorInclusiveDays,
+    });
+    // Unscheduled successors still need a conflict signal for finish-constrained kinds.
+    if (!requiredStart && (edge.linkKind === "FF" || edge.linkKind === "SF")) {
+      requiredStart = requiredSuccessorFinish({
+        linkKind: edge.linkKind,
+        lagDays: edge.lagDays,
+        predecessor: { startDate: predDates.start, finishDate: predDates.finish },
+      });
+    }
+    if (!requiredStart) continue;
     if (!best || requiredStart > best.requiredStart) {
-      best = { requiredStart, predecessorId, predecessorTitle: titles.get(predecessorId) ?? "A predecessor" };
+      best = {
+        requiredStart,
+        predecessorId,
+        predecessorTitle: titles.get(predecessorId) ?? "A predecessor",
+        linkKind: edge.linkKind,
+      };
     }
   }
   return best;
@@ -216,11 +292,27 @@ export function dependencyReview(
   for (const id of ordered) {
     const issue = byId.get(id);
     if (!issue) continue;
-    const block = blockingFinish(issue.predecessorIds, dates, titles);
     const current = dates.get(id);
-    if (!block || !current?.start || !current.finish || !isIsoDate(current.start) || !isIsoDate(current.finish)) continue;
-    if (current.start >= block.requiredStart) continue;
-    const toStart = block.requiredStart;
+    if (!current?.start || !current.finish || !isIsoDate(current.start) || !isIsoDate(current.finish)) continue;
+    const duration = inclusiveDays(current.start, current.finish);
+    const block = blockingFinish(issue.predecessorIds, dates, titles, issue.blockerEdges, duration);
+    if (!block) continue;
+    // Finish-constrained rows without duration conversion used finish as requiredStart sentinel above;
+    // re-resolve with duration so the proposal preserves length against the finish constraint.
+    const requiredStart =
+      block.linkKind === "FF" || block.linkKind === "SF"
+        ? requiredSuccessorStart({
+            linkKind: block.linkKind,
+            lagDays: blockerEdgeFor(block.predecessorId, issue.blockerEdges).lagDays,
+            predecessor: {
+              startDate: dates.get(block.predecessorId)?.start ?? null,
+              finishDate: dates.get(block.predecessorId)?.finish ?? null,
+            },
+            successorInclusiveDays: duration,
+          })
+        : block.requiredStart;
+    if (!requiredStart || current.start >= requiredStart) continue;
+    const toStart = requiredStart;
     const toFinish = addDays(current.finish, daySpan(current.start, toStart));
     proposals.push({
       issueId: id,
@@ -242,10 +334,13 @@ export function scheduleConflicts(issues: DependencyIssue[]): ScheduleConflict[]
   const titles = new Map(rows.map((issue) => [issue.issueId, issue.title]));
   const conflicts: ScheduleConflict[] = [];
   for (const issue of rows) {
+    const duration = inclusiveDays(issue.startDate, issue.finishDate);
     const block = blockingFinish(
       issue.predecessorIds.filter((id) => dates.has(id)),
       dates,
       titles,
+      issue.blockerEdges,
+      duration,
     );
     if (!block) continue;
     if (!issue.startDate || !issue.finishDate) {
@@ -258,7 +353,25 @@ export function scheduleConflicts(issues: DependencyIssue[]): ScheduleConflict[]
       });
       continue;
     }
-    if (issue.startDate < block.requiredStart) {
+    const edge = blockerEdgeFor(block.predecessorId, issue.blockerEdges);
+    const violates =
+      edge.linkKind === "FF" || edge.linkKind === "SF"
+        ? Boolean(
+            issue.finishDate &&
+              (() => {
+                const requiredFinish = requiredSuccessorFinish({
+                  linkKind: edge.linkKind,
+                  lagDays: edge.lagDays,
+                  predecessor: {
+                    startDate: dates.get(block.predecessorId)?.start ?? null,
+                    finishDate: dates.get(block.predecessorId)?.finish ?? null,
+                  },
+                });
+                return requiredFinish != null && issue.finishDate < requiredFinish;
+              })(),
+          )
+        : issue.startDate < block.requiredStart;
+    if (violates) {
       conflicts.push({
         issueId: issue.issueId,
         title: issue.title,
@@ -270,7 +383,6 @@ export function scheduleConflicts(issues: DependencyIssue[]): ScheduleConflict[]
   }
   return conflicts;
 }
-
 /** True when making predecessorId block successorId would loop, including a task blocking itself. */
 export function dependencyCycle(issues: { issueId: string; predecessorIds: string[] }[], successorId: string, predecessorId: string): boolean {
   if (successorId === predecessorId) return true;

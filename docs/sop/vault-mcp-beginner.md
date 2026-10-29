@@ -4,7 +4,9 @@ This guide walks you through connecting the **One80Compass staff vault MCP serve
 
 You do **not** need to know Postgres, Aurora, or AWS Lambda. The MCP server talks only to the Compass **admin API**.
 
-**Related:** [staff-vault.md](./staff-vault.md) (how the vault works in Compass) · [services/vault-mcp/README.md](../../services/vault-mcp/README.md) (short engineer run sheet)
+**Related:** [Documents and labeling](faq:documents-labeling) · [staff-vault.md](./staff-vault.md) (how the vault works in Compass) · [services/vault-mcp/README.md](../../services/vault-mcp/README.md) (short engineer run sheet)
+
+**Audience:** One80 **administrators** only (`one80-admin`). Contributors and View users can ignore this tile.
 
 ---
 

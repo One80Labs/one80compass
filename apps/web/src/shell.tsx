@@ -251,7 +251,7 @@ export function Shell({
               <span className="ico">⚙</span>Settings
             </Link>
             <Link className={location.pathname === "/help" ? "nav-link active" : "nav-link"} to="/help" onClick={closeNav}>
-              <span className="ico">ⓘ</span>Help
+              <span className="ico">ⓘ</span>FAQ
             </Link>
           </div>
         </aside>

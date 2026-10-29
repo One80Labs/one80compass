@@ -3,18 +3,24 @@ import { useParams } from "react-router-dom";
 import { applyPlanOrder, hasActiveChildren, orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { PlanDeleteSection } from "./plan-delete";
 import { catalogColorHex } from "../../../packages/domain/src/index";
-import type { LinkType, ProposedShift } from "../../../packages/domain/src/dependencies";
+import type { BlockerEdge, BlockerLinkKind, LinkType, ProposedShift } from "../../../packages/domain/src/dependencies";
 import {
   addSoftDependencyRelationship,
+  blockerEdgeFor,
   convertPlanLink,
   datesOverlapForBlocker,
   dependencyCycle,
+  dependencyReview,
   hasSoftDependency,
+  linkKindEnds,
+  normalizeLagDays,
   removeSoftDependencyRelationship,
   scheduleConflicts,
   softDependencyEdges,
   softDependencyPredecessorIds,
+  withBlockerLag,
 } from "../../../packages/domain/src/dependencies";
+import { criticalPath, type CriticalPathEdge } from "../../../packages/domain/src/critical-path";
 import {
   addDays,
   barPlacement,
@@ -45,9 +51,13 @@ import { CompassIssueDrawer } from "./compass-drawer";
 import {
   dayDeltaFromDayWidth,
   dependencyLinkPath,
+  filterEdgesTouchingIssue,
   hitTestGanttBar,
+  linkedIssueIdsForHover,
   nudgeScrollForDrag,
+  readShowCriticalPath,
   readShowDependencyLines,
+  writeShowCriticalPath,
   writeShowDependencyLines,
   type GanttBarHit,
   type GanttLinkAnchor,
@@ -91,6 +101,8 @@ type PlanIssue = {
   assignees?: { id: string; login: string; name: string | null }[];
   comments?: string | null;
   predecessorIds: string[];
+  /** Optional Hard Blocker lag / link-kind metadata; missing entry ⇒ FS + 0. */
+  blockerEdges?: BlockerEdge[];
   milestone?: string | null;
   milestoneId?: string | null;
   priority?: string | null;
@@ -118,6 +130,7 @@ type IssueEdit = {
   priority?: string | null;
   labels?: string[];
   predecessorIds?: string[];
+  blockerEdges?: BlockerEdge[];
   relationships?: { id: string; kind: string; otherIssueId: string }[];
 };
 type IterationChoice = { id: string; title: string; startDate: string; duration: number };
@@ -224,6 +237,7 @@ export function PlanPage({ session }: { session: Session | null }) {
             leadingActions={plan.data && canWrite ? <AddPlanBar onAdd={setAddKind} /> : null}
             onLinkPredecessor={plan.linkPredecessor}
             onSaveRelationships={canWrite ? (issueId, relationships) => plan.saveIssue(issueId, { relationships }) : null}
+            onSaveBlockerEdges={canWrite ? (issueId, blockerEdges) => plan.saveIssue(issueId, { blockerEdges }) : null}
             onReorder={canWrite ? (orderedIssueIds) => plan.reorderPlan(orderedIssueIds) : null}
             onEdit={canWrite ? setEditingId : null}
             onSchedule={
@@ -250,6 +264,7 @@ export function PlanPage({ session }: { session: Session | null }) {
           readOnly={!canWrite}
           onLink={plan.linkPredecessor}
           onSoftLink={canWrite ? (issueId, relationships) => plan.saveIssue(issueId, { relationships }) : null}
+          onSaveBlockerEdges={canWrite ? (issueId, blockerEdges) => plan.saveIssue(issueId, { blockerEdges }) : null}
         />
       )}
       {tab === "Baselines" && (
@@ -1298,14 +1313,14 @@ function usePlan(session: Session | null) {
     setData(result);
   }
 
-  async function poll(match: (result: PlanResponse) => boolean) {
+  async function poll(match: (result: PlanResponse) => boolean): Promise<PlanResponse | undefined> {
     if (!session) return;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 700));
       const result = await api<PlanResponse>(`/projects/${projectId}/plan`, session.idToken);
       setData(result);
       if (result.sync.status === "failed") throw new Error(result.sync.detail ?? "GitHub did not accept the change.");
-      if (match(result)) return;
+      if (match(result)) return result;
     }
     throw new Error("GitHub has not confirmed the change yet. Refresh the plan in a moment.");
   }
@@ -1412,18 +1427,39 @@ function usePlan(session: Session | null) {
         setBusy(false);
       }
     },
-    async linkPredecessor(issueId: string, predecessorId: string, action: "add" | "remove") {
+    /**
+     * Add/remove a Hard Blocker. When adding with proposeReschedule, open the same
+     * dependency-review modal used for date edits (predecessor's current dates drive proposals).
+     */
+    async linkPredecessor(
+      issueId: string,
+      predecessorId: string,
+      action: "add" | "remove",
+      options?: { proposeReschedule?: boolean },
+    ) {
       if (!session) return;
       setError(null);
       setBusy(true);
       try {
         const path = action === "add" ? "predecessors" : "predecessors/remove";
         await api(`/projects/${projectId}/issues/${issueId}/${path}`, session.idToken, { method: "POST", body: { predecessorId } });
-        await poll((result) => {
+        const plan = await poll((result) => {
           const row = result.issues.find((item) => item.issueId === issueId);
           const linked = row?.predecessorIds.includes(predecessorId) ?? false;
           return action === "add" ? linked : !linked;
         });
+        // Opt-in only: warn-only remains the default when proposeReschedule is unset/false.
+        if (action === "add" && options?.proposeReschedule && plan) {
+          const predecessor = plan.issues.find((item) => item.issueId === predecessorId);
+          const startDate = predecessor?.startDate ?? null;
+          const finishDate = predecessor?.finishDate ?? null;
+          if (startDate && finishDate) {
+            const proposals = dependencyReview(dependencyIssues(plan.issues), predecessorId, startDate, finishDate);
+            if (proposals.length > 0) {
+              setReview({ issueId: predecessorId, body: { startDate, finishDate }, proposals });
+            }
+          }
+        }
       } catch (caught) {
         setError(message(caught));
         throw caught;
@@ -1725,6 +1761,7 @@ function TimelineChart({
   leadingActions,
   onLinkPredecessor,
   onSaveRelationships,
+  onSaveBlockerEdges,
   onReorder,
   onEdit,
   onSchedule,
@@ -1755,8 +1792,15 @@ function TimelineChart({
   risks: RiskRegisterRow[];
   /** Add Epic/Feature/Task controls rendered on the same row as dependency toggles. */
   leadingActions: ReactNode;
-  onLinkPredecessor: (issueId: string, predecessorId: string, action: "add" | "remove") => Promise<void>;
+  onLinkPredecessor: (
+    issueId: string,
+    predecessorId: string,
+    action: "add" | "remove",
+    options?: { proposeReschedule?: boolean },
+  ) => Promise<void>;
   onSaveRelationships: ((issueId: string, relationships: { id: string; kind: string; otherIssueId: string }[]) => Promise<void>) | null;
+  /** Persist Hard Blocker lag / link-kind metadata on the successor. Null when read-only. */
+  onSaveBlockerEdges: ((issueId: string, blockerEdges: BlockerEdge[]) => Promise<void>) | null;
   /** Persist a new sibling order after a Timeline row drag. */
   onReorder: ((orderedIssueIds: string[]) => Promise<void>) | null;
   onEdit: ((issueId: string) => void) | null;
@@ -1780,6 +1824,10 @@ function TimelineChart({
 
   // Dependency-link state. Lines default hidden; risk icons are independent of this toggle.
   const [showLines, setShowLines] = useState(readShowDependencyLines);
+  // Critical-path highlight (Hard Blocker graph only). Independent of the dependency-lines toggle.
+  const [showCriticalPath, setShowCriticalPath] = useState(readShowCriticalPath);
+  // When lines are hidden, hovering a bar temporarily reveals only that bar's connectors (does not flip the toggle).
+  const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null);
   const [linkDrag, setLinkDrag] = useState<LinkDragState | null>(null);
   const [pendingLink, setPendingLink] = useState<{ predecessorId: string; successorId: string } | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<LinkEdge | null>(null);
@@ -2000,6 +2048,14 @@ function TimelineChart({
     [issues],
   );
 
+  // Hard Blocker critical path; recomputes when dates / predecessors / lag change. Soft links ignored.
+  const critical = useMemo(() => criticalPath(dependencyIssues(issues)), [issues]);
+  const criticalIssueIds = useMemo(() => new Set(critical.issueIds), [critical]);
+  const criticalEdgeKeys = useMemo(
+    () => new Set(critical.edges.map((edge: CriticalPathEdge) => `${edge.predecessorId}>${edge.successorId}`)),
+    [critical],
+  );
+
   // Rows in render order that carry a risk icon, so the toolbar count can step through them.
   const riskIds = bands.flatMap((band) => [
     ...(band.rows[0]?.kind === "epic" ? [band.rows[0].issueId] : []),
@@ -2022,12 +2078,52 @@ function TimelineChart({
     writeShowDependencyLines(next);
   }
 
+  function toggleCriticalPath() {
+    const next = !showCriticalPath;
+    setShowCriticalPath(next);
+    writeShowCriticalPath(next);
+  }
+
   /** Bar class while a link drag is hovering a candidate target. */
   function linkClassFor(issueId: string | null): string {
     if (!issueId || !linkDrag) return "";
     if (issueId === linkDrag.fromId) return "linking";
     if (issueId !== linkDrag.overId) return "";
     return linkProblem(issues, linkDrag.fromId, issueId) ? "link-target-invalid" : "link-target-valid";
+  }
+
+  // Hover-reveal only when the global toggle is off; includes blockers and soft dependencies.
+  const hoverRevealId = !showLines && !linkDrag ? hoveredIssueId : null;
+  const hoverLinkedIds = useMemo(
+    () => (hoverRevealId ? linkedIssueIdsForHover(edges, hoverRevealId) : null),
+    [edges, hoverRevealId],
+  );
+  const overlayEdges = useMemo(() => {
+    if (showLines) return edges;
+    if (hoverRevealId) return filterEdgesTouchingIssue(edges, hoverRevealId);
+    return [];
+  }, [edges, showLines, hoverRevealId]);
+
+  /** Emphasize the hovered bar and its linked neighbors while lines are temporarily revealed. */
+  function hoverRevealClass(issueId: string | null): string {
+    if (!issueId || !hoverRevealId) return "";
+    if (issueId === hoverRevealId) return "dep-hover-focus";
+    if (hoverLinkedIds?.has(issueId)) return "dep-hover-linked";
+    return "";
+  }
+
+  function barLinkClass(issueId: string | null): string {
+    const criticalClass = showCriticalPath && issueId && criticalIssueIds.has(issueId) ? "critical" : "";
+    return [linkClassFor(issueId), hoverRevealClass(issueId), criticalClass].filter(Boolean).join(" ");
+  }
+
+  function onBarHoverEnter(issueId: string) {
+    setHoveredIssueId(issueId);
+  }
+
+  /** Clear only if this bar is still the hovered one (avoids races when moving between bars). */
+  function onBarHoverLeave(issueId: string) {
+    setHoveredIssueId((current) => (current === issueId ? null : current));
   }
 
   async function runLinkAction(action: () => Promise<void>): Promise<string | null> {
@@ -2039,8 +2135,15 @@ function TimelineChart({
     }
   }
 
-  /** Create a link after the popup choice. Blocker uses the predecessor API; dependency PATCHes relationships. No dates move. */
-  async function createLink(type: LinkType) {
+  /**
+   * Create a link after the popup choice. Soft dependencies never reschedule / lag / link kinds.
+   * Blockers stay warn-only unless LinkDialog opts into proposeReschedule.
+   * lagDays + linkKind share one blockerEdges row (withBlockerLag upserts both).
+   */
+  async function createLink(
+    type: LinkType,
+    options?: { proposeReschedule?: boolean; lagDays?: number; linkKind?: BlockerLinkKind },
+  ) {
     if (!pendingLink) return null;
     const { predecessorId, successorId } = pendingLink;
     const problem = linkProblem(issues, predecessorId, successorId, type);
@@ -2048,7 +2151,18 @@ function TimelineChart({
     const successor = issueById.get(successorId);
     const failure = await runLinkAction(async () => {
       if (type === "blocker") {
-        await onLinkPredecessor(successorId, predecessorId, "add");
+        await onLinkPredecessor(successorId, predecessorId, "add", {
+          proposeReschedule: Boolean(options?.proposeReschedule),
+        });
+        const lagDays = normalizeLagDays(options?.lagDays ?? 0);
+        const linkKind = options?.linkKind ?? "FS";
+        if (onSaveBlockerEdges && (lagDays !== 0 || linkKind !== "FS")) {
+          const preds = [...(successor?.predecessorIds ?? []), predecessorId];
+          await onSaveBlockerEdges(
+            successorId,
+            withBlockerLag(successor?.blockerEdges, preds, predecessorId, lagDays, linkKind),
+          );
+        }
       } else if (onSaveRelationships) {
         await onSaveRelationships(successorId, addSoftDependencyRelationship(successor?.relationships, successorId, predecessorId));
       }
@@ -2057,9 +2171,27 @@ function TimelineChart({
     return failure;
   }
 
-  async function changeLinkType(edge: LinkEdge, to: LinkType) {
+  async function changeLinkType(
+    edge: LinkEdge,
+    to: LinkType,
+    options?: { lagDays?: number; linkKind?: BlockerLinkKind },
+  ) {
     const successor = issueById.get(edge.successorId);
     if (!successor) return "That task is no longer on the plan.";
+    const prior = blockerEdgeFor(edge.predecessorId, successor.blockerEdges);
+    const lagDays = normalizeLagDays(options?.lagDays ?? prior.lagDays);
+    const linkKind = options?.linkKind ?? prior.linkKind;
+    // Same type: persist lag / linkKind for an existing Hard Blocker (soft links ignore both).
+    if (edge.type === to) {
+      if (to !== "blocker" || !onSaveBlockerEdges) return null;
+      const failure = await runLinkAction(async () => {
+        await onSaveBlockerEdges(
+          edge.successorId,
+          withBlockerLag(successor.blockerEdges, successor.predecessorIds ?? [], edge.predecessorId, lagDays, linkKind),
+        );
+      });
+      return failure;
+    }
     const converted = convertPlanLink({
       successorId: edge.successorId,
       predecessorId: edge.predecessorId,
@@ -2077,6 +2209,12 @@ function TimelineChart({
       if (to === "blocker") {
         await onLinkPredecessor(edge.successorId, edge.predecessorId, "add");
         await onSaveRelationships(edge.successorId, converted.relationships);
+        if (onSaveBlockerEdges && (lagDays !== 0 || linkKind !== "FS")) {
+          await onSaveBlockerEdges(
+            edge.successorId,
+            withBlockerLag(successor.blockerEdges, converted.predecessorIds, edge.predecessorId, lagDays, linkKind),
+          );
+        }
       } else {
         await onSaveRelationships(edge.successorId, converted.relationships);
         await onLinkPredecessor(edge.successorId, edge.predecessorId, "remove");
@@ -2123,10 +2261,16 @@ function TimelineChart({
         : `At risk: blocked by “${conflict.predecessorTitle}”, but this task has no start and finish dates.`;
     }
     const start = successor?.startDate ? shortDate(successor.startDate) : null;
+    const lagDays = blockerEdgeFor(conflict.predecessorId, successor?.blockerEdges).lagDays;
+    const lagNote = lagPhrase(lagDays);
     if (start && predFinish) {
-      return `At risk: blocked by “${conflict.predecessorTitle}”. Starts ${start}, which overlaps that finish on ${predFinish}; it should start the next day.`;
+      return lagNote
+        ? `At risk: blocked by “${conflict.predecessorTitle}”${lagNote}. Starts ${start}; finish was ${predFinish}, and lag shifts the earliest legal start.`
+        : `At risk: blocked by “${conflict.predecessorTitle}”. Starts ${start}, which overlaps that finish on ${predFinish}; it should start the next day.`;
     }
-    return `At risk: blocked by “${conflict.predecessorTitle}”. Start date overlaps that predecessor’s finish.`;
+    return lagNote
+      ? `At risk: blocked by “${conflict.predecessorTitle}”${lagNote}. Start date is earlier than the Hard Blocker allows.`
+      : `At risk: blocked by “${conflict.predecessorTitle}”. Start date overlaps that predecessor’s finish.`;
   }
 
   function riskIcon(issueId: string) {
@@ -2147,12 +2291,22 @@ function TimelineChart({
   const rowFocusStyle = (issueId: string) =>
     focusedRiskId === issueId ? { outline: `2px solid ${BLOCKER_COLOR}`, outlineOffset: 2, borderRadius: 6 } : undefined;
 
-  /** Chart-local anchor points for a predecessor finish and a successor start. */
+  /**
+   * Chart-local connector path. Soft Dependency stays finish→start.
+   * Hard Blocker attaches to start/finish ends per linkKind (FS / SS / FF / SF).
+   */
   function edgePath(edge: LinkEdge): string | null {
     const from = anchors[edge.predecessorId];
     const to = anchors[edge.successorId];
     if (!from || !to) return null; // an endpoint row is not rendered (filtered out or collapsed)
-    return dependencyLinkPath({ x: from.right, y: from.y }, { x: to.left, y: to.y });
+    if (edge.type === "dependency") {
+      return dependencyLinkPath({ x: from.right, y: from.y }, { x: to.left, y: to.y });
+    }
+    const kind = blockerEdgeFor(edge.predecessorId, issueById.get(edge.successorId)?.blockerEdges).linkKind;
+    const ends = linkKindEnds(kind);
+    const fromPoint = { x: ends.fromSide === "finish" ? from.right : from.left, y: from.y };
+    const toPoint = { x: ends.toSide === "finish" ? to.right : to.left, y: to.y };
+    return dependencyLinkPath(fromPoint, toPoint, ends.fromSide, ends.toSide);
   }
 
   const sourceAnchor = linkDrag ? anchors[linkDrag.fromId] : null;
@@ -2182,6 +2336,23 @@ function TimelineChart({
               Dependency{" "}
               <span aria-hidden="true" style={{ display: "inline-block", width: 14, height: 3, background: BLOCKER_COLOR, margin: "0 4px 0 8px", verticalAlign: "middle" }} />
               Blocker
+              {showCriticalPath && (
+                <>
+                  {" "}
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      display: "inline-block",
+                      width: 14,
+                      height: 3,
+                      background: "var(--oc-gantt-critical, #991b1b)",
+                      margin: "0 4px 0 8px",
+                      verticalAlign: "middle",
+                    }}
+                  />
+                  Critical
+                </>
+              )}
             </span>
           )}
           <button
@@ -2197,6 +2368,15 @@ function TimelineChart({
             aria-label={`${riskIds.length} at risk from blocker date conflicts. Jump to next at-risk task`}
           >
             {riskIds.length} at risk
+          </button>
+          <button
+            className={showCriticalPath ? "btn small primary" : "btn small"}
+            type="button"
+            aria-pressed={showCriticalPath}
+            onClick={toggleCriticalPath}
+            title="Highlight the longest Hard Blocker chain by schedule span"
+          >
+            Critical path
           </button>
           <button className={showLines ? "btn small primary" : "btn small"} type="button" aria-pressed={showLines} onClick={toggleLines}>
             Dependency lines
@@ -2286,8 +2466,10 @@ function TimelineChart({
                     onDragMove={null}
                     issueId={epic?.issueId ?? null}
                     linkable={Boolean(canWrite && epic)}
-                    linkClass={linkClassFor(epic?.issueId ?? null)}
+                    linkClass={barLinkClass(epic?.issueId ?? null)}
                     onLinkStart={beginLink}
+                    onHoverEnter={onBarHoverEnter}
+                    onHoverLeave={onBarHoverLeave}
                   />
                 </div>
                 {rows.length > 0 && (
@@ -2348,8 +2530,10 @@ function TimelineChart({
                             onDragMove={editable ? onBarDragMove : null}
                             issueId={row.issueId}
                             linkable={canWrite}
-                            linkClass={linkClassFor(row.issueId)}
+                            linkClass={barLinkClass(row.issueId)}
                             onLinkStart={beginLink}
+                            onHoverEnter={onBarHoverEnter}
+                            onHoverLeave={onBarHoverLeave}
                           />
                         </div>
                       );
@@ -2359,49 +2543,65 @@ function TimelineChart({
               </div>
             );
           })}
-          {(showLines || linkDrag) && chartSize.width > 0 && (
+          {(showLines || linkDrag || hoverRevealId) && chartSize.width > 0 && (
             <svg className="gantt-dep-overlay" width={chartSize.width} height={chartSize.height} role="group" aria-label="Dependency lines">
               <defs>
-                {([["blocker", BLOCKER_COLOR], ["dependency", DEPENDENCY_COLOR]] as const).map(([name, color]) => (
+                {(
+                  [
+                    ["blocker", BLOCKER_COLOR],
+                    ["dependency", DEPENDENCY_COLOR],
+                    ["critical", "#991b1b"],
+                  ] as const
+                ).map(([name, color]) => (
                   <marker key={name} id={`gantt-arrow-${name}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
                     <path d="M0 0 L8 4 L0 8 z" fill={color} />
                   </marker>
                 ))}
               </defs>
-              {showLines &&
-                edges.map((edge) => {
+              {overlayEdges.map((edge) => {
                   const path = edgePath(edge);
                   if (!path) return null;
                   const selected =
                     selectedEdge?.type === edge.type &&
                     selectedEdge.predecessorId === edge.predecessorId &&
                     selectedEdge.successorId === edge.successorId;
+                  const onCritical =
+                    showCriticalPath &&
+                    edge.type === "blocker" &&
+                    criticalEdgeKeys.has(`${edge.predecessorId}>${edge.successorId}`);
                   const key = `${edge.type}:${edge.predecessorId}:${edge.successorId}`;
                   const predecessorTitle = issueById.get(edge.predecessorId)?.title ?? "task";
                   const successorTitle = issueById.get(edge.successorId)?.title ?? "task";
                   const open = () => setSelectedEdge(edge);
+                  // Hover-reveal strokes stay non-interactive so the SVG does not steal bar hover and flicker.
+                  const hitsDisabled = Boolean(linkDrag) || !showLines;
+                  const arrow = onCritical && !selected ? "critical" : edge.type;
                   return (
                     <g key={key}>
                       <path
-                        className={`gantt-dep-line ${edge.type}${selected ? " selected" : ""}`}
+                        className={`gantt-dep-line ${edge.type}${selected ? " selected" : ""}${onCritical ? " critical" : ""}${hoverRevealId ? " hover-reveal" : ""}`}
                         d={path}
-                        markerEnd={`url(#gantt-arrow-${edge.type})`}
+                        markerEnd={`url(#gantt-arrow-${arrow})`}
                       />
                       {/* Wide transparent stroke so thin lines are easy to click. */}
                       <path
                         className="gantt-dep-hit"
                         d={path}
                         role="button"
-                        tabIndex={0}
+                        tabIndex={hitsDisabled ? -1 : 0}
                         aria-label={`${edge.type === "blocker" ? "Blocker" : "Dependency"}: ${predecessorTitle} to ${successorTitle}`}
-                        style={linkDrag ? { pointerEvents: "none" } : undefined}
-                        onClick={open}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            open();
-                          }
-                        }}
+                        style={hitsDisabled ? { pointerEvents: "none" } : undefined}
+                        onClick={hitsDisabled ? undefined : open}
+                        onKeyDown={
+                          hitsDisabled
+                            ? undefined
+                            : (event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  open();
+                                }
+                              }
+                        }
                       />
                     </g>
                   );
@@ -2418,6 +2618,8 @@ function TimelineChart({
           predecessor={pendingPredecessor}
           successor={pendingSuccessor}
           currentType={null}
+          initialLagDays={0}
+          initialLinkKind="FS"
           canWrite={canWrite}
           busy={busy}
           onSave={createLink}
@@ -2432,9 +2634,15 @@ function TimelineChart({
           predecessor={selectedPredecessor}
           successor={selectedSuccessor}
           currentType={selectedEdge.type}
-          canWrite={canWrite && Boolean(onSaveRelationships)}
+          initialLagDays={blockerEdgeFor(selectedEdge.predecessorId, selectedSuccessor.blockerEdges).lagDays}
+          initialLinkKind={
+            selectedEdge.type === "blocker"
+              ? blockerEdgeFor(selectedEdge.predecessorId, selectedSuccessor.blockerEdges).linkKind
+              : "FS"
+          }
+          canWrite={canWrite && Boolean(onSaveRelationships || onSaveBlockerEdges)}
           busy={busy}
-          onSave={(type) => changeLinkType(selectedEdge, type)}
+          onSave={(type, options) => changeLinkType(selectedEdge, type, options)}
           onRemove={() => removeLink(selectedEdge)}
           onClose={() => setSelectedEdge(null)}
         />
@@ -2446,12 +2654,23 @@ function TimelineChart({
 /**
  * Popup for choosing or editing a link's type. Create mode forces a Dependency/Blocker choice;
  * Cancel/Esc creates nothing. Read-only users see the details without any actions.
+ *
+ * Agent 2 (lag / lead): Hard Blocker only. Soft Dependency never shows or sends lagDays.
+ * Agent 3 (link kinds): Hard Blocker FS/SS/FF/SF picker; soft Dependency never uses kinds.
+ * Agent 5 (optional auto-reschedule): create + Blocker + overlap shows an opt-in checkbox
+ * (default off). Soft Dependency never shows it.
+ *
+ * Manual test: drag-link two overlapping bars → Blocker with checkbox unchecked → warn only, no
+ * review modal; check "Also propose moving later tasks" → create Blocker → review modal lists
+ * shifts → Approve moves / Keep later dates behave as for date edits. Soft Dependency: no checkbox.
  */
 function LinkDialog({
   mode,
   predecessor,
   successor,
   currentType,
+  initialLagDays,
+  initialLinkKind,
   canWrite,
   busy,
   onSave,
@@ -2462,18 +2681,32 @@ function LinkDialog({
   predecessor: PlanIssue;
   successor: PlanIssue;
   currentType: LinkType | null;
+  /** Existing lag on this Hard Blocker edge (edit), or 0 for create. */
+  initialLagDays: number;
+  /** Existing link kind on this Hard Blocker edge (edit), or FS for create. */
+  initialLinkKind: BlockerLinkKind;
   canWrite: boolean;
   busy: boolean;
-  onSave: (type: LinkType) => Promise<string | null>;
+  onSave: (
+    type: LinkType,
+    options?: { proposeReschedule?: boolean; lagDays?: number; linkKind?: BlockerLinkKind },
+  ) => Promise<string | null>;
   onRemove: (() => Promise<string | null>) | null;
   onClose: () => void;
 }) {
   const [choice, setChoice] = useState<LinkType | null>(currentType);
+  // Default unchecked: create Blocker stays warn-only unless the user opts in.
+  const [proposeReschedule, setProposeReschedule] = useState(false);
+  // Lag / linkKind apply only when choice is blocker; soft Dependency ignores both.
+  const [lagDays, setLagDays] = useState(normalizeLagDays(initialLagDays));
+  const [linkKind, setLinkKind] = useState<BlockerLinkKind>(initialLinkKind);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const disabled = busy || working;
   // Warn only when Blocker is selected (or being chosen). Soft dependencies have no schedule impact; dates never auto-adjust.
-  const overlap = choice === "blocker" && datesOverlapForBlocker(predecessor, successor);
+  const overlap =
+    choice === "blocker" &&
+    datesOverlapForBlocker(predecessor, successor, { lagDays, linkKind });
 
   useEffect(() => {
     function key(event: KeyboardEvent) {
@@ -2482,6 +2715,10 @@ function LinkDialog({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [onClose]);
+
+  useEffect(() => {
+    if (choice !== "blocker") setProposeReschedule(false);
+  }, [choice]);
 
   async function run(action: () => Promise<string | null>) {
     setWorking(true);
@@ -2496,6 +2733,13 @@ function LinkDialog({
     type === "blocker"
       ? `${predecessor.title} blocks ${successor.title}`
       : `${predecessor.title} relates to ${successor.title} (no schedule impact)`;
+
+  const lagDirty = normalizeLagDays(lagDays) !== normalizeLagDays(initialLagDays);
+  const kindDirty = linkKind !== initialLinkKind;
+  const saveDisabled =
+    disabled ||
+    !choice ||
+    (choice === currentType && !(choice === "blocker" && (lagDirty || kindDirty)));
 
   return (
     <div className="dialog-layer">
@@ -2528,7 +2772,13 @@ function LinkDialog({
               onFocus={() => setChoice("blocker")}
               onClick={() => {
                 setChoice("blocker");
-                void run(() => onSave("blocker"));
+                void run(() =>
+                  onSave("blocker", {
+                    proposeReschedule,
+                    lagDays: normalizeLagDays(lagDays),
+                    linkKind,
+                  }),
+                );
               }}
               style={{ background: BLOCKER_COLOR, borderColor: BLOCKER_COLOR }}
             >
@@ -2544,6 +2794,49 @@ function LinkDialog({
             ))}
           </fieldset>
         )}
+        {(choice === "blocker" || (mode === "create" && canWrite)) && (
+          <>
+            <label className="small" style={{ display: "block", marginBottom: 8 }}>
+              Link kind (Blocker only)
+              <select
+                className="field"
+                value={linkKind}
+                disabled={disabled || (!canWrite && mode === "edit")}
+                onChange={(event) => setLinkKind(event.target.value as BlockerLinkKind)}
+                onFocus={() => {
+                  if (mode === "create") setChoice("blocker");
+                }}
+                aria-describedby="link-kind-help"
+              >
+                <option value="FS">Finish-to-start (FS)</option>
+                <option value="SS">Start-to-start (SS)</option>
+                <option value="FF">Finish-to-finish (FF)</option>
+                <option value="SF">Start-to-finish (SF)</option>
+              </select>
+              <span id="link-kind-help" className="muted" style={{ display: "block" }}>
+                Soft Dependency has no link kinds. FS is the default (day after predecessor finish).
+              </span>
+            </label>
+            <label className="small" style={{ display: "block", marginBottom: 8 }}>
+              Lag days (Blocker only; negative = lead)
+              <input
+                className="field"
+                type="number"
+                step={1}
+                value={lagDays}
+                disabled={disabled || (!canWrite && mode === "edit")}
+                onChange={(event) => setLagDays(normalizeLagDays(Number(event.target.value)))}
+                onFocus={() => {
+                  if (mode === "create") setChoice("blocker");
+                }}
+                aria-describedby="link-lag-help"
+              />
+              <span id="link-lag-help" className="muted" style={{ display: "block" }}>
+                Soft Dependency ignores lag. Default 0 uses the link-kind constraint with no offset.
+              </span>
+            </label>
+          </>
+        )}
         <p className="small muted">
           {mode === "create" && canWrite
             ? `Dependency: ${copy("dependency")}. Blocker: ${copy("blocker")}.`
@@ -2552,9 +2845,23 @@ function LinkDialog({
               : ""}
         </p>
         {overlap && (
-          <p className="error small" role="alert">
-            Dates overlap: {successor.title} starts before {predecessor.title} finishes. Dates are not changed automatically.
-          </p>
+          <>
+            <p className="error small" role="alert">
+              Dates overlap{lagPhrase(lagDays)}: {successor.title} starts earlier than this Hard Blocker allows
+              relative to {predecessor.title}. Dates are not changed automatically.
+            </p>
+            {mode === "create" && canWrite && (
+              <label className="small" style={{ display: "block", marginBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={proposeReschedule}
+                  disabled={disabled}
+                  onChange={(event) => setProposeReschedule(event.target.checked)}
+                />{" "}
+                Also propose moving later tasks
+              </label>
+            )}
+          </>
         )}
         {error && (
           <p className="error small" role="alert">
@@ -2567,10 +2874,20 @@ function LinkDialog({
               <button
                 className="btn primary"
                 type="button"
-                disabled={disabled || !choice || choice === currentType}
-                onClick={() => choice && void run(() => onSave(choice))}
+                disabled={saveDisabled}
+                onClick={() =>
+                  choice &&
+                  void run(() =>
+                    onSave(
+                      choice,
+                      choice === "blocker"
+                        ? { lagDays: normalizeLagDays(lagDays), linkKind }
+                        : undefined,
+                    ),
+                  )
+                }
               >
-                Save type
+                {choice === currentType && choice === "blocker" && (lagDirty || kindDirty) ? "Save edge" : "Save"}
               </button>
               {onRemove && (
                 <button className="btn" type="button" disabled={disabled} onClick={() => void run(onRemove)}>
@@ -2603,6 +2920,8 @@ function ScheduleBar({
   linkable,
   linkClass,
   onLinkStart,
+  onHoverEnter,
+  onHoverLeave,
 }: {
   range: ScheduledRange | null;
   span: { origin: string; days: number };
@@ -2620,6 +2939,9 @@ function ScheduleBar({
   /** "linking" for the drag source, "link-target-valid|invalid" while hovered as a drop target. */
   linkClass: string;
   onLinkStart: (issueId: string, event: ReactPointerEvent<HTMLElement>) => void;
+  /** Temporary dependency-line reveal while the global toggle is off. */
+  onHoverEnter?: (issueId: string) => void;
+  onHoverLeave?: (issueId: string) => void;
 }) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
@@ -2640,6 +2962,14 @@ function ScheduleBar({
   // Rollup/epic bars can link too, so the link handle does not depend on the bar being draggable.
   const canLink = Boolean(linkable && issueId && shown && !busy);
   const todayLeft = todayMarkerLeft(today, span);
+
+  // Clear hover-reveal if this bar unmounts while still hovered (row filter / collapse).
+  const onHoverLeaveRef = useRef(onHoverLeave);
+  onHoverLeaveRef.current = onHoverLeave;
+  useEffect(() => {
+    if (!issueId) return;
+    return () => onHoverLeaveRef.current?.(issueId);
+  }, [issueId]);
 
   function showPreview(next: { start: string; finish: string } | null) {
     previewRef.current = next;
@@ -2717,6 +3047,20 @@ function ScheduleBar({
           style={{ ...placement, ...(color ? { background: color } : {}) }}
           title={interactive ? `${label}. Drag to move, or drag an end to resize.` : label}
           onPointerDown={interactive ? (event) => beginDrag("move", event) : undefined}
+          onPointerEnter={
+            issueId && onHoverEnter
+              ? () => {
+                  onHoverEnter(issueId);
+                }
+              : undefined
+          }
+          onPointerLeave={
+            issueId && onHoverLeave
+              ? () => {
+                  onHoverLeave(issueId);
+                }
+              : undefined
+          }
         >
           {interactive && (
             <>
@@ -2789,6 +3133,14 @@ function shortDate(iso: string): string {
   return `${Number(month)}/${Number(day)}`;
 }
 
+/** Short parenthetical for UI copy when lag/lead is non-zero. Empty string when lag is 0. */
+function lagPhrase(lagDays: number): string {
+  const days = normalizeLagDays(lagDays);
+  if (days > 0) return ` (lag ${days} day${days === 1 ? "" : "s"})`;
+  if (days < 0) return ` (lead ${Math.abs(days)} day${days === -1 ? "" : "s"})`;
+  return "";
+}
+
 function timelineToday(): string {
   return localIsoDate();
 }
@@ -2800,6 +3152,7 @@ function dependencyIssues(issues: PlanIssue[]) {
     startDate: issue.startDate,
     finishDate: issue.finishDate,
     predecessorIds: issue.predecessorIds ?? [],
+    blockerEdges: issue.blockerEdges,
     inProject: true,
     archived: false,
     deletedAt: null,
@@ -2832,6 +3185,7 @@ function DependenciesPanel({
   readOnly,
   onLink,
   onSoftLink,
+  onSaveBlockerEdges,
 }: {
   issues: PlanIssue[];
   busy: boolean;
@@ -2839,6 +3193,8 @@ function DependenciesPanel({
   onLink: (issueId: string, predecessorId: string, action: "add" | "remove") => Promise<void>;
   /** Saves the successor's full relationship list (soft links) through the issue PATCH. Null when read-only. */
   onSoftLink: ((issueId: string, relationships: { id: string; kind: string; otherIssueId: string }[]) => Promise<void>) | null;
+  /** Persist Hard Blocker lag / link-kind metadata. Soft dependencies never use this. */
+  onSaveBlockerEdges: ((issueId: string, blockerEdges: BlockerEdge[]) => Promise<void>) | null;
 }) {
   const rows = orderedIssues(issues).map((issue) => ({ ...issue, predecessorIds: issue.predecessorIds ?? [] }));
   // Overlap/unscheduled conflicts are hard-link only; soft dependencies never affect the schedule.
@@ -2846,22 +3202,53 @@ function DependenciesPanel({
   const [formError, setFormError] = useState<string | null>(null);
 
   /** Add either link type after the same validation the Gantt drop uses. */
-  async function addLink(issue: PlanIssue, predecessorId: string, type: LinkType) {
+  async function addLink(
+    issue: PlanIssue,
+    predecessorId: string,
+    type: LinkType,
+    lagDays = 0,
+    linkKind: BlockerLinkKind = "FS",
+  ) {
     const problem = linkProblem(issues, predecessorId, issue.issueId, type);
     if (problem) {
       setFormError(problem);
       return;
     }
     setFormError(null);
-    if (type === "blocker") await onLink(issue.issueId, predecessorId, "add");
-    else if (onSoftLink) await onSoftLink(issue.issueId, addSoftDependencyRelationship(issue.relationships, issue.issueId, predecessorId));
+    if (type === "blocker") {
+      await onLink(issue.issueId, predecessorId, "add");
+      const nextLag = normalizeLagDays(lagDays);
+      if (onSaveBlockerEdges && (nextLag !== 0 || linkKind !== "FS")) {
+        const preds = [...(issue.predecessorIds ?? []), predecessorId];
+        await onSaveBlockerEdges(
+          issue.issueId,
+          withBlockerLag(issue.blockerEdges, preds, predecessorId, nextLag, linkKind),
+        );
+      }
+    } else if (onSoftLink) {
+      await onSoftLink(issue.issueId, addSoftDependencyRelationship(issue.relationships, issue.issueId, predecessorId));
+    }
+  }
+
+  async function saveEdge(
+    issue: PlanIssue,
+    predecessorId: string,
+    lagDays: number,
+    linkKind: BlockerLinkKind,
+  ) {
+    if (!onSaveBlockerEdges) return;
+    setFormError(null);
+    await onSaveBlockerEdges(
+      issue.issueId,
+      withBlockerLag(issue.blockerEdges, issue.predecessorIds ?? [], predecessorId, lagDays, linkKind),
+    );
   }
 
   return (
     <section className="panel">
       <h3>Dependencies</h3>
       <p className="copy">
-        A blocker means a later task is blocked by an earlier task in GitHub. It starts the day after that task finishes. A dependency is a softer link that has no schedule impact. A date change asks before blocked tasks move.
+        A Hard Blocker uses FS / SS / FF / SF (default FS: day after predecessor finish). Lag waits extra days; negative lag is lead. Soft Dependency is visual only with no kinds or lag. A date change asks before blocked tasks move.
       </p>
       {formError && <p className="error small" role="alert">{formError}</p>}
       {rows.length === 0 && <p className="copy">No issues yet. Connect the GitHub project.</p>}
@@ -2880,26 +3267,75 @@ function DependenciesPanel({
           <article className="milestone" key={issue.issueId}>
             <strong>{issue.title}</strong>
             {none && <p className="small muted">No links.</p>}
-            {blockedBy.map((predecessor) => (
-              <p className="small" key={`by:${predecessor.issueId}`}>
-                Blocked by {predecessor.title}.
-                {!readOnly && (
-                  <button className="btn small" type="button" disabled={busy} onClick={() => void onLink(issue.issueId, predecessor.issueId, "remove")}>
-                    Remove
-                  </button>
-                )}
-              </p>
-            ))}
-            {blocks.map((successor) => (
-              <p className="small" key={`blocks:${successor.issueId}`}>
-                Blocks {successor.title}.
-                {!readOnly && (
-                  <button className="btn small" type="button" disabled={busy} onClick={() => void onLink(successor.issueId, issue.issueId, "remove")}>
-                    Remove
-                  </button>
-                )}
-              </p>
-            ))}
+            {blockedBy.map((predecessor) => {
+              const edge = blockerEdgeFor(predecessor.issueId, issue.blockerEdges);
+              return (
+                <p className="small" key={`by:${predecessor.issueId}`}>
+                  Blocked by {predecessor.title} ({edge.linkKind}
+                  {lagPhrase(edge.lagDays)}).
+                  {!readOnly && onSaveBlockerEdges && (
+                    <>
+                      <label style={{ marginLeft: 8 }}>
+                        Kind
+                        <select
+                          className="field"
+                          value={edge.linkKind}
+                          disabled={busy}
+                          aria-label={`Link kind for blocker from ${predecessor.title}`}
+                          onChange={(event) => {
+                            const next = event.target.value as BlockerLinkKind;
+                            if (next === edge.linkKind) return;
+                            void saveEdge(issue, predecessor.issueId, edge.lagDays, next);
+                          }}
+                          style={{ marginLeft: 4 }}
+                        >
+                          <option value="FS">FS</option>
+                          <option value="SS">SS</option>
+                          <option value="FF">FF</option>
+                          <option value="SF">SF</option>
+                        </select>
+                      </label>
+                      <label style={{ marginLeft: 8 }}>
+                        Lag
+                        <input
+                          className="field"
+                          type="number"
+                          step={1}
+                          defaultValue={edge.lagDays}
+                          disabled={busy}
+                          aria-label={`Lag days for blocker from ${predecessor.title}`}
+                          onBlur={(event) => {
+                            const next = normalizeLagDays(Number(event.target.value));
+                            if (next === edge.lagDays) return;
+                            void saveEdge(issue, predecessor.issueId, next, edge.linkKind);
+                          }}
+                          style={{ width: 72, marginLeft: 4 }}
+                        />
+                      </label>
+                    </>
+                  )}
+                  {!readOnly && (
+                    <button className="btn small" type="button" disabled={busy} onClick={() => void onLink(issue.issueId, predecessor.issueId, "remove")}>
+                      Remove
+                    </button>
+                  )}
+                </p>
+              );
+            })}
+            {blocks.map((successor) => {
+              const edge = blockerEdgeFor(issue.issueId, successor.blockerEdges);
+              return (
+                <p className="small" key={`blocks:${successor.issueId}`}>
+                  Blocks {successor.title} ({edge.linkKind}
+                  {lagPhrase(edge.lagDays)}).
+                  {!readOnly && (
+                    <button className="btn small" type="button" disabled={busy} onClick={() => void onLink(successor.issueId, issue.issueId, "remove")}>
+                      Remove
+                    </button>
+                  )}
+                </p>
+              );
+            })}
             {dependsOn.map((predecessor) => (
               <p className="small" key={`dep:${predecessor.issueId}`}>
                 Depends on {predecessor.title} (no schedule impact).
@@ -2930,12 +3366,26 @@ function DependenciesPanel({
                 )}
               </p>
             ))}
-            {notes.map((note) => (
-              <p className="small" key={note.predecessorId}>
-                {note.reason === "overlap" ? `Starts before ${note.predecessorTitle} finishes.` : `Not scheduled after ${note.predecessorTitle}.`}
-              </p>
-            ))}
-            {!readOnly && <PredecessorForm choices={choices} busy={busy} canSoft={Boolean(onSoftLink)} onAdd={(predecessorId, type) => addLink(issue, predecessorId, type)} />}
+            {notes.map((note) => {
+              const lagDays = blockerEdgeFor(note.predecessorId, issue.blockerEdges).lagDays;
+              return (
+                <p className="small" key={note.predecessorId}>
+                  {note.reason === "overlap"
+                    ? `Starts earlier than ${note.predecessorTitle} allows${lagPhrase(lagDays)}.`
+                    : `Not scheduled after ${note.predecessorTitle}${lagPhrase(lagDays)}.`}
+                </p>
+              );
+            })}
+            {!readOnly && (
+              <PredecessorForm
+                choices={choices}
+                busy={busy}
+                canSoft={Boolean(onSoftLink)}
+                onAdd={(predecessorId, type, lagDays, linkKind) =>
+                  addLink(issue, predecessorId, type, lagDays, linkKind)
+                }
+              />
+            )}
           </article>
         );
       })}
@@ -2952,10 +3402,17 @@ function PredecessorForm({
   choices: { issueId: string; title: string }[];
   busy: boolean;
   canSoft: boolean;
-  onAdd: (predecessorId: string, type: LinkType) => Promise<void>;
+  onAdd: (
+    predecessorId: string,
+    type: LinkType,
+    lagDays: number,
+    linkKind: BlockerLinkKind,
+  ) => Promise<void>;
 }) {
   const [predecessorId, setPredecessorId] = useState("");
   const [type, setType] = useState<LinkType>("blocker");
+  const [lagDays, setLagDays] = useState(0);
+  const [linkKind, setLinkKind] = useState<BlockerLinkKind>("FS");
   if (choices.length === 0) return null;
   return (
     <form
@@ -2963,7 +3420,16 @@ function PredecessorForm({
       onSubmit={(event) => {
         event.preventDefault();
         if (!predecessorId) return;
-        void onAdd(predecessorId, type).then(() => setPredecessorId(""));
+        void onAdd(
+          predecessorId,
+          type,
+          type === "blocker" ? lagDays : 0,
+          type === "blocker" ? linkKind : "FS",
+        ).then(() => {
+          setPredecessorId("");
+          setLagDays(0);
+          setLinkKind("FS");
+        });
       }}
     >
       <label>
@@ -2984,6 +3450,35 @@ function PredecessorForm({
           {canSoft && <option value="dependency">Dependency</option>}
         </select>
       </label>
+      {type === "blocker" && (
+        <>
+          <label>
+            Kind
+            <select
+              value={linkKind}
+              disabled={busy}
+              onChange={(event) => setLinkKind(event.target.value as BlockerLinkKind)}
+            >
+              <option value="FS">FS</option>
+              <option value="SS">SS</option>
+              <option value="FF">FF</option>
+              <option value="SF">SF</option>
+            </select>
+          </label>
+          <label>
+            Lag days
+            <input
+              className="field"
+              type="number"
+              step={1}
+              value={lagDays}
+              disabled={busy}
+              onChange={(event) => setLagDays(normalizeLagDays(Number(event.target.value)))}
+              style={{ width: 72 }}
+            />
+          </label>
+        </>
+      )}
       <button className="btn small" type="submit" disabled={busy || !predecessorId}>
         Add link
       </button>

@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.9 — 2026-10-29.*
+*Single plan for the portal product and the staff AI vault. Version 1.11 — 2026-10-29.*
 
 This document **combines**:
 
@@ -23,7 +23,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | Absolute 2-hour browser session sign-out | **Complete** (auth_time + Cognito refresh 2h) |
 | R1 pilot / first external customer gate | **Not started** |
 | Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod; 2h session Done) |
-| Gantt dependency enhancements (post-v1) | **Not started** |
+| Gantt dependency enhancements (post-v1) | **Complete** |
 | R4 Recovery & Governance | **Not started** |
 
 ---
@@ -183,17 +183,17 @@ Code review + security scan closed Critical/High defects, then this slice landed
 | Model changes to live plan | Forbidden | Out of scope |
 | R4 recovery features | Per original R4 boundary | Not started |
 
-### I — Gantt dependency enhancements (post-v1) — Not started
+### I — Gantt dependency enhancements (post-v1) — Complete
 
-Hard Blocker vs soft Dependency v1 shipped (or in flight). Post-v1 backlog (also ADR 0007 Follow-ups):
+Hard Blocker vs soft Dependency v1 shipped. Post-v1 backlog (also ADR 0007 Follow-ups) delivered:
 
 | Item | Notes | Status |
 | --- | --- | --- |
-| Hover when lines hidden | Temporarily show a bar’s connectors / linked bars without turning the global toggle on | Not started |
-| Lag / lead days | Hard Blocker successor starts N days after predecessor finish | Not started |
-| Other link kinds | Start-to-start, finish-to-finish, start-to-finish | Not started |
-| Critical path | Highlight across the blocker graph | Not started |
-| Optional auto-reschedule on Blocker create | Offer existing dependency-review move flow; warn-only remains default | Not started |
+| Hover when lines hidden | Temporarily show a bar’s connectors / linked bars without turning the global toggle on | **Done** |
+| Lag / lead days | Hard Blocker successor starts N days after constraint (+ lag / − lead) via `blockerEdges` | **Done** |
+| Other link kinds | Start-to-start, finish-to-finish, start-to-finish (with FS default) | **Done** |
+| Critical path | Highlight longest Hard Blocker path on Timeline | **Done** |
+| Optional auto-reschedule on Blocker create | Offer existing dependency-review move flow; warn-only remains default | **Done** |
 
 ---
 
@@ -261,6 +261,7 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | Cursor plan `ai_vault_architecture_*.plan.md` | Same todos for agent execution; keep in sync with §4–5 |
 | `docs/sop/staff-vault.md` | How staff operate the vault today |
 | `docs/sop/vault-mcp-beginner.md` | Beginner install and use guide for staff vault MCP (Cursor / Claude) |
+| `docs/sop/*` beginner FAQ guides | Timeline, Dependencies & Blockers, Critical path, Baselines, hierarchy, Risk Register, Documents — Sidebar → FAQ (`/help`) |
 | `services/vault-mcp` | Stdio MCP server package (`one80compass-vault`) |
 
 ---
@@ -280,3 +281,5 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-29 | v1.7 Phase 10 Staff vault MCP **In progress** (`services/vault-mcp`); admin `GET .../vault-chunks`; MCP registration in staff-vault SOP; mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.8 Phase 10 Staff vault MCP **Done** (stdio MCP + five tools + vault-chunks API); mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.9 Plan sync: 2h session **Done**; Phase 10 subtasks (vault-chunks, beginner SOP) **Done**; EventBridge residual explicit; mirrored on One80Compass Dev in-app plan |
+| 2026-10-29 | v1.10 §5 I Gantt dependency enhancements (post-v1) **Complete** (hover, lag/lead, SS/FF/SF, critical path, optional auto-reschedule); mirrored on One80Compass Dev in-app plan |
+| 2026-10-29 | v1.11 Sidebar FAQ for all roles (`/help`); seven beginner SOP tiles + MCP; `faq:` in-app cross-links |

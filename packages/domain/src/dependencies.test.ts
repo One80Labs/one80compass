@@ -64,6 +64,162 @@ describe("dependencyReview", () => {
     ];
     expect(dependencyReview(issues, "A", "2026-10-01", "2026-10-10").map((item) => item.issueId)).toEqual(["B"]);
   });
+
+  it("applies positive lag when proposing a successor shift", () => {
+    // Finish 10 → FS base 11 + lag 2 ⇒ required start 13. B at 11 must move.
+    const issues = [
+      task({ issueId: "A", title: "Deck", startDate: "2026-10-01", finishDate: "2026-10-05" }),
+      task({
+        issueId: "B",
+        title: "Rail",
+        startDate: "2026-10-11",
+        finishDate: "2026-10-12",
+        predecessorIds: ["A"],
+        blockerEdges: [{ predecessorId: "A", linkKind: "FS", lagDays: 2 }],
+      }),
+    ];
+    expect(dependencyReview(issues, "A", "2026-10-01", "2026-10-10")).toEqual([
+      {
+        issueId: "B",
+        title: "Rail",
+        fromStart: "2026-10-11",
+        fromFinish: "2026-10-12",
+        toStart: "2026-10-13",
+        toFinish: "2026-10-14",
+      },
+    ]);
+  });
+
+  it("applies lead so a successor that starts on the finish day can stay legal", () => {
+    // Finish 10 → FS base 11 + lead -1 ⇒ required start 10. B already at 10 is fine.
+    const issues = [
+      task({ issueId: "A", startDate: "2026-10-01", finishDate: "2026-10-05" }),
+      task({
+        issueId: "B",
+        startDate: "2026-10-10",
+        finishDate: "2026-10-12",
+        predecessorIds: ["A"],
+        blockerEdges: [{ predecessorId: "A", linkKind: "FS", lagDays: -1 }],
+      }),
+    ];
+    expect(dependencyReview(issues, "A", "2026-10-01", "2026-10-10")).toEqual([]);
+  });
+
+  // Agent 5 create-blocker opt-in: after the edge exists, reviewing the predecessor's
+  // *current* dates (no date change) still proposes successor shifts — same modal path as date edits.
+  it("proposes shifts when reviewing a predecessor's current dates after a new blocker edge", () => {
+    const issues = [
+      task({ issueId: "A", title: "Foundation", startDate: "2026-10-01", finishDate: "2026-10-10" }),
+      task({
+        issueId: "B",
+        title: "Framing",
+        startDate: "2026-10-05",
+        finishDate: "2026-10-08",
+        predecessorIds: ["A"],
+      }),
+    ];
+    expect(datesOverlapForBlocker(issues[0], issues[1])).toBe(true);
+    expect(dependencyReview(issues, "A", "2026-10-01", "2026-10-10")).toEqual([
+      {
+        issueId: "B",
+        title: "Framing",
+        fromStart: "2026-10-05",
+        fromFinish: "2026-10-08",
+        toStart: "2026-10-11",
+        toFinish: "2026-10-14",
+      },
+    ]);
+  });
+});
+
+describe("link kinds in review and conflicts", () => {
+  it("SS proposes a shift when successor starts before predecessor start", () => {
+    const issues = [
+      task({ issueId: "A", title: "Deck", startDate: "2026-10-05", finishDate: "2026-10-10" }),
+      task({
+        issueId: "B",
+        title: "Rail",
+        startDate: "2026-10-01",
+        finishDate: "2026-10-03",
+        predecessorIds: ["A"],
+        blockerEdges: [{ predecessorId: "A", linkKind: "SS", lagDays: 0 }],
+      }),
+    ];
+    expect(dependencyReview(issues, "A", "2026-10-05", "2026-10-10")).toEqual([
+      {
+        issueId: "B",
+        title: "Rail",
+        fromStart: "2026-10-01",
+        fromFinish: "2026-10-03",
+        toStart: "2026-10-05",
+        toFinish: "2026-10-07",
+      },
+    ]);
+    expect(scheduleConflicts(issues)).toEqual([
+      { issueId: "B", title: "Rail", predecessorId: "A", predecessorTitle: "Deck", reason: "overlap" },
+    ]);
+  });
+
+  it("FF flags when successor finishes before predecessor finish", () => {
+    const issues = [
+      task({ issueId: "A", title: "Deck", startDate: "2026-10-01", finishDate: "2026-10-10" }),
+      task({
+        issueId: "B",
+        title: "Rail",
+        startDate: "2026-10-06",
+        finishDate: "2026-10-08",
+        predecessorIds: ["A"],
+        blockerEdges: [{ predecessorId: "A", linkKind: "FF", lagDays: 0 }],
+      }),
+    ];
+    expect(scheduleConflicts(issues)).toEqual([
+      { issueId: "B", title: "Rail", predecessorId: "A", predecessorTitle: "Deck", reason: "overlap" },
+    ]);
+    // 3-day task must finish on Oct 10 ⇒ start Oct 8
+    expect(dependencyReview(issues, "A", "2026-10-01", "2026-10-10")).toEqual([
+      {
+        issueId: "B",
+        title: "Rail",
+        fromStart: "2026-10-06",
+        fromFinish: "2026-10-08",
+        toStart: "2026-10-08",
+        toFinish: "2026-10-10",
+      },
+    ]);
+  });
+
+  it("SF proposes duration-preserving shift to meet finish ≥ predecessor start", () => {
+    const issues = [
+      task({ issueId: "A", title: "Deck", startDate: "2026-10-10", finishDate: "2026-10-20" }),
+      task({
+        issueId: "B",
+        title: "Rail",
+        startDate: "2026-10-01",
+        finishDate: "2026-10-03",
+        predecessorIds: ["A"],
+        blockerEdges: [{ predecessorId: "A", linkKind: "SF", lagDays: 0 }],
+      }),
+    ];
+    expect(dependencyReview(issues, "A", "2026-10-10", "2026-10-20")).toEqual([
+      {
+        issueId: "B",
+        title: "Rail",
+        fromStart: "2026-10-01",
+        fromFinish: "2026-10-03",
+        toStart: "2026-10-08",
+        toFinish: "2026-10-10",
+      },
+    ]);
+  });
+
+  it("FS without blockerEdges stays v1 day-after-finish", () => {
+    const issues = [
+      task({ issueId: "A", title: "Deck", startDate: "2026-10-01", finishDate: "2026-10-10" }),
+      task({ issueId: "B", title: "Rail", startDate: "2026-10-06", finishDate: "2026-10-08", predecessorIds: ["A"] }),
+    ];
+    expect(scheduleConflicts(issues)[0]?.reason).toBe("overlap");
+    expect(dependencyReview(issues, "A", "2026-10-01", "2026-10-10")[0]?.toStart).toBe("2026-10-11");
+  });
 });
 
 describe("scheduleConflicts", () => {
@@ -76,6 +232,24 @@ describe("scheduleConflicts", () => {
     expect(scheduleConflicts(issues)).toEqual([
       { issueId: "B", title: "Rail", predecessorId: "A", predecessorTitle: "Deck", reason: "overlap" },
       { issueId: "C", title: "Paint", predecessorId: "A", predecessorTitle: "Deck", reason: "unscheduled" },
+    ]);
+  });
+
+  it("flags overlap when lag pushes the required start past the successor", () => {
+    // Without lag, B starting 11 is legal after finish 10. With lag 2, required is 13.
+    const issues = [
+      task({ issueId: "A", title: "Deck", startDate: "2026-10-01", finishDate: "2026-10-10" }),
+      task({
+        issueId: "B",
+        title: "Rail",
+        startDate: "2026-10-11",
+        finishDate: "2026-10-12",
+        predecessorIds: ["A"],
+        blockerEdges: [{ predecessorId: "A", linkKind: "FS", lagDays: 2 }],
+      }),
+    ];
+    expect(scheduleConflicts(issues)).toEqual([
+      { issueId: "B", title: "Rail", predecessorId: "A", predecessorTitle: "Deck", reason: "overlap" },
     ]);
   });
 
@@ -152,6 +326,30 @@ describe("soft dependency helpers", () => {
       ),
     ).toBe(false);
     expect(datesOverlapForBlocker({ finishDate: null }, { startDate: "2026-10-11" })).toBe(false);
+  });
+
+  it("treats lag and lead when checking blocker overlap", () => {
+    expect(
+      datesOverlapForBlocker(
+        { finishDate: "2026-10-10" },
+        { startDate: "2026-10-11" },
+        { lagDays: 2 },
+      ),
+    ).toBe(true);
+    expect(
+      datesOverlapForBlocker(
+        { finishDate: "2026-10-10" },
+        { startDate: "2026-10-13" },
+        { lagDays: 2 },
+      ),
+    ).toBe(false);
+    expect(
+      datesOverlapForBlocker(
+        { finishDate: "2026-10-10" },
+        { startDate: "2026-10-10" },
+        { lagDays: -1 },
+      ),
+    ).toBe(false);
   });
 });
 

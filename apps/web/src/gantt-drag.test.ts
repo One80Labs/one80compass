@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  SHOW_CRITICAL_PATH_KEY,
   SHOW_DEPENDENCY_LINES_KEY,
   dayDeltaFromDayWidth,
   dayDeltaFromPointer,
   dependencyLinkPath,
+  edgeTouchesIssue,
+  filterEdgesTouchingIssue,
   hitTestGanttBar,
+  linkedIssueIdsForHover,
   nudgeScrollForDrag,
+  readShowCriticalPath,
   readShowDependencyLines,
+  writeShowCriticalPath,
   writeShowDependencyLines,
 } from "./gantt-drag";
 
@@ -44,6 +50,18 @@ describe("dependencyLinkPath", () => {
 
     expect(path).toMatch(/^M 40 12 /);
     expect(path).toContain("120 48");
+  });
+
+  it("exits left for start-side predecessors (SS / SF)", () => {
+    const path = dependencyLinkPath({ x: 80, y: 10 }, { x: 80, y: 40 }, "start", "start");
+    expect(path).toMatch(/^M 80 10 L 68 10/);
+    expect(path).toContain("80 40");
+  });
+
+  it("approaches finish-side successors from the right (FF / SF)", () => {
+    const path = dependencyLinkPath({ x: 40, y: 12 }, { x: 120, y: 48 }, "finish", "finish");
+    expect(path).toContain("132 48");
+    expect(path).toMatch(/120 48$/);
   });
 });
 
@@ -89,5 +107,58 @@ describe("dependency-line preference", () => {
 
     expect(values.get(SHOW_DEPENDENCY_LINES_KEY)).toBe("true");
     expect(readShowDependencyLines()).toBe(true);
+  });
+});
+
+describe("critical-path preference", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("defaults to false when localStorage has no saved value", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+    });
+
+    expect(readShowCriticalPath()).toBe(false);
+  });
+
+  it("persists and reads the visibility setting", () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+    });
+
+    writeShowCriticalPath(true);
+
+    expect(values.get(SHOW_CRITICAL_PATH_KEY)).toBe("true");
+    expect(readShowCriticalPath()).toBe(true);
+  });
+});
+
+describe("hover edge filtering", () => {
+  const edges = [
+    { type: "blocker" as const, predecessorId: "a", successorId: "b" },
+    { type: "dependency" as const, predecessorId: "b", successorId: "c" },
+    { type: "blocker" as const, predecessorId: "d", successorId: "e" },
+  ];
+
+  it("detects when an issue is either endpoint", () => {
+    expect(edgeTouchesIssue(edges[0], "a")).toBe(true);
+    expect(edgeTouchesIssue(edges[0], "b")).toBe(true);
+    expect(edgeTouchesIssue(edges[0], "c")).toBe(false);
+  });
+
+  it("keeps blocker and soft dependency edges that touch the hovered issue", () => {
+    expect(filterEdgesTouchingIssue(edges, "b")).toEqual([edges[0], edges[1]]);
+    expect(filterEdgesTouchingIssue(edges, "d")).toEqual([edges[2]]);
+    expect(filterEdgesTouchingIssue(edges, "missing")).toEqual([]);
+  });
+
+  it("collects linked issue ids excluding the hovered bar itself", () => {
+    expect([...linkedIssueIdsForHover(edges, "b")].sort()).toEqual(["a", "c"]);
+    expect([...linkedIssueIdsForHover(edges, "a")]).toEqual(["b"]);
   });
 });

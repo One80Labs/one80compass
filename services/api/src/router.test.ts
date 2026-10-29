@@ -2090,6 +2090,93 @@ describe("plan and webhooks", () => {
     expect(queued).toHaveLength(0);
   });
 
+  it("round-trips Hard Blocker lagDays on Compass issues and drops orphan edges", async () => {
+    queued.length = 0;
+    const store = memoryStore();
+    const handler = handlerFor(store, { githubConfigured: true });
+    const projectId = await seedProject(handler, store);
+    const customerId = store.projects[0].customerId;
+    store.settings.push(mappedSettings(projectId, customerId, "compass"));
+    const baseIssue = {
+      itemId: null,
+      projectId,
+      customerId,
+      number: 1,
+      keyNumber: null,
+      title: "Deck",
+      status: "Ready",
+      effort: 1,
+      issueState: "open" as const,
+      archived: false,
+      deletedAt: null,
+      parentIssueId: null,
+      milestone: null,
+      milestoneId: null,
+      milestoneDueOn: null,
+      startDate: "2026-10-01",
+      finishDate: "2026-10-10",
+      issueType: "Task",
+      description: null,
+      iterationTitle: null,
+      iterationStart: null,
+      iterationDuration: null,
+      iterationId: null,
+      assignees: [],
+      comments: null,
+      inProject: true,
+      priority: null,
+      labels: [],
+      relationships: [],
+      planOrder: null,
+      updatedAt: "2026-10-26T12:00:00.000Z",
+    };
+    store.issues.push(
+      { ...baseIssue, issueId: "A", predecessorIds: [] },
+      {
+        ...baseIssue,
+        issueId: "B",
+        number: 2,
+        title: "Rail",
+        startDate: "2026-10-11",
+        finishDate: "2026-10-12",
+        predecessorIds: ["A"],
+        blockerEdges: [{ predecessorId: "A", linkKind: "FS" as const, lagDays: 2 }],
+      },
+    );
+    const saved = await handler(
+      event({
+        method: "PATCH",
+        path: `/projects/${projectId}/issues/B`,
+        claims: employeeClaims,
+        body: {
+          blockerEdges: [{ predecessorId: "A", linkKind: "FS", lagDays: -1 }],
+        },
+      }),
+    );
+    expect(saved.statusCode).toBe(200);
+    expect(store.issues.find((item) => item.issueId === "B")?.blockerEdges).toEqual([
+      { predecessorId: "A", linkKind: "FS", lagDays: -1 },
+    ]);
+    const plan = await handler(event({ method: "GET", path: `/projects/${projectId}/plan`, claims: employeeClaims }));
+    expect(JSON.parse(plan.body).issues.find((item: { issueId: string }) => item.issueId === "B")).toMatchObject({
+      blockerEdges: [{ predecessorId: "A", linkKind: "FS", lagDays: -1 }],
+    });
+    const removed = await handler(
+      event({
+        method: "POST",
+        path: `/projects/${projectId}/issues/B/predecessors/remove`,
+        claims: employeeClaims,
+        body: { predecessorId: "A" },
+      }),
+    );
+    expect(removed.statusCode).toBe(200);
+    expect(store.issues.find((item) => item.issueId === "B")).toMatchObject({
+      predecessorIds: [],
+      blockerEdges: [],
+    });
+    expect(queued).toHaveLength(0);
+  });
+
   it("still queues an issue update for a GitHub project", async () => {
     queued.length = 0;
     const store = memoryStore();

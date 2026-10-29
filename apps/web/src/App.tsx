@@ -459,7 +459,7 @@ function SettingsPage({ session }: { session: Session | null }) {
       </header>
       <div className="settings-grid">
         <section className="panel settings-menu">
-          {["Project access", "General", "Catalog", "Notifications", "FAQ"].map((item) => (
+          {["Project access", "General", "Catalog", "Notifications"].map((item) => (
             <button key={item} className={tab === item ? "active" : undefined} type="button" onClick={() => setTab(item)}>
               {item}
             </button>
@@ -519,18 +519,23 @@ function SettingsPage({ session }: { session: Session | null }) {
             <p className="copy">Notification preferences are not part of this release.</p>
           </section>
         )}
-        {tab === "FAQ" && <FaqSettings />}
       </div>
     </>
   );
 }
 
+/** Sidebar FAQ: beginner guides for every signed-in role (View, Contributor, Administrator). */
 function HelpPage() {
   return (
-    <main>
-      <h1>Help</h1>
-      <p>A help guide is not part of this release.</p>
-    </main>
+    <>
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">FAQ.</h1>
+          <p className="subtitle">Beginner guides for One80Compass. Open a tile to read the full document.</p>
+        </div>
+      </header>
+      <FaqSettings />
+    </>
   );
 }
 

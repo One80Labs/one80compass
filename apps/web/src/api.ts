@@ -1,4 +1,4 @@
-import type { ProjectCatalogs } from "../../../packages/domain/src/index";
+import type { BlockerEdge, ProjectCatalogs } from "../../../packages/domain/src/index";
 import { freshIdToken } from "./auth";
 
 /** A link that is not the parent and not a finish-to-start dependency. */
@@ -10,7 +10,7 @@ export type IssueRelationship = {
 
 /**
  * Body for PATCH /projects/{projectId}/issues/{issueId}.
- * Compass projects also accept issue type, parent, milestone, priority, labels, assignees, predecessors, and relationships.
+ * Compass projects also accept issue type, parent, milestone, priority, labels, assignees, predecessors, relationships, and blockerEdges.
  */
 export type IssueSave = {
   title?: string;
@@ -29,6 +29,8 @@ export type IssueSave = {
   priority?: string | null;
   labels?: string[];
   predecessorIds?: string[];
+  /** Hard Blocker edge metadata (lag / link kind). Soft dependencies never send this. */
+  blockerEdges?: BlockerEdge[];
   relationships?: IssueRelationship[];
 };
 

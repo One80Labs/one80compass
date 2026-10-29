@@ -301,7 +301,6 @@ function SettingsPreview() {
           <button type="button">General</button>
           <button className="active" type="button">Catalog</button>
           <button type="button">Notifications</button>
-          <button type="button">FAQ</button>
           <button type="button">GitHub integration</button>
         </section>
         <section className="panel">

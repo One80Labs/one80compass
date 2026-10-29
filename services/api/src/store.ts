@@ -19,6 +19,7 @@ import {
   priorityFromStore,
   priorityOptionsFromStore,
   recordSourceFromStore,
+  blockerEdgesFromStore,
   relationshipsFromStore,
   type ApplicationLink,
   type AuditEvent,
@@ -1011,6 +1012,8 @@ function asIssue(item: Item): PlanIssue {
     assignees: parseUsers(item.assignees),
     comments: typeof item.comments === "string" && item.comments.trim() ? item.comments : null,
     predecessorIds: Array.isArray(item.predecessorIds) ? [...new Set(item.predecessorIds.map(String).filter((id) => id && id !== String(item.issueId)))] : [],
+    // Hard Blocker lag / link-kind metadata; missing ⇒ FS + 0 for each predecessorId.
+    blockerEdges: blockerEdgesFromStore(item.blockerEdges),
     priority: priorityFromStore(item.priority),
     labels: labelIdsFromStore(item.labels),
     relationships: relationshipsFromStore(item.relationships),

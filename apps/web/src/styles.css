@@ -2,6 +2,9 @@
 :root {
   --oc-doc-orange: #f58220;
   --oc-warning: #b05d17;
+  /* Critical-path highlight: deeper blocker red (not purple / glow). */
+  --oc-gantt-critical: #991b1b;
+  --oc-gantt-critical-ring: rgba(153, 27, 27, 0.55);
 }
 
 * {
@@ -870,6 +873,31 @@ button.tab.active {
   box-shadow: 0 0 0 2px #dc2626;
 }
 
+/* Temporary emphasis while dependency lines are revealed by bar hover (global toggle still off). */
+.gantt-bar.dep-hover-focus {
+  box-shadow: 0 0 0 2px rgba(42, 36, 28, 0.5);
+  z-index: 1;
+}
+
+.gantt-bar.dep-hover-linked {
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.55);
+  z-index: 1;
+}
+
+/* Hard Blocker critical path: inset ring in deeper blocker red (distinct from link-target / hover). */
+.gantt-bar.critical {
+  box-shadow: inset 0 0 0 2px var(--oc-gantt-critical);
+}
+
+.gantt-bar.critical.dep-hover-focus,
+.gantt-bar.critical.dep-hover-linked,
+.gantt-bar.critical.link-target-valid,
+.gantt-bar.critical.link-target-invalid {
+  box-shadow:
+    inset 0 0 0 2px var(--oc-gantt-critical),
+    0 0 0 2px var(--oc-gantt-critical-ring);
+}
+
 .gantt-dep-overlay {
   position: absolute;
   inset: 0;
@@ -893,6 +921,20 @@ button.tab.active {
 
 .gantt-dep-line.dependency {
   stroke: #2563eb;
+}
+
+/* Critical edges: darker than normal blockers; selected stays thicker via .selected. */
+.gantt-dep-line.blocker.critical {
+  stroke: var(--oc-gantt-critical);
+  stroke-width: 3;
+}
+
+.gantt-dep-line.blocker.critical.selected {
+  stroke-width: 4;
+}
+
+.gantt-dep-line.hover-reveal {
+  stroke-width: 2.5;
 }
 
 .gantt-dep-hit {
@@ -2271,8 +2313,20 @@ button.tile {
   margin: 20px 0;
 }
 
-.md-doc a {
+.md-doc a,
+.md-doc .md-faq-link {
   color: #a8522e;
+}
+
+.md-doc .md-faq-link {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .md-doc code {

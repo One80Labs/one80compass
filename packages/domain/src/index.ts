@@ -1,5 +1,22 @@
 /** Portal records for the dev portal. */
 
+import type { BlockerEdge } from "./blocker-edge";
+
+export type { BlockerEdge, BlockerLinkKind, LinkKindEnds } from "./blocker-edge";
+export {
+  blockerEdgesFromStore,
+  blockerEdgeFor,
+  linkKindEnds,
+  MAX_ABS_LAG_DAYS,
+  normalizeLagDays,
+  normalizeBlockerLinkKind,
+  requiredSuccessorFinish,
+  requiredSuccessorStart,
+  syncBlockerEdges,
+  withBlockerLag,
+  withBlockerLinkKind,
+} from "./blocker-edge";
+
 /** Largest file accepted for an R1 upload. Comparison and quotas are later. */
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -313,6 +330,11 @@ export type PlanIssue = {
   comments: string | null;
   /** GitHub issues that block this one. The task starts the day after the latest of those finishes. */
   predecessorIds: string[];
+  /**
+   * Optional Hard Blocker edge metadata (lag / link kind). Membership stays in predecessorIds.
+   * Missing entry for a predecessorId means FS with lagDays 0. GitHub sync does not clear this.
+   */
+  blockerEdges?: BlockerEdge[];
   /** Priority option id. Null when the issue has no priority. GitHub sync does not clear a stored value. */
   priority: string | null;
   /** Label ids on this issue. Empty when the issue has no labels. GitHub sync does not clear a stored list. */

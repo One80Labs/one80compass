@@ -2,6 +2,7 @@ import { adminAccess, canAccessProject, canWriteProject, type Principal } from "
 import {
   DEFAULT_COLUMNS,
   DEFAULT_DONE_STATUSES,
+  type BlockerEdge,
   type IssueChange,
   type IssueRelationship,
   type PlanIssue,
@@ -10,7 +11,16 @@ import {
   type SyncState,
 } from "../../../packages/domain/src/index";
 import { applyPlanOrder, createdIssueType, hasActiveChildren, parentDoneBlocked, planKind, planRows, type PlanKind } from "../../../packages/domain/src/hierarchy";
-import { dependencyCycle, dependencyReview, scheduleConflicts } from "../../../packages/domain/src/dependencies";
+import {
+  blockerEdgesFromStore,
+  dependencyCycle,
+  dependencyReview,
+  MAX_ABS_LAG_DAYS,
+  normalizeBlockerLinkKind,
+  normalizeLagDays,
+  scheduleConflicts,
+  syncBlockerEdges,
+} from "../../../packages/domain/src/dependencies";
 import { baselineSnapshot, type BaselineRecord } from "../../../packages/domain/src/baselines";
 import { tracedComment } from "../../../packages/domain/src/comments";
 import { derivedSchedule, isIsoDate } from "../../../packages/domain/src/schedule";
@@ -95,6 +105,7 @@ async function getPlan(ctx: PlanCtx, projectId: string): Promise<HttpResult> {
         startDate: issue.startDate,
         finishDate: issue.finishDate,
         predecessorIds: issue.predecessorIds ?? [],
+        blockerEdges: issue.blockerEdges,
         inProject: issue.inProject,
         archived: issue.archived,
         deletedAt: issue.deletedAt,
@@ -685,9 +696,11 @@ async function setPredecessor(ctx: PlanCtx, projectId: string, issueId: string, 
   const dependencySettings = await ctx.deps.store.getSettings(projectId);
   if (dependencySettings?.recordSource === "compass") {
     const predecessorIds = action === "add" ? [...issue.predecessorIds, predecessorId] : issue.predecessorIds.filter((id) => id !== predecessorId);
-    await ctx.deps.store.putIssue({ ...issue, predecessorIds, updatedAt: ctx.deps.now().toISOString() });
-    await auditPlanItem(ctx, project.customerId, projectId, "plan.item_updated", issueId, { predecessorIds: issue.predecessorIds }, { predecessorIds, action, predecessorId });
-    return json(200, { predecessorIds }, ctx.correlationId);
+    // Keep lag / link-kind metadata aligned with graph membership (drop orphans on remove).
+    const blockerEdges = syncBlockerEdges(predecessorIds, issue.blockerEdges);
+    await ctx.deps.store.putIssue({ ...issue, predecessorIds, blockerEdges, updatedAt: ctx.deps.now().toISOString() });
+    await auditPlanItem(ctx, project.customerId, projectId, "plan.item_updated", issueId, { predecessorIds: issue.predecessorIds, blockerEdges: issue.blockerEdges }, { predecessorIds, blockerEdges, action, predecessorId });
+    return json(200, { predecessorIds, blockerEdges }, ctx.correlationId);
   }
   if (!ctx.deps.githubConfigured) return notConfigured(ctx.correlationId);
   const idempotencyKey = typeof ctx.body.idempotencyKey === "string" && ctx.body.idempotencyKey.trim() ? ctx.body.idempotencyKey.trim() : ctx.deps.newId();
@@ -1043,6 +1056,8 @@ type CompassPatch = {
   issueType?: string | null;
   milestone?: string | null;
   predecessorIds?: string[];
+  /** Hard Blocker edge metadata (lag / link kind). Soft dependencies never use this. */
+  blockerEdges?: BlockerEdge[];
   assigneeIds?: string[];
 };
 
@@ -1176,6 +1191,7 @@ function auditIssueSnapshot(issue: PlanIssue): Record<string, unknown> {
     labels: issue.labels,
     relationships: issue.relationships,
     predecessorIds: issue.predecessorIds,
+    blockerEdges: issue.blockerEdges,
     milestone: issue.milestone,
     planOrder: issue.planOrder,
   };
@@ -1217,6 +1233,12 @@ function applyLocalIssue(issue: PlanIssue, change: IssueChange, settings: Projec
     next.milestoneDueOn = known?.dueOn ?? null;
   }
   if (extra.predecessorIds !== undefined) next.predecessorIds = extra.predecessorIds;
+  // Align blockerEdges with predecessorIds whenever either field changes (orphans dropped).
+  if (extra.predecessorIds !== undefined || extra.blockerEdges !== undefined) {
+    const preds = next.predecessorIds;
+    const source = extra.blockerEdges !== undefined ? extra.blockerEdges : next.blockerEdges;
+    next.blockerEdges = syncBlockerEdges(preds, source);
+  }
   return next;
 }
 
@@ -1269,6 +1291,26 @@ function readCompassExtra(body: Record<string, unknown>): { ok: true; value: Com
     }
     value.predecessorIds = [...new Set(ids)];
   }
+  if ("blockerEdges" in body) {
+    // Cap matches predecessorIds. Invalid rows reject the patch (same posture as relationships).
+    if (!Array.isArray(body.blockerEdges) || body.blockerEdges.length > 40) return { ok: false };
+    const edges: BlockerEdge[] = [];
+    for (const entry of body.blockerEdges) {
+      if (!entry || typeof entry !== "object") return { ok: false };
+      const record = entry as Record<string, unknown>;
+      const predecessorId = typeof record.predecessorId === "string" ? record.predecessorId.trim() : "";
+      if (!predecessorId || predecessorId.length > 200) return { ok: false };
+      if (record.lagDays !== undefined && (typeof record.lagDays !== "number" || !Number.isFinite(record.lagDays))) return { ok: false };
+      if (record.lagDays !== undefined && Math.abs(Math.trunc(record.lagDays)) > MAX_ABS_LAG_DAYS) return { ok: false };
+      edges.push({
+        predecessorId,
+        linkKind: normalizeBlockerLinkKind(record.linkKind),
+        lagDays: normalizeLagDays(record.lagDays ?? 0),
+      });
+    }
+    // Dedup + normalize via the shared parser (last row per predecessor wins).
+    value.blockerEdges = blockerEdgesFromStore(edges);
+  }
   if ("assigneeIds" in body) {
     if (!Array.isArray(body.assigneeIds) || body.assigneeIds.length > 30) return { ok: false };
     const ids: string[] = [];
@@ -1289,6 +1331,7 @@ function hasCompassEdit(value: CompassPatch): boolean {
     value.issueType !== undefined ||
     value.milestone !== undefined ||
     value.predecessorIds !== undefined ||
+    value.blockerEdges !== undefined ||
     value.assigneeIds !== undefined
   );
 }
