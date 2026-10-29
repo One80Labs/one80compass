@@ -2582,16 +2582,21 @@ form.dialog {
 
 .decision-table th,
 .decision-table td {
-  vertical-align: top;
   padding: 10px 8px;
   border-bottom: 1px solid #e6e1d8;
 }
 
 .decision-table th {
+  vertical-align: top;
   text-align: left;
   font-size: 12px;
   color: var(--oc-muted);
   font-weight: 600;
+}
+
+/* Row text lines up with the Work item name, which sits in the middle of the edit icon. */
+.decision-table td {
+  vertical-align: middle;
 }
 
 .decision-table tr.overdue td {
