@@ -74,36 +74,7 @@ function drawerIsDirty(form: HTMLFormElement | null, initial: string | null): bo
   return form != null && initial != null && formSnapshot(form) !== initial;
 }
 
-const COMPANION_HOLD = "one80-drawer-companion-hold";
 const COMPANION_DISMISS = "one80-drawer-companion-dismiss";
-
-type CompanionHoldDetail = {
-  hold: () => void;
-  release: () => void;
-};
-
-/**
- * A companion drawer sits to the right of the drawer that opened it.
- * Closing the first drawer asks the companion first, so unsaved decision edits are not dropped.
- * No companion is listening: allow the close.
- */
-function companionAllowsParentClose(): boolean {
-  let heard = false;
-  let released = false;
-  window.dispatchEvent(
-    new CustomEvent<CompanionHoldDetail>(COMPANION_HOLD, {
-      detail: {
-        hold: () => {
-          heard = true;
-        },
-        release: () => {
-          released = true;
-        },
-      },
-    }),
-  );
-  return !heard || released;
-}
 
 /** X used to dismiss an edit drawer. */
 function CloseIcon() {
@@ -151,8 +122,6 @@ export function EditDrawer({
   }, []);
 
   const requestClose = useCallback(() => {
-    const layer = formRef.current?.closest(".drawer-layer");
-    if (layer?.classList.contains("has-companion") && !companionAllowsParentClose()) return;
     if (drawerIsDirty(formRef.current, initialSnapshot.current)) {
       setConfirming(true);
       return;
@@ -162,25 +131,12 @@ export function EditDrawer({
 
   useEffect(() => {
     if (layout !== "companion") return;
-    function onHold(event: Event) {
-      const detail = (event as CustomEvent<CompanionHoldDetail>).detail;
-      detail.hold();
-      if (confirming || drawerIsDirty(formRef.current, initialSnapshot.current)) {
-        setConfirming(true);
-        return;
-      }
-      detail.release();
-    }
     function onDismiss() {
       requestClose();
     }
-    window.addEventListener(COMPANION_HOLD, onHold);
     window.addEventListener(COMPANION_DISMISS, onDismiss);
-    return () => {
-      window.removeEventListener(COMPANION_HOLD, onHold);
-      window.removeEventListener(COMPANION_DISMISS, onDismiss);
-    };
-  }, [confirming, layout, requestClose]);
+    return () => window.removeEventListener(COMPANION_DISMISS, onDismiss);
+  }, [layout, requestClose]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {

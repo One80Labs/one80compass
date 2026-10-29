@@ -198,18 +198,16 @@ export function PlanPage({ session }: { session: Session | null }) {
   const [addKind, setAddKind] = useState<Exclude<PlanKind, "workstream"> | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editing = issues.find((issue) => issue.issueId === editingId) ?? null;
-  const decisionMarker = editing ? (
-    <IssueDecisionMarker
-      projectId={projectId}
-      issueId={editing.issueId}
-      session={session}
-      canWrite={canWrite}
-      canArchive={portal.accessLabel === "Administrator"}
-      issues={issues}
-      projectKey={projectKey}
-      members={decisionMembers(plan.data)}
-    />
-  ) : null;
+  const decisions = useLinkedDecisions({
+    projectId,
+    issueId: editing?.issueId ?? null,
+    session,
+    canWrite,
+    canArchive: portal.accessLabel === "Administrator",
+    issues,
+    projectKey,
+    members: decisionMembers(plan.data),
+  });
   const done = issues.filter((issue) => issue.status === "Done").length;
   return (
     <>
@@ -367,7 +365,7 @@ export function PlanPage({ session }: { session: Session | null }) {
                   setEditingId(null);
                 }
           }
-          decisionMarker={decisionMarker}
+          decisionMarker={decisions.marker}
         />
       )}
       {editing && canWrite && plan.data?.settings?.recordSource !== "compass" && (
@@ -394,9 +392,10 @@ export function PlanPage({ session }: { session: Session | null }) {
                   setEditingId(null);
                 }
           }
-          decisionMarker={decisionMarker}
+          decisionMarker={decisions.marker}
         />
       )}
+      {decisions.drawer}
     </>
   );
 }
@@ -424,18 +423,16 @@ export function KanbanPage({ session }: { session: Session | null }) {
   const allIssues = activePlanIssues(plan.data?.issues ?? []);
   const projectKey = plan.data?.projectKey ?? null;
   const assignableUsers = assigneeOptions(plan.data?.settings?.assignableUsers ?? [], allIssues.flatMap((issue) => issue.assignees ?? []));
-  const decisionMarker = editing ? (
-    <IssueDecisionMarker
-      projectId={projectId}
-      issueId={editing.issueId}
-      session={session}
-      canWrite={canWrite}
-      canArchive={portal.accessLabel === "Administrator"}
-      issues={allIssues}
-      projectKey={projectKey}
-      members={decisionMembers(plan.data)}
-    />
-  ) : null;
+  const decisions = useLinkedDecisions({
+    projectId,
+    issueId: editing?.issueId ?? null,
+    session,
+    canWrite,
+    canArchive: portal.accessLabel === "Administrator",
+    issues: allIssues,
+    projectKey,
+    members: decisionMembers(plan.data),
+  });
   /** Local calendar day so Current matches Start–Finish the way the team sees dates. */
   const today = localIsoDate();
   const issues = matchesKanbanFilters(
@@ -707,7 +704,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
                   setEditing(null);
                 }
           }
-          decisionMarker={decisionMarker}
+          decisionMarker={decisions.marker}
         />
       )}
       {editing && canWrite && plan.data?.settings?.recordSource !== "compass" && (
@@ -734,9 +731,10 @@ export function KanbanPage({ session }: { session: Session | null }) {
                   setEditing(null);
                 }
           }
-          decisionMarker={decisionMarker}
+          decisionMarker={decisions.marker}
         />
       )}
+      {decisions.drawer}
     </>
   );
 }
@@ -797,11 +795,11 @@ function sessionUserId(session: Session | null): string {
 const noDecisionDocuments: { documentId: string; fileName: string }[] = [];
 
 /**
- * Count of Decision Register rows linked to the issue open in the edit drawer.
- * Opens the same detail drawer the register uses, on the right, and shifts this drawer left.
- * Does not add plan issues.
+ * Decision Register rows linked to the work item in the edit drawer.
+ * The decision drawer stays mounted here, outside the work item drawer, so closing
+ * either drawer leaves the other one open. Does not add plan issues.
  */
-function IssueDecisionMarker({
+function useLinkedDecisions({
   projectId,
   issueId,
   session,
@@ -812,24 +810,19 @@ function IssueDecisionMarker({
   members,
 }: {
   projectId: string;
-  issueId: string;
+  /** Work item whose drawer is open. Null after that drawer closes. */
+  issueId: string | null;
   session: Session | null;
   canWrite: boolean;
   canArchive: boolean;
   issues: PlanIssue[];
   projectKey: string | null;
   members: { id: string; name: string }[];
-}) {
+}): { marker: ReactNode; drawer: ReactNode } {
   const [rows, setRows] = useState<DecisionRecord[]>([]);
   const [pickedId, setPickedId] = useState<string | null>(null);
-  const anchorRef = useRef<HTMLDivElement>(null);
   const idToken = session?.idToken ?? null;
-  const linked = rows.filter((row) => row.issueId === issueId);
   const picked = rows.find((row) => row.decisionId === pickedId) ?? null;
-  // Warning only while a linked row is still outstanding and blocks work.
-  // A resolved or archived row keeps blocksWork as history and must not warn.
-  // An outstanding row that does not block the work is only part of the count.
-  const blocking = linked.some(decisionIsBlocking);
   const drawerIssues = issues.map((item) => ({
     issueId: item.issueId,
     title: item.title,
@@ -839,10 +832,8 @@ function IssueDecisionMarker({
 
   useEffect(() => {
     let cancelled = false;
-    if (!idToken || !projectId) {
-      setRows([]);
-      return;
-    }
+    // Keep the loaded rows when the work item drawer closes, so the decision drawer can stay up.
+    if (!idToken || !projectId || !issueId) return;
     listDecisions(projectId, idToken)
       .then((result) => {
         if (!cancelled) setRows(result.decisions);
@@ -891,14 +882,64 @@ function IssueDecisionMarker({
     await refresh();
   }
 
+  const marker = issueId ? (
+    <IssueDecisionMarker issueId={issueId} rows={rows} pickedId={pickedId} onPick={setPickedId} />
+  ) : null;
+  const drawer =
+    picked &&
+    createPortal(
+      <DecisionDrawer
+        key={`${picked.decisionId}:${picked.updatedAt}`}
+        record={picked}
+        issues={drawerIssues}
+        members={members}
+        documents={noDecisionDocuments}
+        canWrite={canWrite}
+        canArchive={canArchive}
+        currentUserId={sessionUserId(session)}
+        siblings={rows}
+        onClose={() => setPickedId(null)}
+        onCreate={onCreate}
+        onSave={onSave}
+        onComment={onComment}
+        onArchive={onArchive}
+        onDuplicate={onDuplicate}
+        layout={issueId ? "companion" : "overlay"}
+      />,
+      document.body,
+    );
+
+  return { marker, drawer };
+}
+
+/**
+ * Count and statement buttons inside the work item drawer.
+ * Opening one shifts that drawer left. The decision panel itself is rendered by useLinkedDecisions.
+ */
+function IssueDecisionMarker({
+  issueId,
+  rows,
+  pickedId,
+  onPick,
+}: {
+  issueId: string;
+  rows: DecisionRecord[];
+  pickedId: string | null;
+  onPick: (decisionId: string) => void;
+}) {
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const linked = rows.filter((row) => row.issueId === issueId);
+  // Warning only while a linked row is still outstanding and blocks work.
+  // A resolved or archived row keeps blocksWork as history and must not warn.
+  // An outstanding row that does not block the work is only part of the count.
+  const blocking = linked.some(decisionIsBlocking);
   const label = linked.length === 1 ? "1 Decision Register row" : `${linked.length} Decision Register rows`;
 
-  // The decision panel is a second drawer on the right. Mark the work-item drawer so it shifts left.
   useLayoutEffect(() => {
     const form = anchorRef.current?.closest("form.drawer");
     const layer = anchorRef.current?.closest(".drawer-layer");
     if (!(form instanceof HTMLElement) || !(layer instanceof HTMLElement)) return;
-    const open = picked != null;
+    const open = pickedId != null;
     form.classList.toggle("drawer-shifted", open);
     layer.classList.toggle("has-companion", open);
     form.setAttribute("aria-modal", open ? "false" : "true");
@@ -907,7 +948,7 @@ function IssueDecisionMarker({
       layer.classList.remove("has-companion");
       form.setAttribute("aria-modal", "true");
     };
-  }, [picked]);
+  }, [pickedId]);
 
   return (
     <div ref={anchorRef}>
@@ -915,7 +956,7 @@ function IssueDecisionMarker({
         type="button"
         className="decision-plan-marker"
         onClick={() => {
-          if (linked.length === 1) setPickedId(linked[0].decisionId);
+          if (linked.length === 1) onPick(linked[0].decisionId);
         }}
       >
         {label}
@@ -925,35 +966,13 @@ function IssueDecisionMarker({
         <ul className="decision-plan-links">
           {linked.map((row) => (
             <li key={row.decisionId}>
-              <button type="button" aria-pressed={picked?.decisionId === row.decisionId} onClick={() => setPickedId(row.decisionId)}>
+              <button type="button" aria-pressed={pickedId === row.decisionId} onClick={() => onPick(row.decisionId)}>
                 {row.statement}
               </button>
             </li>
           ))}
         </ul>
       )}
-      {picked &&
-        createPortal(
-          <DecisionDrawer
-            key={`${picked.decisionId}:${picked.updatedAt}`}
-            record={picked}
-            issues={drawerIssues}
-            members={members}
-            documents={noDecisionDocuments}
-            canWrite={canWrite}
-            canArchive={canArchive}
-            currentUserId={sessionUserId(session)}
-            siblings={rows}
-            onClose={() => setPickedId(null)}
-            onCreate={onCreate}
-            onSave={onSave}
-            onComment={onComment}
-            onArchive={onArchive}
-            onDuplicate={onDuplicate}
-            layout="companion"
-          />,
-          document.body,
-        )}
     </div>
   );
 }
@@ -1173,7 +1192,8 @@ function DependencyReviewDialog({
 
 /**
  * Plan edit drawer for one work item. The Decision Register opens this from the pencil
- * beside the Work item name. Stays mounted so a dependency review can finish after the drawer closes.
+ * beside the Work item name. Stays mounted so a dependency review can finish after the
+ * drawer closes, and so a question or decision drawer can stay open on its own.
  */
 export function PlanIssueEditDrawer({
   plan,
@@ -1198,18 +1218,16 @@ export function PlanIssueEditDrawer({
   const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
   const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
   const projectKey = plan.data?.projectKey ?? null;
-  const decisionMarker = editing ? (
-    <IssueDecisionMarker
-      projectId={projectId}
-      issueId={editing.issueId}
-      session={session}
-      canWrite={canWrite}
-      canArchive={canArchive}
-      issues={issues}
-      projectKey={projectKey}
-      members={decisionMembers(plan.data)}
-    />
-  ) : null;
+  const decisions = useLinkedDecisions({
+    projectId,
+    issueId: editing?.issueId ?? null,
+    session,
+    canWrite,
+    canArchive,
+    issues,
+    projectKey,
+    members: decisionMembers(plan.data),
+  });
 
   return (
     <>
@@ -1255,7 +1273,7 @@ export function PlanIssueEditDrawer({
                   onClose();
                 }
           }
-          decisionMarker={decisionMarker}
+          decisionMarker={decisions.marker}
         />
       )}
       {editing && canWrite && plan.data && plan.data.settings?.recordSource !== "compass" && (
@@ -1282,9 +1300,10 @@ export function PlanIssueEditDrawer({
                   onClose();
                 }
           }
-          decisionMarker={decisionMarker}
+          decisionMarker={decisions.marker}
         />
       )}
+      {decisions.drawer}
     </>
   );
 }

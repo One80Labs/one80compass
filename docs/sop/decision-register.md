@@ -168,7 +168,7 @@ Open an Epic, Feature, or Task from the project plan. When register rows point a
 - One linked row: click the count to open that item beside the work item.
 - More than one: each statement is its own button, with space between them. Click a statement to open that item beside the work item.
 
-The work item drawer shifts left and the decision drawer opens on the right, so both stay on screen. Close the decision drawer, or click the dimmed page, to return the work item drawer to its usual width. If the decision has unsaved edits, closing the work item drawer asks you to save or discard those edits first.
+The work item drawer shifts left and the decision drawer opens on the right, so both stay on screen. Closing one drawer leaves the other open. Closing the work item leaves the question or decision on screen by itself. Closing the question or decision leaves the work item drawer open. Each drawer asks only about its own unsaved edits. Clicking the dimmed page closes the decision drawer and leaves the work item open.
 
 When an outstanding item blocks that work, the drawer says **An outstanding decision blocks this work.**
 
