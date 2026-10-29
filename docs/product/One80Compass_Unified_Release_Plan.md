@@ -280,7 +280,7 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | Cursor plan `ai_vault_architecture_*.plan.md` | Same todos for agent execution; keep in sync with §4–5 |
 | `docs/sop/staff-vault.md` | How staff operate the vault today |
 | `docs/sop/vault-mcp-beginner.md` | Beginner install and use guide for staff vault MCP (Cursor / Claude) |
-| `docs/sop/*` beginner FAQ guides | Timeline, Dependencies & Blockers, Critical path, Baselines, hierarchy, Risk Register, Documents — Sidebar → FAQ (`/help`) |
+| `docs/sop/*` beginner FAQ guides | Timeline, Dependencies & Blockers, Critical path, Baselines, hierarchy, Project Plan ERD, Risk Register, Documents — Sidebar → FAQ (`/help`) |
 | `services/vault-mcp` | Stdio MCP server package (`one80compass-vault`) |
 
 ---

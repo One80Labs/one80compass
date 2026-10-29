@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 export type MarkdownDocProps = {
   source: string;
@@ -8,10 +8,61 @@ export type MarkdownDocProps = {
 
 /**
  * Lightweight Markdown → React for FAQ SOP viewers.
- * Covers headings, paragraphs, emphasis, code, lists, tables, rules, and links.
+ * Covers headings, paragraphs, emphasis, code, lists, tables, rules, links, and mermaid fences.
  */
 export function MarkdownDoc({ source, onFaqLink }: MarkdownDocProps) {
   return <div className="md-doc">{renderBlocks(source.replace(/\r\n/g, "\n").trim(), onFaqLink)}</div>;
+}
+
+/**
+ * Renders a ```mermaid fence as SVG. Falls back to the source text if render fails.
+ * Loaded on demand so ordinary FAQ tiles do not pay the mermaid bundle cost up front.
+ */
+function MermaidBlock({ chart }: { chart: string }) {
+  const reactId = useId().replace(/:/g, "");
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const host = hostRef.current;
+    if (!host) return;
+
+    (async () => {
+      try {
+        const mermaid = (await import("mermaid")).default;
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme: "neutral",
+          er: { useMaxWidth: true },
+        });
+        const renderId = `md-mermaid-${reactId}-${Math.random().toString(36).slice(2, 9)}`;
+        const { svg } = await mermaid.render(renderId, chart);
+        if (cancelled) return;
+        host.innerHTML = svg;
+        setError(null);
+      } catch (caught) {
+        if (cancelled) return;
+        setError(caught instanceof Error ? caught.message : "Could not render diagram.");
+        host.innerHTML = "";
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chart, reactId]);
+
+  if (error) {
+    return (
+      <pre className="md-code" role="note">
+        <code>{chart}</code>
+      </pre>
+    );
+  }
+
+  return <div ref={hostRef} className="md-mermaid" role="img" aria-label="Entity relationship diagram" />;
 }
 
 function renderBlocks(source: string, onFaqLink?: (tileId: string) => void): ReactNode[] {
@@ -35,6 +86,7 @@ function renderBlocks(source: string, onFaqLink?: (tileId: string) => void): Rea
     }
 
     if (line.startsWith("```")) {
+      const language = line.slice(3).trim().toLowerCase();
       const fence: string[] = [];
       i += 1;
       while (i < lines.length && !lines[i].startsWith("```")) {
@@ -42,11 +94,16 @@ function renderBlocks(source: string, onFaqLink?: (tileId: string) => void): Rea
         i += 1;
       }
       i += 1;
-      nodes.push(
-        <pre key={key++} className="md-code">
-          <code>{fence.join("\n")}</code>
-        </pre>,
-      );
+      const body = fence.join("\n");
+      if (language === "mermaid") {
+        nodes.push(<MermaidBlock key={key++} chart={body} />);
+      } else {
+        nodes.push(
+          <pre key={key++} className="md-code">
+            <code>{body}</code>
+          </pre>,
+        );
+      }
       continue;
     }
 

@@ -2,7 +2,7 @@
 
 One80Compass organizes work as a tree: **Epic → Feature → Task** (and optional **Subtask** under a Task). The Timeline and Kanban respect that structure.
 
-**Related:** [Timeline / Gantt basics](faq:timeline-gantt) · [Dependencies and Blockers](faq:dependencies-blockers) · [Baselines](faq:baselines)
+**Related:** [Timeline / Gantt basics](faq:timeline-gantt) · [Dependencies and Blockers](faq:dependencies-blockers) · [Baselines](faq:baselines) · [Project Plan ERD](faq:project-plan-erd)
 
 ---
 

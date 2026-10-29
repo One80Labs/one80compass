@@ -5,6 +5,7 @@ import criticalPathMd from "../../../docs/sop/critical-path.md?raw";
 import dependenciesBlockersMd from "../../../docs/sop/dependencies-and-blockers.md?raw";
 import documentsLabelingMd from "../../../docs/sop/documents-and-labeling.md?raw";
 import planHierarchyMd from "../../../docs/sop/plan-hierarchy.md?raw";
+import projectPlanErdMd from "../../../docs/sop/project-plan-erd.md?raw";
 import riskRegisterMd from "../../../docs/sop/risk-register.md?raw";
 import timelineGanttMd from "../../../docs/sop/timeline-gantt.md?raw";
 import vaultMcpBeginnerMd from "../../../docs/sop/vault-mcp-beginner.md?raw";
@@ -59,6 +60,14 @@ const FAQ_TILES: FaqTile[] = [
     icon: "☰",
     source: planHierarchyMd,
     viewerTitle: "Plan hierarchy",
+  },
+  {
+    id: "project-plan-erd",
+    title: "Project Plan ERD",
+    detail: "DynamoDB keys, foreign keys, and plan entity attributes.",
+    icon: "⬡",
+    source: projectPlanErdMd,
+    viewerTitle: "Project Plan data model (ER)",
   },
   {
     id: "risk-register",

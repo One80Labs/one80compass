@@ -9,7 +9,7 @@
 5. `product/One80Labs_Portal_Overview_v7.5.md` — short introduction; **not the complete requirements**.
 6. `sop/staff-vault.md` — how staff operate the vault today (incl. MCP registration for `services/vault-mcp`); `adr/0011` and `adr/0012` for Compass ownership and vault.
 7. `sop/vault-mcp-beginner.md` — beginner install/use guide for the staff vault MCP (Cursor / Claude).
-8. Sidebar **FAQ** (`/help`) — beginner tiles for Timeline, Dependencies & Blockers, Critical path, Baselines, hierarchy, Risk Register, Documents, and MCP (guides live under `sop/`).
+8. Sidebar **FAQ** (`/help`) — beginner tiles for Timeline, Dependencies & Blockers, Critical path, Baselines, hierarchy, Project Plan ERD, Risk Register, Documents, and MCP (guides live under `sop/`).
 
 The `.docx` versions are human-readable reference copies; read the Markdown versions for Cursor planning. All four of the above files should be physically present inside the **open Cursor workspace**, for example in `docs/`. A file existing in another chat or on the computer outside the workspace does not guarantee that Cursor has received its contents. Explicitly attach/reference each file using Cursor's file-context feature or ask Cursor to read them from workspace paths.
 

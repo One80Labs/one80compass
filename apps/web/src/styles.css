@@ -2375,6 +2375,22 @@ button.tile {
   margin: 0 0 14px;
 }
 
+/* Mermaid SVG from FAQ SOP fences (e.g. Project Plan ERD). */
+.md-doc .md-mermaid {
+  overflow: auto;
+  margin: 0 0 14px;
+  padding: 8px 4px;
+  border: 1px solid var(--oc-divider);
+  border-radius: 8px;
+  background: #f7f5f1;
+}
+
+.md-doc .md-mermaid svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+
 .md-doc .md-code code {
   background: transparent;
   padding: 0;
