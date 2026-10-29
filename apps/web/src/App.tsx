@@ -23,6 +23,7 @@ import { DevLayout } from "./dev-layout";
 import { MembersPage } from "./members";
 import { displayName, ModuleTiles, Shell, usePortal, type PortalActivity } from "./shell";
 import { CatalogSettings } from "./catalogs";
+import { FaqSettings } from "./faq";
 
 type Customer = { customerId: string; name: string };
 type Project = { projectId: string; customerId: string; name: string; projectKey?: string | null };
@@ -458,7 +459,7 @@ function SettingsPage({ session }: { session: Session | null }) {
       </header>
       <div className="settings-grid">
         <section className="panel settings-menu">
-          {["Project access", "General", "Catalog", "Notifications"].map((item) => (
+          {["Project access", "General", "Catalog", "Notifications", "FAQ"].map((item) => (
             <button key={item} className={tab === item ? "active" : undefined} type="button" onClick={() => setTab(item)}>
               {item}
             </button>
@@ -518,6 +519,7 @@ function SettingsPage({ session }: { session: Session | null }) {
             <p className="copy">Notification preferences are not part of this release.</p>
           </section>
         )}
+        {tab === "FAQ" && <FaqSettings />}
       </div>
     </>
   );

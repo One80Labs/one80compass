@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.8 — 2026-10-29.*
+*Single plan for the portal product and the staff AI vault. Version 1.9 — 2026-10-29.*
 
 This document **combines**:
 
@@ -18,10 +18,11 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | R1 MVP (portal core in AWS dev) | **Complete** |
 | R2 Project Management + Compass ownership (Phases 1–6) | **Complete** |
 | R3 vault core (Phases 7–9) — Postgres, ingest, cited draft | **Complete** (deployed) |
-| R3 Phase 10 — Staff vault MCP | **Complete** (`services/vault-mcp`) |
+| R3 Phase 10 — Staff vault MCP | **Complete** (`services/vault-mcp`; beginner SOP; `GET …/vault-chunks`) |
 | R3 backlog — ingest UI, upload-triggered ingest, richer ontology | **Complete** (EventBridge cron residual) |
+| Absolute 2-hour browser session sign-out | **Complete** (auth_time + Cognito refresh 2h) |
 | R1 pilot / first external customer gate | **Not started** |
-| Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod) |
+| Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod; 2h session Done) |
 | Gantt dependency enhancements (post-v1) | **Not started** |
 | R4 Recovery & Governance | **Not started** |
 
@@ -159,6 +160,7 @@ Code review + security scan closed Critical/High defects, then this slice landed
 | RETAIN + PITR for prod data | High | Cognito, Dynamo, documents: `RETAIN`; documents no auto-delete; Dynamo PITR on | **Done** |
 | Encrypt SQS / SNS | Medium | Sync queue + DLQ SQS-managed SSE; alerts topic `alias/aws/sns` | **Done** |
 | Client ID token refresh | High | `freshIdToken()` / `refreshSession()`; `api()` refreshes before fetch and once on 401 | **Done** |
+| Absolute 2-hour session sign-out | Medium | Absolute window from Cognito `auth_time` (not idle): web timer + `restoreSession`/`refreshSession` clear; `api()` does not fall back after Cognito sign-out; Cognito app-client `refreshTokenValidity` = 2h (`infra/lib/dev-stack.ts`) | **Done** |
 | Vault chunk ids tenant-scoped | Medium | PK = `customerId:programId:documentId:versionId:index` | **Done** |
 | GitHub reconcile page beyond ~1000 | Medium | Page until complete (cap ~10k); fail loudly; assignees/blockedBy truncated → fail | **Done** |
 | Customer audit PII scope | Medium | Non-admins: metadata only (`before`/`after` null) on customer audit + overview activity; admins full | **Done** |
@@ -168,10 +170,12 @@ Code review + security scan closed Critical/High defects, then this slice landed
 
 | Item | Notes | Status |
 | --- | --- | --- |
-| **Phase 10 — Staff vault MCP** | Cursor/Claude via `services/vault-mcp`: allowlist, ingest, search/list chunks (`GET .../vault-chunks`), optional cited draft. Admin auth; filter by customer/program; no vault secret in MCP; no live-plan writes. Registration: `docs/sop/staff-vault.md` | **Done** |
+| **Phase 10 — Staff vault MCP** | Cursor/Claude via `services/vault-mcp`: tools `vault_get_allowlist`, `vault_set_allowlist`, `vault_ingest`, `vault_list_chunks`, `vault_draft_status`. Admin auth; portal API only (no Aurora in MCP). | **Done** |
+| Admin `GET …/vault-chunks` | List filed chunks for an allowlisted program (embeddings stripped); used by MCP list/search | **Done** |
+| MCP registration + beginner SOP | `docs/sop/staff-vault.md` registration; `docs/sop/vault-mcp-beginner.md` install/use guide; `services/vault-mcp/README.md` | **Done** |
 | Allowlist / ingest UI in Compass | Admin Documents panel; `GET`/`PUT .../vault-allowlist`, `POST .../vault-ingest` | **Done** |
 | Upload-triggered ingest | Auto re-ingest on labeled upload complete / sourceLabel change for allowlisted programs; manual POST remains | **Done** |
-| EventBridge / cron scheduled ingest | Periodic re-ingest for plan-only changes (no document mutation); optional re-ingest on allowlist enable | Not started (residual) |
+| EventBridge / cron scheduled ingest | Periodic re-ingest for plan-only changes (no document mutation); optional re-ingest on allowlist enable | **Not started** (residual) |
 | Richer ontology | Populate risks, decisions, people; multi-hop retrieval via relations | **Done** |
 | Customer-login AI | Separate product later | Out of scope |
 | Live Krisp / Fireflies connectors | File exports only for now | Out of scope |
@@ -202,6 +206,8 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 - [x] Tenant filter via portal API (`customerId` + `programId`); no cross-tenant rows
 - [x] Portal admin API only — no Aurora credentials in the MCP process
 - [x] Cursor and Claude Desktop registration documented (`docs/sop/staff-vault.md`, `services/vault-mcp/README.md`)
+- [x] Beginner install/use guide (`docs/sop/vault-mcp-beginner.md`)
+- [x] Admin `GET /projects/:projectId/vault-chunks` for list/search
 
 **Exit met:** Admin can allowlist, ingest, list/search chunks, and draft from vault for one program through MCP tools.
 
@@ -237,7 +243,7 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | GitHub vs Compass divergence | Skip GitHub sync when `recordSource` is compass; keep webhook/reconcile for github projects |
 | Cross-tenant vault leaks | Filter every vault query by `customerId` and `programId`; automated tests |
 | Vault cost (Aurora idle) | Serverless v2 floor; monitor ACU and Data API usage |
-| MVP / R3 scope creep | Protect exit gates; MCP and ontology stay backlog until asked |
+| MVP / R3 scope creep | Protect exit gates; Phase 10 MCP and ontology shipped; EventBridge cron remains residual |
 | Manual ingest drift | Upload/label auto-ingest shipped; EventBridge cron still residual |
 | MFA off on prod DNS | COMP-31 Secrets Manager done; MFA.REQUIRED still required on dedicated stage/prod (§5 G2) |
 | Silent Dynamo truncation | Mitigated by `queryAll` (§5 G2) |
@@ -254,6 +260,8 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | `One80Labs_Portal_GitHub_Backlog_v7.5.csv` | Seed backlog (decompose new work from this plan) |
 | Cursor plan `ai_vault_architecture_*.plan.md` | Same todos for agent execution; keep in sync with §4–5 |
 | `docs/sop/staff-vault.md` | How staff operate the vault today |
+| `docs/sop/vault-mcp-beginner.md` | Beginner install and use guide for staff vault MCP (Cursor / Claude) |
+| `services/vault-mcp` | Stdio MCP server package (`one80compass-vault`) |
 
 ---
 
@@ -271,3 +279,4 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-27 | v1.6 Vault UX + ontology backlog: allowlist/ingest UI, upload-triggered ingest, richer ontology + multi-hop **Done**; EventBridge cron residual; Phase 10 MCP still next |
 | 2026-10-29 | v1.7 Phase 10 Staff vault MCP **In progress** (`services/vault-mcp`); admin `GET .../vault-chunks`; MCP registration in staff-vault SOP; mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.8 Phase 10 Staff vault MCP **Done** (stdio MCP + five tools + vault-chunks API); mirrored on One80Compass Dev in-app plan |
+| 2026-10-29 | v1.9 Plan sync: 2h session **Done**; Phase 10 subtasks (vault-chunks, beginner SOP) **Done**; EventBridge residual explicit; mirrored on One80Compass Dev in-app plan |

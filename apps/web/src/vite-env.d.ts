@@ -1,5 +1,10 @@
 /// <reference types="vite/client" />
 
+declare module "*.md?raw" {
+  const content: string;
+  export default content;
+}
+
 interface ImportMetaEnv {
   readonly VITE_USER_POOL_ID: string;
   readonly VITE_USER_POOL_CLIENT_ID: string;

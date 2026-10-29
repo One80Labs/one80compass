@@ -2192,6 +2192,137 @@ button.drawer-close {
   box-shadow: 0 12px 36px #0002;
 }
 
+button.tile {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.faq-tiles {
+  margin-top: 16px;
+}
+
+.dialog.md-viewer {
+  width: min(960px, 100%);
+  max-height: min(92vh, 920px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.md-viewer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--oc-divider);
+}
+
+.md-viewer-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.md-viewer-body {
+  padding: 8px 22px 28px;
+  overflow: auto;
+}
+
+.md-doc {
+  color: var(--oc-body);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.md-doc h1 {
+  font-size: 24px;
+  margin: 20px 0 12px;
+}
+
+.md-doc h2 {
+  font-size: 18px;
+  margin: 22px 0 10px;
+}
+
+.md-doc h3 {
+  font-size: 15px;
+  margin: 18px 0 8px;
+}
+
+.md-doc p {
+  margin: 0 0 12px;
+}
+
+.md-doc ul,
+.md-doc ol {
+  margin: 0 0 12px;
+  padding-left: 1.35rem;
+}
+
+.md-doc li {
+  margin-bottom: 4px;
+}
+
+.md-doc hr {
+  border: 0;
+  border-top: 1px solid var(--oc-divider);
+  margin: 20px 0;
+}
+
+.md-doc a {
+  color: #a8522e;
+}
+
+.md-doc code {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  background: var(--oc-accent-wash);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.md-doc .md-code {
+  background: #f7f5f1;
+  border: 1px solid var(--oc-divider);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow: auto;
+  margin: 0 0 14px;
+}
+
+.md-doc .md-code code {
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.md-doc .md-table-wrap {
+  overflow: auto;
+  margin: 0 0 14px;
+}
+
+.md-doc table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.md-doc th,
+.md-doc td {
+  border: 1px solid var(--oc-divider);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-doc th {
+  background: #f7f5f1;
+  font-weight: 700;
+}
+
 .dialog form,
 form.dialog {
   border: 0;
