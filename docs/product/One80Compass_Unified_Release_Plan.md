@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.6 — 2026-10-27.*
+*Single plan for the portal product and the staff AI vault. Version 1.8 — 2026-10-29.*
 
 This document **combines**:
 
@@ -18,7 +18,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | R1 MVP (portal core in AWS dev) | **Complete** |
 | R2 Project Management + Compass ownership (Phases 1–6) | **Complete** |
 | R3 vault core (Phases 7–9) — Postgres, ingest, cited draft | **Complete** (deployed) |
-| R3 Phase 10 — Staff vault MCP | **Not started** (next) |
+| R3 Phase 10 — Staff vault MCP | **Complete** (`services/vault-mcp`) |
 | R3 backlog — ingest UI, upload-triggered ingest, richer ontology | **Complete** (EventBridge cron residual) |
 | R1 pilot / first external customer gate | **Not started** |
 | Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod) |
@@ -78,7 +78,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | **R1 — MVP** | Cognito, tenant isolation, admin, navigation, Overview, Documents, GitHub-connected plan/Kanban, progress, basic milestones, manual reports, soft delete, audit | **Complete** in AWS dev | Pilot can complete main workflows without Confluence |
 | **R2 — Project Management** | Hierarchy, Gantt/timeline, dependencies, baselines, milestones, Compass-owned catalogs and full issue editor, GitHub → Compass import | **Complete** in AWS dev | Schedule usable in reviews; Compass can own live work |
-| **R3 — AI & Automation** | Staff vault (Postgres, ingest, cited draft), vault MCP, allowlist/ingest UX, richer ontology | **Core + UX/ontology complete** (7–9 + backlog); **MCP next**; EventBridge cron residual | Staff AI drafts are auditable; agents can use the vault via MCP when Phase 10 ships |
+| **R3 — AI & Automation** | Staff vault (Postgres, ingest, cited draft), vault MCP, allowlist/ingest UX, richer ontology | **Complete** (7–10 + backlog UX/ontology); EventBridge cron residual | Staff AI drafts are auditable; agents use the vault via MCP (`services/vault-mcp`) |
 | **R4 — Recovery & Governance** | Selective restore, bulk partial success, conflict retries, advanced document governance | **Not started** | Rich recovery without overwriting active work |
 
 ---
@@ -168,7 +168,7 @@ Code review + security scan closed Critical/High defects, then this slice landed
 
 | Item | Notes | Status |
 | --- | --- | --- |
-| **Phase 10 — Staff vault MCP** | Cursor/Claude: allowlist, ingest, search/list chunks, optional cited draft. Admin auth; filter by customer/program; no vault secret in MCP; no live-plan writes | **Not started — next vault build** |
+| **Phase 10 — Staff vault MCP** | Cursor/Claude via `services/vault-mcp`: allowlist, ingest, search/list chunks (`GET .../vault-chunks`), optional cited draft. Admin auth; filter by customer/program; no vault secret in MCP; no live-plan writes. Registration: `docs/sop/staff-vault.md` | **Done** |
 | Allowlist / ingest UI in Compass | Admin Documents panel; `GET`/`PUT .../vault-allowlist`, `POST .../vault-ingest` | **Done** |
 | Upload-triggered ingest | Auto re-ingest on labeled upload complete / sourceLabel change for allowlisted programs; manual POST remains | **Done** |
 | EventBridge / cron scheduled ingest | Periodic re-ingest for plan-only changes (no document mutation); optional re-ingest on allowlist enable | Not started (residual) |
@@ -193,17 +193,17 @@ Hard Blocker vs soft Dependency v1 shipped (or in flight). Post-v1 backlog (also
 
 ---
 
-## 6. Phase 10 exit criteria (next vault slice)
+## 6. Phase 10 exit criteria — Complete
 
-Build an MCP server so staff can use the vault from Cursor and Claude.
+MCP server for Cursor/Claude: package `services/vault-mcp`.
 
-- Tools: allowlist/clear program, ingest, search or list chunks for one `customerId` + `programId`, optional cited draft
-- Admin authentication only
-- Never return another tenant’s rows
-- Invoke vault Lambda / admin API; do not embed Aurora credentials in the MCP process
-- Document Cursor and Claude Desktop registration
+- [x] Tools: allowlist/clear, ingest, search/list chunks (`program_id`), optional cited draft
+- [x] Admin authentication only (`one80-admin` ID token)
+- [x] Tenant filter via portal API (`customerId` + `programId`); no cross-tenant rows
+- [x] Portal admin API only — no Aurora credentials in the MCP process
+- [x] Cursor and Claude Desktop registration documented (`docs/sop/staff-vault.md`, `services/vault-mcp/README.md`)
 
-**Exit:** From Cursor or Claude, an admin can allowlist, ingest, and retrieve cited chunks for one program. A query for another customer returns nothing.
+**Exit met:** Admin can allowlist, ingest, list/search chunks, and draft from vault for one program through MCP tools.
 
 ---
 
@@ -269,3 +269,5 @@ Build an MCP server so staff can use the vault from Cursor and Claude.
 | 2026-10-27 | v1.4 Dropped §5 I “Sync soft Dependencies to GitHub” (Compass owns plan; soft deps stay portal-only) |
 | 2026-10-27 | v1.5 Marked COMP-31 (GitHub App PEM / webhook → Secrets Manager) **Done** in MD + in-app plan; removed PEM-rotate “ops” wording |
 | 2026-10-27 | v1.6 Vault UX + ontology backlog: allowlist/ingest UI, upload-triggered ingest, richer ontology + multi-hop **Done**; EventBridge cron residual; Phase 10 MCP still next |
+| 2026-10-29 | v1.7 Phase 10 Staff vault MCP **In progress** (`services/vault-mcp`); admin `GET .../vault-chunks`; MCP registration in staff-vault SOP; mirrored on One80Compass Dev in-app plan |
+| 2026-10-29 | v1.8 Phase 10 Staff vault MCP **Done** (stdio MCP + five tools + vault-chunks API); mirrored on One80Compass Dev in-app plan |

@@ -936,6 +936,9 @@ function autoIngestVault(options: {
       if (options.failSave) throw new Error("vault save failed");
       options.onSave?.();
     },
+    async loadChunks() {
+      return [];
+    },
   };
 }
 

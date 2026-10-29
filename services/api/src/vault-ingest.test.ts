@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Principal } from "../../../packages/authz/src/index";
 import type { AllowlistEntry } from "../../vault/src/allowlist";
 import type { IngestDocument, IngestResult, IngestVersion } from "../../vault/src/ingest";
+import type { VaultChunk } from "../../vault/src/types";
 import type { HandlerDeps } from "./router";
 import {
   handleVaultIngest,
@@ -182,6 +183,98 @@ describe("handleVaultIngest", () => {
     );
     expect(result?.statusCode).toBe(409);
   });
+
+  it("rejects non-admin vault-chunks reads with 403", async () => {
+    const { ctx, vault } = harness({ groups: [] });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "GET", path: "/projects/prog-1/vault-chunks", body: {} },
+      vault,
+    );
+    expect(result?.statusCode).toBe(403);
+  });
+
+  it("returns 404 when listing chunks for a missing project", async () => {
+    const { ctx, vault } = harness({ groups: ["one80-admin"] });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "GET", path: "/projects/missing/vault-chunks", body: {} },
+      vault,
+    );
+    expect(result?.statusCode).toBe(404);
+  });
+
+  it("returns 409 when listing chunks for a program that is not allowlisted", async () => {
+    const { ctx, vault } = harness({ groups: ["one80-admin"], allowlistSeed: [] });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "GET", path: "/projects/prog-1/vault-chunks", body: {} },
+      vault,
+    );
+    expect(result?.statusCode).toBe(409);
+    expect(JSON.parse(result!.body).message).toMatch(/not on the vault allowlist/i);
+  });
+
+  it("lists chunks without embeddings for an allowlisted program", async () => {
+    const { ctx, vault } = harness({
+      groups: ["one80-admin"],
+      allowlistSeed: [{ customerId: "cust-1", programId: "prog-1" }],
+      chunks: [
+        {
+          id: "chunk-1",
+          customerId: "cust-1",
+          programId: "prog-1",
+          sourceType: "document",
+          sourceId: "doc-1",
+          recordedAt: "2026-10-26T12:00:00.000Z",
+          sourceLabel: "compass-upload",
+          documentId: "doc-1",
+          versionId: "ver-1",
+          body: "filed evidence",
+          embedding: [0.1, 0.2, 0.3],
+        },
+        {
+          id: "chunk-other",
+          customerId: "cust-other",
+          programId: "prog-1",
+          sourceType: "document",
+          sourceId: "doc-x",
+          recordedAt: "2026-10-26T12:00:00.000Z",
+          sourceLabel: "compass-upload",
+          documentId: "doc-x",
+          versionId: "ver-x",
+          body: "foreign",
+          embedding: null,
+        },
+      ],
+    });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "GET", path: "/projects/prog-1/vault-chunks", body: {} },
+      vault,
+    );
+    expect(result?.statusCode).toBe(200);
+    const body = JSON.parse(result!.body) as { chunks: Record<string, unknown>[] };
+    expect(body.chunks).toHaveLength(1);
+    expect(body.chunks[0]).toMatchObject({
+      id: "chunk-1",
+      customerId: "cust-1",
+      programId: "prog-1",
+      body: "filed evidence",
+    });
+    expect(body.chunks[0]).not.toHaveProperty("embedding");
+  });
+
+  it("maps Lambda not-allowlisted errors to 409 when listing chunks", async () => {
+    const { ctx, vault } = harness({
+      groups: ["one80-admin"],
+      allowlistSeed: [{ customerId: "cust-1", programId: "prog-1" }],
+      onLoadChunks: () => {
+        throw new Error("Vault Lambda failed: list-chunks program is not allowlisted");
+      },
+    });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "GET", path: "/projects/prog-1/vault-chunks", body: {} },
+      vault,
+    );
+    expect(result?.statusCode).toBe(409);
+  });
 });
 
 function harness(options: {
@@ -189,7 +282,9 @@ function harness(options: {
   allowlistSeed?: AllowlistEntry[];
   documents?: IngestDocument[];
   versions?: IngestVersion[];
+  chunks?: VaultChunk[];
   onSave?: (result: IngestResult) => void;
+  onLoadChunks?: (customerId: string, programId: string) => Promise<VaultChunk[]> | VaultChunk[];
 }) {
   const allowlist: AllowlistEntry[] = [...(options.allowlistSeed ?? [])];
   const documents = options.documents ?? [];
@@ -247,6 +342,12 @@ function harness(options: {
     },
     async saveRows(result) {
       options.onSave?.(result);
+    },
+    async loadChunks(customerId, programId) {
+      if (options.onLoadChunks) return options.onLoadChunks(customerId, programId);
+      void customerId;
+      void programId;
+      return options.chunks ?? [];
     },
   };
 

@@ -71,6 +71,9 @@ describe("vault client wiring", () => {
         if (event.type === "read-allowlist") {
           return { allowlist: [{ customerId: "cust-1", programId: "prog-1" }] } as T;
         }
+        if (event.type === "list-chunks") {
+          return { chunks: [] } as T;
+        }
         return { ok: true } as T;
       },
     });
@@ -78,6 +81,7 @@ describe("vault client wiring", () => {
     await expect(deps!.readAllowlist()).resolves.toEqual([{ customerId: "cust-1", programId: "prog-1" }]);
     await deps!.saveAllowlist({ customerId: "cust-1", programId: "prog-1" }, true);
     await deps!.saveRows({ rows: [], relations: [], chunks: [] });
+    await expect(deps!.loadChunks("cust-1", "prog-1")).resolves.toEqual([]);
     const plan = await deps!.loadPlan("prog-1");
     expect(plan?.milestones).toEqual([{ id: "m1", title: "Launch", dueOn: "2026-12-01" }]);
     expect(plan?.issues[0]?.assignees).toEqual([{ id: "U_ada", login: "ada", name: "Ada" }]);
@@ -92,7 +96,7 @@ describe("vault client wiring", () => {
         dateCleared: null,
       },
     ]);
-    expect(events.map((event) => event.type)).toEqual(["read-allowlist", "save-allowlist", "save-rows"]);
+    expect(events.map((event) => event.type)).toEqual(["read-allowlist", "save-allowlist", "save-rows", "list-chunks"]);
   });
 
   it("loads chunks through list-chunks", async () => {

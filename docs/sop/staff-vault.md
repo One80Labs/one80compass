@@ -68,7 +68,11 @@ Live Krisp or Fireflies API sync is out of scope; file exports manually and labe
 
 ### 2. Allowlist the program
 
-Only allowlisted programs are copied. There is no allowlist screen yet; an administrator calls the API with a Cognito ID token.
+Only allowlisted programs are copied.
+
+**UI (preferred):** Open the project → **Documents** → **Staff vault** (administrators only). Toggle the program onto the allowlist.
+
+**API:** An administrator can also call the API with a Cognito ID token:
 
 ```bash
 # Replace TOKEN and PROJECT_ID
@@ -82,7 +86,7 @@ curl -sS -X PUT \
 Expected: `200` with `customerId`, `programId`, and `enabled: true`.  
 Non-admin: `403`. Unknown project: `404`.
 
-To remove the program from the allowlist, send `"enabled":false`.
+To remove the program from the allowlist, send `"enabled":false` (or turn the toggle off in Documents → Staff vault).
 
 ### 3. Ingest the program into the vault
 
@@ -119,7 +123,20 @@ If the project is not allowlisted: `409` with message that the project is not on
 4. Compass creates a normal report in status `draft` and opens it. Citations name the source label, document id, and version id. Work-item claims name the issue id.
 5. If nothing in the vault supports the question, the body is exactly: `No filed source supports that.` Do not treat that as a finished status update.
 
-### 5. Review and publish (existing report flow)
+### 5. List vault chunks (admin API / MCP)
+
+Administrators can list filed chunks for an allowlisted program (used by the staff vault MCP and curl):
+
+```bash
+curl -sS \
+  "https://2ao8v0fqii.execute-api.us-east-2.amazonaws.com/projects/PROJECT_ID/vault-chunks" \
+  -H "authorization: Bearer TOKEN"
+```
+
+Expected: `200` with `{ "chunks": [ ... ] }` (embeddings omitted).  
+Not allowlisted: `409`. Non-admin: `403`. Unknown project: `404`.
+
+### 6. Review and publish (existing report flow)
 
 1. Edit the draft if needed.
 2. **Submit** → **Approve** → **Publish** (same as any status report).
@@ -133,11 +150,64 @@ If the project is not allowlisted: `409` with message that the project is not on
 - [ ] Administrator signed in
 - [ ] Evidence files uploaded and current
 - [ ] Each citable file has a vault source label
-- [ ] Project allowlisted (`PUT .../vault-allowlist`)
-- [ ] Ingest succeeded (`POST .../vault-ingest`)
+- [ ] Project allowlisted (Documents → Staff vault, or `PUT .../vault-allowlist`)
+- [ ] Ingest succeeded (`POST .../vault-ingest` or auto-ingest)
 - [ ] Draft from vault produced a report (or the “no filed source” message)
 - [ ] Person reviewed citations before publish
 - [ ] Publish completed through the normal report steps
+
+---
+
+## MCP registration (Cursor and Claude Desktop)
+
+**Beginner walkthrough:** [vault-mcp-beginner.md](./vault-mcp-beginner.md) (install, token, Cursor/Claude setup, example prompts).
+
+Package: `services/vault-mcp` (stdio MCP). It calls the **admin portal API** only — never Aurora or the vault secret.
+
+**Env**
+
+| Variable | Meaning |
+| --- | --- |
+| `ONE80COMPASS_API_URL` | API base URL (no trailing slash), e.g. `https://2ao8v0fqii.execute-api.us-east-2.amazonaws.com` |
+| `ONE80COMPASS_ID_TOKEN` | Cognito ID token for an administrator (`one80-admin`) |
+
+Replace `/absolute/path/to/One80compass` with your clone path.
+
+### Cursor (`~/.cursor/mcp.json` or project MCP config)
+
+```json
+{
+  "mcpServers": {
+    "one80compass-vault": {
+      "command": "npx",
+      "args": ["tsx", "/absolute/path/to/One80compass/services/vault-mcp/src/index.ts"],
+      "env": {
+        "ONE80COMPASS_API_URL": "https://2ao8v0fqii.execute-api.us-east-2.amazonaws.com",
+        "ONE80COMPASS_ID_TOKEN": "PASTE_ADMIN_ID_TOKEN"
+      }
+    }
+  }
+}
+```
+
+### Claude Desktop (`claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "one80compass-vault": {
+      "command": "npx",
+      "args": ["tsx", "/absolute/path/to/One80compass/services/vault-mcp/src/index.ts"],
+      "env": {
+        "ONE80COMPASS_API_URL": "https://2ao8v0fqii.execute-api.us-east-2.amazonaws.com",
+        "ONE80COMPASS_ID_TOKEN": "PASTE_ADMIN_ID_TOKEN"
+      }
+    }
+  }
+}
+```
+
+Refresh the ID token when Cognito session expires. Do not put vault DB credentials in MCP env.
 
 ---
 
@@ -149,6 +219,7 @@ If the project is not allowlisted: `409` with message that the project is not on
 - Do not ask the draft to change plan dates or status; it cannot and must not.
 - Do not publish a draft that cites nothing without human review of that empty result.
 - Do not use live Krisp/Fireflies connectors yet; file exports only.
+- Do not embed Aurora / vault secrets in MCP configuration.
 
 ---
 
@@ -156,28 +227,30 @@ If the project is not allowlisted: `409` with message that the project is not on
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| `403` on allowlist, ingest, or draft | Not in `one80-admin` | Use an administrator account |
-| `409` on ingest | Project not allowlisted | Run step 2 with `enabled: true` |
+| `403` on allowlist, ingest, chunks, or draft | Not in `one80-admin` | Use an administrator account |
+| `409` on ingest or vault-chunks | Project not allowlisted | Enable in Documents → Staff vault (or `PUT` with `enabled: true`) |
 | `chunkCount` is 0 | No labeled stored text files | Set source labels; confirm upload completed; re-ingest |
 | Draft says “No filed source supports that.” | Question unmatched, or vault empty for this program | Re-ingest; widen the question; confirm files are labeled and filed on this project |
 | Draft missing a file you expect | Wrong label, deleted file, or ingest not re-run | Fix label; re-ingest |
 | Cite another customer’s document | Must not happen; filters drop foreign rows | If seen, stop and escalate; do not publish |
+| MCP auth failures | Expired or non-admin ID token | Refresh `ONE80COMPASS_ID_TOKEN`; confirm `one80-admin` |
 
 ---
 
 ## Architecture (staff summary)
 
 ```
-Compass UI / API
+Compass UI / API / vault-mcp
   → reads plan + documents (DynamoDB + S3)
-  → invokes vault Lambda only (no vault DB password on the API)
+  → invokes vault Lambda only (no vault DB password on the API or MCP)
 
 Vault Lambda + Aurora PostgreSQL (pgvector)
-  → allowlist, persist ingest rows, list chunks for drafts
+  → allowlist, persist ingest rows, list chunks for drafts and MCP
 ```
 
 Decision record: [ADR 0012 — Staff vault](../adr/0012-staff-vault.md).  
-Engineer notes: [services/vault/README.md](../../services/vault/README.md).
+Engineer notes: [services/vault/README.md](../../services/vault/README.md).  
+MCP package: [services/vault-mcp](../../services/vault-mcp).
 
 ---
 
@@ -185,7 +258,7 @@ Engineer notes: [services/vault/README.md](../../services/vault/README.md).
 
 Tracked in the [unified release plan](../product/One80Compass_Unified_Release_Plan.md):
 
-- **Phase 10:** Staff vault MCP server for Cursor and Claude (allowlist, ingest, search/list chunks, optional cited draft)
+- **Phase 10:** Staff vault MCP (`services/vault-mcp`) — **Done**
 - Allowlist/ingest UI in Compass — **Done** (Documents → Staff vault for admins)
 - Upload/label-triggered ingest — **Done** for allowlisted programs; EventBridge cron still residual
 - Richer ontology (risks, decisions, people) + multi-hop retrieval — **Done**
@@ -198,3 +271,6 @@ Tracked in the [unified release plan](../product/One80Compass_Unified_Release_Pl
 | 2026-10-27 | Added Phase 10 MCP to release backlog |
 | 2026-10-27 | Auto-ingest on labeled upload / label change for allowlisted programs |
 | 2026-10-27 | Marked allowlist UI, ontology, and multi-hop complete; EventBridge cron residual |
+| 2026-10-29 | Allowlist UI Done note; GET vault-chunks; MCP registration for Cursor/Claude; Phase 10 In progress |
+| 2026-10-29 | Phase 10 Staff vault MCP marked Done |
+| 2026-10-29 | Linked beginner MCP guide (`vault-mcp-beginner.md`) |

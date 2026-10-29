@@ -6,7 +6,7 @@ import { PageHead, Pill, Tabs } from "./ui";
 import { Catalogs } from "./catalogs";
 import type { ProjectCatalogs } from "../../../packages/domain/src/index";
 
-const session: Session = { email: "alex.chen@example.com", idToken: "", adminGroup: false, mfa: true };
+const session: Session = { email: "alex.chen@example.com", idToken: "", adminGroup: false, mfa: true, authTimeMs: Date.now() };
 
 /** Local layout check for the eight screens. It does not call the API. */
 export function DevLayout() {

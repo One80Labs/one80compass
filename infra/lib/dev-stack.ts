@@ -90,7 +90,9 @@ export class DevStack extends cdk.Stack {
       generateSecret: false,
       idTokenValidity: cdk.Duration.hours(1),
       accessTokenValidity: cdk.Duration.hours(1),
-      refreshTokenValidity: cdk.Duration.days(30),
+      // Cap refresh so Cognito cannot mint new ID tokens after the 2-hour app session.
+      // The web client also enforces auth_time + 2h and signs out proactively.
+      refreshTokenValidity: cdk.Duration.hours(2),
     });
 
     const adminGroup = new cognito.CfnUserPoolGroup(this, "PlatformAdmins", {

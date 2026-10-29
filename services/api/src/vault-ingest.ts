@@ -10,6 +10,7 @@ import {
   type IngestVersion,
 } from "../../vault/src/ingest";
 import type { AllowlistEntry } from "../../vault/src/allowlist";
+import type { VaultChunk } from "../../vault/src/types";
 import type { HandlerDeps, HttpResult } from "./router";
 
 type VaultCtx = {
@@ -21,7 +22,7 @@ type VaultCtx = {
   correlationId: string;
 };
 
-/** Plan, documents, version text, allowlist, and vault persistence for ingest. */
+/** Plan, documents, version text, allowlist, chunks, and vault persistence for ingest. */
 export type VaultIngestDeps = {
   loadPlan: (projectId: string) => Promise<{
     project: { customerId: string; projectId: string; name: string };
@@ -34,6 +35,8 @@ export type VaultIngestDeps = {
   readAllowlist: () => Promise<AllowlistEntry[]>;
   saveAllowlist: (entry: AllowlistEntry, enabled: boolean) => Promise<void>;
   saveRows: (result: IngestResult) => Promise<void>;
+  /** List vault chunks for one customer + program (Lambda list-chunks). */
+  loadChunks: (customerId: string, programId: string) => Promise<VaultChunk[]>;
 };
 
 /** Outcome of loading a program and writing vault rows (shared by admin POST and auto-ingest). */
@@ -150,6 +153,10 @@ export async function handleVaultIngest(ctx: VaultCtx, vault: VaultIngestDeps): 
   if (ingestMatch && ctx.method === "POST") {
     return postIngest(ctx, vault, decodeURIComponent(ingestMatch[1]));
   }
+  const chunksMatch = ctx.path.match(/^\/projects\/([^/]+)\/vault-chunks$/);
+  if (chunksMatch && ctx.method === "GET") {
+    return getChunks(ctx, vault, decodeURIComponent(chunksMatch[1]));
+  }
   return null;
 }
 
@@ -205,6 +212,55 @@ async function postIngest(ctx: VaultCtx, vault: VaultIngestDeps, projectId: stri
     },
     ctx.correlationId,
   );
+}
+
+/** Admin GET vault chunks for MCP list/search — scoped to the project's customer + program. */
+async function getChunks(ctx: VaultCtx, vault: VaultIngestDeps, projectId: string): Promise<HttpResult> {
+  const forbidden = requireAdmin(ctx);
+  if (forbidden) return forbidden;
+  const project = await ctx.deps.store.getProject(projectId);
+  if (!project) return notFound(ctx.correlationId);
+
+  const allowlist = await vault.readAllowlist();
+  const allowed = allowlist.some(
+    (entry) => entry.customerId === project.customerId && entry.programId === project.projectId,
+  );
+  if (!allowed) {
+    return json(
+      409,
+      {
+        code: "CONFLICT",
+        message: "Project is not on the vault allowlist.",
+        correlationId: ctx.correlationId,
+      },
+      ctx.correlationId,
+    );
+  }
+
+  try {
+    const loaded = await vault.loadChunks(project.customerId, project.projectId);
+    const chunks = loaded
+      .filter((chunk) => chunk.customerId === project.customerId && chunk.programId === project.projectId)
+      .map((chunk) => {
+        const { embedding: _embedding, ...rest } = chunk;
+        return rest;
+      });
+    return json(200, { chunks }, ctx.correlationId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/not allowlisted/i.test(message)) {
+      return json(
+        409,
+        {
+          code: "CONFLICT",
+          message: "Project is not on the vault allowlist.",
+          correlationId: ctx.correlationId,
+        },
+        ctx.correlationId,
+      );
+    }
+    throw error;
+  }
 }
 
 function requireAdmin(ctx: VaultCtx): HttpResult | null {

@@ -51,12 +51,17 @@ export class ApiError extends Error {
 }
 
 /**
- * Authenticated API call. Prefer Cognito's current ID token (getSession may refresh it)
- * over the caller's possibly stale Session.idToken snapshot. Retries once on 401 after
- * another refresh; does not loop.
+ * Authenticated API call. Uses Cognito's current ID token (getSession may refresh it).
+ * Does not fall back to a React Session.idToken snapshot after Cognito sign-out or the
+ * absolute 2-hour session limit. Retries once on 401 after another refresh; does not loop.
+ * The idToken argument is retained for call-site clarity; live auth comes from Cognito.
  */
 export async function api<T>(path: string, idToken: string, init?: { method?: string; body?: unknown }): Promise<T> {
-  const token = (await freshIdToken()) ?? idToken;
+  void idToken;
+  const token = await freshIdToken();
+  if (!token) {
+    throw new ApiError("Your session has expired. Sign in again.", 401, "session_expired");
+  }
   try {
     return await request<T>(path, token, init);
   } catch (error) {

@@ -4,6 +4,9 @@ import {
   CognitoUserPool,
   CognitoUserSession,
 } from "amazon-cognito-identity-js";
+import { sessionExpired } from "./auth-session";
+
+export { SESSION_MAX_MS, msUntilSessionExpiry, sessionExpired } from "./auth-session";
 
 const pool = new CognitoUserPool({
   UserPoolId: import.meta.env.VITE_USER_POOL_ID,
@@ -18,7 +21,16 @@ export type Session = {
   idToken: string;
   adminGroup: boolean;
   mfa: boolean;
+  /** Unix ms of Cognito `auth_time` (last interactive authentication). */
+  authTimeMs: number;
 };
+
+/** Clears Cognito storage when the absolute session window has elapsed. */
+function acceptIfWithinMaxAge(session: Session): Session | null {
+  if (!sessionExpired(session)) return session;
+  signOut();
+  return null;
+}
 
 type SignInResult =
   | { status: "signedIn"; session: Session }
@@ -102,7 +114,11 @@ export function restoreSession(): Promise<Session | null> {
         return;
       }
       const email = emailFromSession(session, user.getUsername());
-      const restored = readSession(session, email);
+      const restored = acceptIfWithinMaxAge(readSession(session, email));
+      if (!restored) {
+        resolve(null);
+        return;
+      }
       // Do not invent MFA satisfaction. Prefer token evidence, then Cognito enrollment for admins.
       if (!(mfaRequired && restored.adminGroup) || restored.mfa) {
         resolve(restored);
@@ -122,6 +138,7 @@ export function restoreSession(): Promise<Session | null> {
  * Returns a Session from Cognito's cached/refreshed tokens (via getSession).
  * Use before API calls so a ~1h-old React Session.idToken snapshot does not cause 401s.
  * Does not probe MFA enrollment or force mfa: true — claims come from readSession only.
+ * Signs out and returns null when auth_time is older than SESSION_MAX_MS.
  */
 export function refreshSession(): Promise<Session | null> {
   const user = pool.getCurrentUser();
@@ -132,7 +149,7 @@ export function refreshSession(): Promise<Session | null> {
         resolve(null);
         return;
       }
-      resolve(readSession(session, emailFromSession(session, user.getUsername())));
+      resolve(acceptIfWithinMaxAge(readSession(session, emailFromSession(session, user.getUsername()))));
     });
   });
 }
@@ -203,7 +220,16 @@ function readSession(session: CognitoUserSession, email: string): Session {
     idToken: session.getIdToken().getJwtToken(),
     adminGroup: groupList.includes("one80-admin"),
     mfa: claimHasMfa(payload) || claimHasMfa(accessPayload),
+    authTimeMs: authTimeMsFromPayload(payload),
   };
+}
+
+function authTimeMsFromPayload(payload: { auth_time?: unknown; iat?: unknown }): number {
+  const authTime = payload.auth_time;
+  if (typeof authTime === "number" && Number.isFinite(authTime)) return authTime * 1000;
+  const iat = payload.iat;
+  if (typeof iat === "number" && Number.isFinite(iat)) return iat * 1000;
+  return Date.now();
 }
 
 function claimHasMfa(payload: { amr?: unknown }): boolean {

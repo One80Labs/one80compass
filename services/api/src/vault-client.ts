@@ -143,6 +143,10 @@ export function createVaultIngestDeps(options: {
     async saveRows(result: IngestResult) {
       await invoke({ type: "save-rows", result });
     },
+    async loadChunks(customerId, programId) {
+      const payload = await invoke<{ chunks: VaultChunk[] }>({ type: "list-chunks", customerId, programId });
+      return payload.chunks ?? [];
+    },
   };
 }
 

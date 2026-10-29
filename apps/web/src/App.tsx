@@ -2,7 +2,19 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Route, Routes, useNavigate } from "react-router-dom";
 import type { CognitoUser } from "amazon-cognito-identity-js";
 import { api, ApiError } from "./api";
-import { beginTotpSetup, completeNewPassword, confirmTotpSetup, mfaIsEnrolled, mfaRequired, restoreSession, signIn, signOut, submitTotp, type Session } from "./auth";
+import {
+  beginTotpSetup,
+  completeNewPassword,
+  confirmTotpSetup,
+  mfaIsEnrolled,
+  mfaRequired,
+  msUntilSessionExpiry,
+  restoreSession,
+  signIn,
+  signOut,
+  submitTotp,
+  type Session,
+} from "./auth";
 import { AuditPage } from "./audit";
 import { KanbanPage, PlanPage } from "./plan";
 import { DocumentsPage, DocumentDetailPage, OverviewPage } from "./project";
@@ -25,6 +37,22 @@ export function App() {
       setReady(true);
     });
   }, []);
+
+  // Absolute 2-hour session: sign out when Cognito auth_time + SESSION_MAX_MS elapses.
+  useEffect(() => {
+    if (!session) return;
+    const remaining = msUntilSessionExpiry(session);
+    if (remaining <= 0) {
+      signOut();
+      setSession(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signOut();
+      setSession(null);
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [session]);
 
   if (!ready) {
     return (
@@ -505,7 +533,7 @@ function HelpPage() {
 }
 
 function PortalHomePreview() {
-  const session: Session = { email: "alex.chen@example.com", idToken: "", adminGroup: false, mfa: true };
+  const session: Session = { email: "alex.chen@example.com", idToken: "", adminGroup: false, mfa: true, authTimeMs: Date.now() };
   return (
     <Shell
       session={session}

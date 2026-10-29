@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p packages/authz/tsconfig.json --noEmit && tsc -p packages/domain/tsconfig.json --noEmit && tsc -p services/api/tsconfig.json --noEmit && tsc -p services/sync/tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json --noEmit && tsc -p services/vault/tsconfig.json --noEmit",
+    "typecheck": "tsc -p packages/authz/tsconfig.json --noEmit && tsc -p packages/domain/tsconfig.json --noEmit && tsc -p services/api/tsconfig.json --noEmit && tsc -p services/sync/tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json --noEmit && tsc -p services/vault/tsconfig.json --noEmit && tsc -p services/vault-mcp/tsconfig.json --noEmit",
     "synth": "npm run synth -w infra",
     "deploy:dev": "npm run build -w @one80compass/web && npm run deploy -w infra"
   },
