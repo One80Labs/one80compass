@@ -1297,7 +1297,11 @@ button.tab.active {
   min-width: 220px;
 }
 
-/* Documents: search on the left, New folder / Upload immediately to its right. */
+/* Documents: search + New folder / Upload grouped and right-justified. */
+.documents-toolbar {
+  justify-content: flex-end;
+}
+
 .documents-toolbar input {
   margin-left: 0;
   flex: 0 1 280px;
