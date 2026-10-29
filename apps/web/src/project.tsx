@@ -48,6 +48,7 @@ type StoredVersion = {
 export function modulePath(moduleKey: string, projectId: string): string {
   if (moduleKey === "documents") return `/projects/${projectId}/documents`;
   if (moduleKey === "plan") return `/projects/${projectId}/plan`;
+  if (moduleKey === "decisions") return `/projects/${projectId}/decisions`;
   if (moduleKey === "kanban") return `/projects/${projectId}/kanban`;
   if (moduleKey === "reports") return `/projects/${projectId}/reports`;
   if (moduleKey === "audit") return `/projects/${projectId}/audit`;

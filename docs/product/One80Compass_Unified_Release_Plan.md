@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.16 — 2026-10-29.*
+*Single plan for the portal product and the staff AI vault. Version 1.17 — 2026-10-29.*
 
 This document **combines**:
 
@@ -25,7 +25,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod; 2h session Done) |
 | Gantt dependency enhancements (post-v1) | **Complete** |
 | Sidebar FAQ beginner guides (all roles) | **Complete** |
-| Decision Register (Project Plan) | **Requirements written** — UI not started |
+| Decision Register (Project Plan) | **In progress** — register and plan marker shipped; suggestion inbox not started |
 | R4 Recovery & Governance | **Not started** |
 
 ---
@@ -216,9 +216,9 @@ Moved FAQ out of Settings onto the main sidebar (`/help`) so **View**, **Contrib
 | Staff vault user guide | `docs/sop/staff-vault-user-guide.md` on FAQ (`?guide=staff-vault`): label, allowlist, ingest, cited draft | **Done** |
 | In-app `faq:` cross-links | Tile switching inside the viewer; Staff vault and MCP tiles remain admin-focused | **Done** |
 
-### K — Decision Register — Requirements written
+### K — Decision Register — In progress
 
-Track outstanding questions and the decisions those questions become, tied to one Epic, Feature, or Task. UI is not started. Sits under **R2 — Project Management** on the One80Compass Dev plan. R2 Phases 1–6 stay complete.
+Track outstanding questions and the decisions those questions become, tied to one Epic, Feature, or Task. The register, the detail drawer, and the plan-edit marker are in the app. The suggestion inbox is not started. Sits under **R2 — Project Management** on the One80Compass Dev plan. R2 Phases 1–6 stay complete.
 
 View can read, including the source quote and file. Contributors add, edit, comment, resolve, and mark duplicates. Administrators archive. Archive requires a reason. A duplicate points at the surviving item.
 
@@ -238,6 +238,8 @@ Leave out a pros/cons table, architecture notes that do not affect the project, 
 | --- | --- | --- |
 | Build Requirements | Accepted requirements are this section | **Done** |
 | Evaluate how Decisions are used in Vault | Recommendation: the register is the source of vault decision rows; stop using issue type Decision. Ingest still uses that convention until a later change | **Done** |
+| Register screen | Filterable register, detail drawer, manual source, and the plan-edit count and blocking warning | **Done** |
+| Suggestion inbox | Proposals from labeled transcript text. A person accepts or dismisses. Accept does not create a plan issue | **Not started** |
 
 ---
 
@@ -333,3 +335,4 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-29 | v1.14 Staff vault user guide on FAQ (`docs/sop/staff-vault-user-guide.md`); mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.15 §5 K Decision Register **Not started** (Build Requirements; Evaluate how Decisions are used in Vault); mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.16 §5 K Decision Register requirements accepted (guidepost fields included); COMP-80 and COMP-81 **Done**; UI not started |
+| 2026-10-29 | v1.17 §5 K Decision Register screen **Done** (register, drawer, plan marker); suggestion inbox **Not started**; mirrored on One80Compass Dev in-app plan |

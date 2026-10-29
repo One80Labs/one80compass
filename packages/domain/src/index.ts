@@ -3,6 +3,28 @@
 import type { BlockerEdge } from "./blocker-edge";
 
 export type { BlockerEdge, BlockerLinkKind, LinkKindEnds } from "./blocker-edge";
+export type {
+  DecisionAffect,
+  DecisionComment,
+  DecisionHistoryEvent,
+  DecisionHistoryField,
+  DecisionKind,
+  DecisionRecord,
+  DecisionReversibility,
+  DecisionSource,
+  DecisionSourceKind,
+  DecisionStatus,
+} from "./decisions";
+export {
+  DECISION_AFFECTS,
+  DECISION_STATUSES,
+  decisionAffectsFromStore,
+  decisionCounts,
+  decisionFromStore,
+  decisionIsBlocking,
+  decisionIsOverdue,
+} from "./decisions";
+
 export {
   blockerEdgesFromStore,
   blockerEdgeFor,

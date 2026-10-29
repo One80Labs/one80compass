@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { catalogColorHex } from "../../../packages/domain/src/index";
 import { datesAfterIterationPick, iterationFinish, iterationOptionLabel } from "../../../packages/domain/src/schedule";
 import type { IssueRelationship, IssueSave } from "./api";
@@ -62,6 +62,7 @@ export function CompassIssueDrawer({
   onClose,
   onSave,
   onDelete,
+  decisionMarker,
 }: {
   issue: CompassIssue;
   issues: CompassIssue[];
@@ -79,6 +80,8 @@ export function CompassIssueDrawer({
   onSave: (issueId: string, change: IssueSave & { title: string; status: string; effort: number | null }) => Promise<void>;
   /** Null when the row still has children — delete is hidden. */
   onDelete: (() => Promise<void>) | null;
+  /** Decision Register count for this issue. Omitted screens render nothing here. */
+  decisionMarker?: ReactNode;
 }) {
   const [title, setTitle] = useState(issue.title);
   const [description, setDescription] = useState(issue.description ?? "");
@@ -178,6 +181,7 @@ export function CompassIssueDrawer({
 
   return (
     <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
+      {decisionMarker}
       <p className="muted small">
         Key <strong>{displayKey ?? "—"}</strong>
       </p>

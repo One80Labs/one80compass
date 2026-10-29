@@ -16,6 +16,7 @@ import {
   type Session,
 } from "./auth";
 import { AuditPage } from "./audit";
+import { DecisionRegisterPage } from "./decision-register";
 import { KanbanPage, PlanPage } from "./plan";
 import { DocumentsPage, DocumentDetailPage, OverviewPage } from "./project";
 import { ReportDetailPage, ReportsPage } from "./reports";
@@ -70,6 +71,7 @@ export function App() {
       <Route path="/projects/:projectId/documents/:documentId" element={<SignedIn session={session} onSession={setSession}><DocumentDetailPage session={session} /></SignedIn>} />
       <Route path="/projects/:projectId/documents" element={<SignedIn session={session} onSession={setSession}><DocumentsPage session={session} /></SignedIn>} />
       <Route path="/projects/:projectId/plan" element={<SignedIn session={session} onSession={setSession}><PlanPage session={session} /></SignedIn>} />
+      <Route path="/projects/:projectId/decisions" element={<SignedIn session={session} onSession={setSession}><DecisionRegisterPage session={session} /></SignedIn>} />
       <Route path="/projects/:projectId/kanban" element={<SignedIn session={session} onSession={setSession}><KanbanPage session={session} /></SignedIn>} />
       <Route path="/projects/:projectId/reports/:reportId" element={<SignedIn session={session} onSession={setSession}><ReportDetailPage session={session} /></SignedIn>} />
       <Route path="/projects/:projectId/reports" element={<SignedIn session={session} onSession={setSession}><ReportsPage session={session} /></SignedIn>} />

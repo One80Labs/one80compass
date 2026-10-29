@@ -19,6 +19,7 @@ import {
 } from "../../../packages/domain/src/index";
 import { milestoneViews } from "../../../packages/domain/src/milestones";
 import { projectProgress } from "../../../packages/domain/src/progress";
+import { handleDecisions } from "./decisions";
 import { handlePlan } from "./plan";
 import { handleCatalogs } from "./catalogs";
 import { handleReports } from "./reports";
@@ -116,6 +117,8 @@ export function createHandler(deps: HandlerDeps) {
     try {
       const planned = await handlePlan({ deps, principal, method, path, body, correlationId });
       if (planned) return planned;
+      const decisionResult = await handleDecisions({ deps, principal, method, path, body, correlationId });
+      if (decisionResult) return decisionResult;
       const catalogs = await handleCatalogs({ deps, principal, method, path, body, correlationId });
       if (catalogs) return catalogs;
       const reported = await handleReports({ deps, principal, method, path, body, correlationId });

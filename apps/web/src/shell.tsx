@@ -44,11 +44,13 @@ export function usePortal(): PortalState {
   return portal;
 }
 
-const MODULES = ["overview", "documents", "plan", "kanban", "reports", "audit"];
+const MODULES = ["overview", "documents", "plan", "decisions", "kanban", "reports", "audit"];
 
 const NAV_LINKS = [
   { key: "overview", label: "Overview", icon: "◉" },
   { key: "plan", label: "Project Plan", icon: "▤" },
+  // "decisions" is the Decision Register route, not the plan module ("plan").
+  { key: "decisions", label: "Decision Register", icon: "▩" },
   { key: "kanban", label: "Kanban Board", icon: "▦" },
   { key: "documents", label: "Documents", icon: "♧" },
   { key: "reports", label: "Status Reports", icon: "▥" },
@@ -57,6 +59,7 @@ const NAV_LINKS = [
 const HOME_TILES = [
   { key: "overview", title: "Project Overview", detail: "Goals, timeline, and key details", icon: "♧" },
   { key: "plan", title: "Project Plan", detail: "Milestones, phases, and tasks", icon: "▤" },
+  { key: "decisions", title: "Decision Register", detail: "Outstanding questions and the decisions they become", icon: "▩" },
   { key: "kanban", title: "Kanban Board", detail: "Track and manage work", icon: "▦" },
   { key: "documents", title: "Documents", detail: "Requirements, references, and deliverables", icon: "♧" },
 ] as const;

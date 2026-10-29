@@ -2539,3 +2539,82 @@ form.dialog {
     flex-direction: column;
   }
 }
+
+.decision-register {
+  display: grid;
+  gap: 12px;
+}
+
+.decision-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px 16px;
+  margin: 0;
+  color: var(--oc-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.decision-assigned {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e6e1d8;
+  border-radius: 6px;
+  background: #f6f4ef;
+  color: var(--oc-body);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.decision-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.decision-table th,
+.decision-table td {
+  vertical-align: top;
+  padding: 10px 8px;
+  border-bottom: 1px solid #e6e1d8;
+}
+
+.decision-table th {
+  text-align: left;
+  font-size: 12px;
+  color: var(--oc-muted);
+  font-weight: 600;
+}
+
+.decision-table tr.overdue td {
+  background: #fbf4ec;
+  box-shadow: inset 3px 0 0 var(--oc-warning);
+}
+
+.decision-plan-marker {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--oc-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.decision-plan-marker:hover,
+.decision-plan-marker:focus-visible {
+  color: var(--oc-ink);
+}
+
+.decision-plan-marker:focus-visible {
+  outline: 2px solid #c9683e;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.decision-warning {
+  margin: 0;
+  color: var(--oc-warning);
+  font-size: 12px;
+  line-height: 1.5;
+}

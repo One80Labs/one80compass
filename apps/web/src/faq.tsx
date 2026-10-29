@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import baselinesMd from "../../../docs/sop/baselines.md?raw";
 import criticalPathMd from "../../../docs/sop/critical-path.md?raw";
+import decisionRegisterMd from "../../../docs/sop/decision-register.md?raw";
 import dependenciesBlockersMd from "../../../docs/sop/dependencies-and-blockers.md?raw";
 import documentsLabelingMd from "../../../docs/sop/documents-and-labeling.md?raw";
 import planHierarchyMd from "../../../docs/sop/plan-hierarchy.md?raw";
@@ -77,6 +78,14 @@ const FAQ_TILES: FaqTile[] = [
     icon: "⚠",
     source: riskRegisterMd,
     viewerTitle: "Risk Register",
+  },
+  {
+    id: "decision-register",
+    title: "Decision Register",
+    detail: "Outstanding questions and the decisions they become.",
+    icon: "▩",
+    source: decisionRegisterMd,
+    viewerTitle: "Decision Register",
   },
   {
     id: "documents-labeling",

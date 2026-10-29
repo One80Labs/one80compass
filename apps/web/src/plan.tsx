@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useParams } from "react-router-dom";
 import { applyPlanOrder, hasActiveChildren, orderedIssues, planBands, planKind, type PlanKind } from "../../../packages/domain/src/hierarchy";
 import { PlanDeleteSection } from "./plan-delete";
@@ -46,8 +47,11 @@ import { api, ApiError } from "./api";
 import type { Session } from "./auth";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import { activeScheduleConflicts, type RiskRegisterRow, type RiskSeverity } from "../../../packages/domain/src/risks";
+import { decisionIsBlocking, type DecisionRecord } from "../../../packages/domain/src/decisions";
 import { BaselinesPanel } from "./baselines";
 import { CompassIssueDrawer } from "./compass-drawer";
+import { archiveDecision, commentDecision, createDecision, duplicateDecision, listDecisions, updateDecision } from "./decision-client";
+import { DecisionDrawer, type DecisionDraft } from "./decision-drawer";
 import {
   dayDeltaFromDayWidth,
   dependencyLinkPath,
@@ -194,6 +198,18 @@ export function PlanPage({ session }: { session: Session | null }) {
   const [addKind, setAddKind] = useState<Exclude<PlanKind, "workstream"> | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editing = issues.find((issue) => issue.issueId === editingId) ?? null;
+  const decisionMarker = editing ? (
+    <IssueDecisionMarker
+      projectId={projectId}
+      issueId={editing.issueId}
+      session={session}
+      canWrite={canWrite}
+      canArchive={portal.accessLabel === "Administrator"}
+      issues={issues}
+      projectKey={projectKey}
+      members={decisionMembers(plan.data)}
+    />
+  ) : null;
   const done = issues.filter((issue) => issue.status === "Done").length;
   return (
     <>
@@ -368,6 +384,7 @@ export function PlanPage({ session }: { session: Session | null }) {
                   setEditingId(null);
                 }
           }
+          decisionMarker={decisionMarker}
         />
       )}
       {editing && canWrite && plan.data?.settings?.recordSource !== "compass" && (
@@ -394,6 +411,7 @@ export function PlanPage({ session }: { session: Session | null }) {
                   setEditingId(null);
                 }
           }
+          decisionMarker={decisionMarker}
         />
       )}
     </>
@@ -421,7 +439,20 @@ export function KanbanPage({ session }: { session: Session | null }) {
   const iterations = plan.data?.settings?.iterations ?? [];
   const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
   const allIssues = activePlanIssues(plan.data?.issues ?? []);
+  const projectKey = plan.data?.projectKey ?? null;
   const assignableUsers = assigneeOptions(plan.data?.settings?.assignableUsers ?? [], allIssues.flatMap((issue) => issue.assignees ?? []));
+  const decisionMarker = editing ? (
+    <IssueDecisionMarker
+      projectId={projectId}
+      issueId={editing.issueId}
+      session={session}
+      canWrite={canWrite}
+      canArchive={portal.accessLabel === "Administrator"}
+      issues={allIssues}
+      projectKey={projectKey}
+      members={decisionMembers(plan.data)}
+    />
+  ) : null;
   /** Local calendar day so Current matches Start–Finish the way the team sees dates. */
   const today = localIsoDate();
   const issues = matchesKanbanFilters(
@@ -693,6 +724,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
                   setEditing(null);
                 }
           }
+          decisionMarker={decisionMarker}
         />
       )}
       {editing && canWrite && plan.data?.settings?.recordSource !== "compass" && (
@@ -719,6 +751,7 @@ export function KanbanPage({ session }: { session: Session | null }) {
                   setEditing(null);
                 }
           }
+          decisionMarker={decisionMarker}
         />
       )}
     </>
@@ -752,6 +785,177 @@ function PlanStatus({ plan, session, canWrite }: { plan: ReturnType<typeof usePl
   );
 }
 
+/** Plan members and GitHub assignees already loaded with the plan. Names fall back to the login. */
+function decisionMembers(data: PlanResponse | null): { id: string; name: string }[] {
+  const people = [...(data?.members ?? []), ...(data?.settings?.assignableUsers ?? [])];
+  const seen = new Set<string>();
+  const members: { id: string; name: string }[] = [];
+  for (const person of people) {
+    if (seen.has(person.id)) continue;
+    seen.add(person.id);
+    members.push({ id: person.id, name: person.name?.trim() || person.login });
+  }
+  return members;
+}
+
+/** Cognito subject on the ID token. Decision rows store that id. Session itself only keeps the token. */
+function sessionUserId(session: Session | null): string {
+  const segment = session?.idToken.split(".")[1];
+  if (!segment) return "";
+  try {
+    const json = atob(segment.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(json) as { sub?: unknown };
+    return typeof payload.sub === "string" ? payload.sub : "";
+  } catch {
+    return "";
+  }
+}
+
+const noDecisionDocuments: { documentId: string; fileName: string }[] = [];
+
+/**
+ * Count of Decision Register rows linked to the issue open in the edit drawer.
+ * Opens the same detail drawer the register uses. Does not add plan issues.
+ */
+function IssueDecisionMarker({
+  projectId,
+  issueId,
+  session,
+  canWrite,
+  canArchive,
+  issues,
+  projectKey,
+  members,
+}: {
+  projectId: string;
+  issueId: string;
+  session: Session | null;
+  canWrite: boolean;
+  canArchive: boolean;
+  issues: PlanIssue[];
+  projectKey: string | null;
+  members: { id: string; name: string }[];
+}) {
+  const [rows, setRows] = useState<DecisionRecord[]>([]);
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const idToken = session?.idToken ?? null;
+  const linked = rows.filter((row) => row.issueId === issueId);
+  const picked = rows.find((row) => row.decisionId === pickedId) ?? null;
+  // Warning only while a linked row is still outstanding and blocks work.
+  // A resolved or archived row keeps blocksWork as history and must not warn.
+  // An outstanding row that does not block the work is only part of the count.
+  const blocking = linked.some(decisionIsBlocking);
+  const drawerIssues = issues.map((item) => ({
+    issueId: item.issueId,
+    title: item.title,
+    issueType: item.issueType,
+    keyLabel: actionItemKey(projectKey, item.keyNumber),
+  }));
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!idToken || !projectId) {
+      setRows([]);
+      return;
+    }
+    listDecisions(projectId, idToken)
+      .then((result) => {
+        if (!cancelled) setRows(result.decisions);
+      })
+      .catch(() => {
+        if (!cancelled) setRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, issueId, idToken]);
+
+  async function refresh() {
+    if (!idToken) return;
+    const result = await listDecisions(projectId, idToken);
+    setRows(result.decisions);
+  }
+
+  async function onCreate(draft: DecisionDraft) {
+    if (!idToken) return;
+    await createDecision(projectId, idToken, draft);
+    await refresh();
+  }
+
+  async function onSave(decisionId: string, draft: DecisionDraft) {
+    if (!idToken) return;
+    await updateDecision(projectId, idToken, decisionId, draft);
+    await refresh();
+  }
+
+  async function onComment(decisionId: string, body: string) {
+    if (!idToken) return;
+    await commentDecision(projectId, idToken, decisionId, body);
+    await refresh();
+  }
+
+  async function onArchive(decisionId: string, reason: string) {
+    if (!idToken) return;
+    await archiveDecision(projectId, idToken, decisionId, reason);
+    await refresh();
+  }
+
+  async function onDuplicate(decisionId: string, duplicateOfId: string) {
+    if (!idToken) return;
+    await duplicateDecision(projectId, idToken, decisionId, duplicateOfId);
+    await refresh();
+  }
+
+  const label = linked.length === 1 ? "1 Decision Register row" : `${linked.length} Decision Register rows`;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="decision-plan-marker"
+        onClick={() => {
+          if (linked.length === 1) setPickedId(linked[0].decisionId);
+        }}
+      >
+        {label}
+      </button>
+      {blocking && <p>An outstanding decision blocks this work.</p>}
+      {linked.length > 1 && (
+        <ul>
+          {linked.map((row) => (
+            <li key={row.decisionId}>
+              <button type="button" onClick={() => setPickedId(row.decisionId)}>
+                {row.statement}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {picked &&
+        createPortal(
+          <DecisionDrawer
+            key={`${picked.decisionId}:${picked.updatedAt}`}
+            record={picked}
+            issues={drawerIssues}
+            members={members}
+            documents={noDecisionDocuments}
+            canWrite={canWrite}
+            canArchive={canArchive}
+            currentUserId={sessionUserId(session)}
+            siblings={rows}
+            onClose={() => setPickedId(null)}
+            onCreate={onCreate}
+            onSave={onSave}
+            onComment={onComment}
+            onArchive={onArchive}
+            onDuplicate={onDuplicate}
+          />,
+          document.body,
+        )}
+    </>
+  );
+}
+
 function IssueDrawer({
   issue,
   displayKey,
@@ -764,6 +968,7 @@ function IssueDrawer({
   onClose,
   onSave,
   onDelete,
+  decisionMarker,
 }: {
   issue: PlanIssue;
   displayKey: string | null;
@@ -777,6 +982,8 @@ function IssueDrawer({
   onSave: (issueId: string, change: IssueEdit) => Promise<void>;
   /** Null when the row still has children — delete is hidden. */
   onDelete: (() => Promise<void>) | null;
+  /** Decision Register count for this issue. Omitted screens render nothing here. */
+  decisionMarker?: ReactNode;
 }) {
   const [title, setTitle] = useState(issue.title);
   const [description, setDescription] = useState(issue.description ?? "");
@@ -847,6 +1054,7 @@ function IssueDrawer({
 
   return (
     <EditDrawer title={title.trim() || issue.title || "Edit issue"} onClose={onClose} onSubmit={onSubmit} saving={saving}>
+      {decisionMarker}
       <p className="muted small">
         Key <strong>{displayKey ?? "—"}</strong>
       </p>
@@ -2488,7 +2696,8 @@ function TimelineChart({
                     </div>
                   </div>
                   <div className="timeline-status">
-                    {epic && <TimelineStatus title={epic.title} status={epic.status} issueId={epic.issueId} onEdit={onEdit} />}
+                    {/* Epic progress is the "x of y tasks Done" score. The rollup status (Done / Backlog) is not shown here; this control only opens the edit drawer. */}
+                    {epic && onEdit && <EditRowButton label={`Edit ${epic.title}`} onClick={() => onEdit(epic.issueId)} />}
                   </div>
                   <ScheduleBar
                     range={header}

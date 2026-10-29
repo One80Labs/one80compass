@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import type { ApplicationLink, AuditEvent, Customer, DocumentFolder, DocumentVersion, Membership, PlanIssue, PortalDocument, ProgressOverride, Project, ProjectOverview, ProjectSettings, ReportVersion, StatusReport, SyncState } from "../../../packages/domain/src/index";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import type { MilestoneRecord } from "../../../packages/domain/src/milestones";
+import type { DecisionRecord } from "../../../packages/domain/src/decisions";
 import type { RiskRecord } from "../../../packages/domain/src/risks";
 import { createHandler, type HandlerDeps, type HttpEvent } from "./router";
 import type { Store } from "./store";
@@ -27,6 +28,7 @@ function memoryStore(): Store & {
   milestones: MilestoneRecord[];
   baselines: BaselineRecord[];
   risks: RiskRecord[];
+  decisions: DecisionRecord[];
 } {
   const customers: Customer[] = [];
   const projects: Project[] = [];
@@ -50,6 +52,7 @@ function memoryStore(): Store & {
   const issueKeySeq = new Map<string, number>();
   const projectKeys = new Map<string, string>();
   const risks: RiskRecord[] = [];
+  const decisions: DecisionRecord[] = [];
   return {
     customers,
     projects,
@@ -264,6 +267,14 @@ function memoryStore(): Store & {
       if (index >= 0) risks[index] = record;
       else risks.push(record);
     },
+    async listDecisions(projectId) {
+      return decisions.filter((record) => record.projectId === projectId);
+    },
+    async putDecision(record) {
+      const index = decisions.findIndex((item) => item.decisionId === record.decisionId && item.projectId === record.projectId);
+      if (index >= 0) decisions[index] = record;
+      else decisions.push(record);
+    },
     documents,
     folders,
     versions,
@@ -278,6 +289,7 @@ function memoryStore(): Store & {
     milestones,
     baselines,
     risks,
+    decisions,
   };
 }
 

@@ -40,6 +40,7 @@ import {
 } from "../../../packages/domain/src/index";
 import type { BaselineRecord } from "../../../packages/domain/src/baselines";
 import type { MilestoneRecord } from "../../../packages/domain/src/milestones";
+import { decisionFromStore, type DecisionRecord } from "../../../packages/domain/src/decisions";
 import { riskSeverityFromStore, type RiskRecord } from "../../../packages/domain/src/risks";
 
 export interface Store {
@@ -100,6 +101,9 @@ export interface Store {
   putBaseline(record: BaselineRecord, options?: { requireState?: BaselineRecord["state"] }): Promise<void>;
   listRisks(projectId: string): Promise<RiskRecord[]>;
   putRisk(record: RiskRecord): Promise<void>;
+  /** Decision rows for one project. Items that do not parse as a decision are skipped. */
+  listDecisions(projectId: string): Promise<DecisionRecord[]>;
+  putDecision(record: DecisionRecord): Promise<void>;
   getOverride(projectId: string): Promise<ProgressOverride | null>;
   putOverride(override: ProgressOverride): Promise<void>;
   getSync(projectId: string): Promise<SyncState | null>;
@@ -643,6 +647,29 @@ export class DynamoStore implements Store {
       new PutCommand({
         TableName: this.tableName,
         Item: { pk: proj(record.projectId), sk: `RISK#${record.riskId}`, entity: "risk", ...record },
+      }),
+    );
+  }
+
+  async listDecisions(projectId: string): Promise<DecisionRecord[]> {
+    const items = await queryAll(this.querySend, {
+      TableName: this.tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
+      ExpressionAttributeValues: { ":pk": proj(projectId), ":sk": "DECISION#" },
+    });
+    const decisions: DecisionRecord[] = [];
+    for (const item of items) {
+      const record = decisionFromStore(item);
+      if (record) decisions.push(record);
+    }
+    return decisions;
+  }
+
+  async putDecision(record: DecisionRecord): Promise<void> {
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: { pk: proj(record.projectId), sk: `DECISION#${record.decisionId}`, entity: "decision", ...record },
       }),
     );
   }
