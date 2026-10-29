@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.14 — 2026-10-29.*
+*Single plan for the portal product and the staff AI vault. Version 1.15 — 2026-10-29.*
 
 This document **combines**:
 
@@ -25,6 +25,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod; 2h session Done) |
 | Gantt dependency enhancements (post-v1) | **Complete** |
 | Sidebar FAQ beginner guides (all roles) | **Complete** |
+| Decision Register (Project Plan) | **Not started** — requirements and vault evaluation first |
 | R4 Recovery & Governance | **Not started** |
 
 ---
@@ -215,6 +216,15 @@ Moved FAQ out of Settings onto the main sidebar (`/help`) so **View**, **Contrib
 | Staff vault user guide | `docs/sop/staff-vault-user-guide.md` on FAQ (`?guide=staff-vault`): label, allowlist, ingest, cited draft | **Done** |
 | In-app `faq:` cross-links | Tile switching inside the viewer; Staff vault and MCP tiles remain admin-focused | **Done** |
 
+### K — Decision Register — Not started
+
+Track outstanding questions and decisions on the Project Plan. How the register works is not specified yet. Do not build UI or a data model until requirements exist. Sits under **R2 — Project Management** on the One80Compass Dev plan. R2 Phases 1–6 stay complete.
+
+| Item | Notes | Status |
+| --- | --- | --- |
+| Build Requirements | Define how outstanding questions and decisions are tracked before any screen or schema | **Not started** |
+| Evaluate how Decisions are used in Vault | The vault `decision` table is filled only when a plan issue type is named Decision. That mapping is an implementation convention, not a product requirement, and no live issue uses it. Decide whether the register feeds the vault, replaces that convention, or stays separate | **Not started** |
+
 ---
 
 ## 6. Phase 10 exit criteria — Complete
@@ -307,3 +317,4 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-29 | v1.12 Plan sync: §5 J FAQ guides **Complete** in MD + in-app plan; glance + §4 D checklist updated; Gantt §5 I statuses confirmed Done |
 | 2026-10-29 | v1.13 Vault UX and ontology backlog complete; EventBridge scheduled ingest **Done** in MD; mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.14 Staff vault user guide on FAQ (`docs/sop/staff-vault-user-guide.md`); mirrored on One80Compass Dev in-app plan |
+| 2026-10-29 | v1.15 §5 K Decision Register **Not started** (Build Requirements; Evaluate how Decisions are used in Vault); mirrored on One80Compass Dev in-app plan |
