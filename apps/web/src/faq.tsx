@@ -82,7 +82,7 @@ const FAQ_TILES: FaqTile[] = [
   {
     id: "decision-register",
     title: "Decision Register",
-    detail: "Outstanding questions and the decisions they become.",
+    detail: "Questions, the decisions they become, and the linked work item.",
     icon: "▩",
     source: decisionRegisterMd,
     viewerTitle: "Decision Register",
