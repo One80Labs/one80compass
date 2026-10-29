@@ -114,6 +114,37 @@ export function writeShowCriticalPath(show: boolean): void {
   }
 }
 
+/**
+ * Browser preference for which Timeline Epics are expanded.
+ * Missing storage or an empty list means every Epic starts collapsed.
+ */
+export const EXPANDED_EPIC_IDS_KEY = "one80.plan.expandedEpicIds";
+
+/** Read expanded Epic ids. Defaults to none (all Epics collapsed). */
+export function readExpandedEpicIds(): string[] {
+  try {
+    if (typeof localStorage === "undefined") return [];
+    const raw = localStorage.getItem(EXPANDED_EPIC_IDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed.filter((id): id is string => typeof id === "string" && id.trim() !== ""))];
+  } catch {
+    return [];
+  }
+}
+
+/** Persist the expanded Epic id list when browser storage is available. */
+export function writeExpandedEpicIds(ids: readonly string[]): void {
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(EXPANDED_EPIC_IDS_KEY, JSON.stringify([...new Set(ids)]));
+    }
+  } catch {
+    // Storage can be unavailable in restricted browser contexts.
+  }
+}
+
 /** Minimal edge shape for hover filtering (blocker or soft dependency). */
 export type GanttDependencyEdge = {
   predecessorId: string;

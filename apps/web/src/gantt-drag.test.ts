@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  EXPANDED_EPIC_IDS_KEY,
   SHOW_CRITICAL_PATH_KEY,
   SHOW_DEPENDENCY_LINES_KEY,
   dayDeltaFromDayWidth,
@@ -10,8 +11,10 @@ import {
   hitTestGanttBar,
   linkedIssueIdsForHover,
   nudgeScrollForDrag,
+  readExpandedEpicIds,
   readShowCriticalPath,
   readShowDependencyLines,
+  writeExpandedEpicIds,
   writeShowCriticalPath,
   writeShowDependencyLines,
 } from "./gantt-drag";
@@ -135,6 +138,34 @@ describe("critical-path preference", () => {
 
     expect(values.get(SHOW_CRITICAL_PATH_KEY)).toBe("true");
     expect(readShowCriticalPath()).toBe(true);
+  });
+});
+
+describe("expanded Epic preference", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("defaults to no expanded Epics (all collapsed)", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+    });
+
+    expect(readExpandedEpicIds()).toEqual([]);
+  });
+
+  it("persists and reads expanded Epic ids", () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+    });
+
+    writeExpandedEpicIds(["epic-a", "epic-b", "epic-a"]);
+
+    expect(JSON.parse(values.get(EXPANDED_EPIC_IDS_KEY) ?? "[]")).toEqual(["epic-a", "epic-b"]);
+    expect(readExpandedEpicIds()).toEqual(["epic-a", "epic-b"]);
   });
 });
 

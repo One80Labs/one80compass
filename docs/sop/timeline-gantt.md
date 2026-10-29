@@ -34,6 +34,15 @@ The **Timeline view** is the Gantt-style chart on **Project Plan**. Use it to se
 
 The plan is grouped by hierarchy (Epic → Feature → Task). See [Plan hierarchy](faq:plan-hierarchy).
 
+### Expand or collapse an Epic
+
+Epics start **collapsed** so the chart stays short.
+
+1. Click the **orange dot** to the left of the Epic name to expand its Features and tasks.
+2. Click the same dot again to collapse them.
+3. Your expanded Epics are remembered in this browser.
+4. A Timeline search that matches work under a collapsed Epic temporarily shows those rows.
+
 ---
 
 ## Move dates on a bar

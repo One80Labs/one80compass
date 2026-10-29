@@ -55,8 +55,10 @@ import {
   hitTestGanttBar,
   linkedIssueIdsForHover,
   nudgeScrollForDrag,
+  readExpandedEpicIds,
   readShowCriticalPath,
   readShowDependencyLines,
+  writeExpandedEpicIds,
   writeShowCriticalPath,
   writeShowDependencyLines,
   type GanttBarHit,
@@ -253,7 +255,7 @@ export function PlanPage({ session }: { session: Session | null }) {
           {issues.length === 0 && <p className="copy">No issues yet. Connect the GitHub project. Title, status, effort, and dates can be edited from a row after the issues load.</p>}
           {plan.data && <p className="muted small">Calculated progress: {plan.data.progress.label}. Done tasks: {done}.</p>}
           <p className="copy">
-            The plan is grouped by Epic. Date bars use the Start and Finish fields. Drag the middle of a bar to move both dates, or drag either end to change Start or Finish. Dragging past either edge expands and scrolls the Timeline so you can move work into the past or future. The vertical Today line marks the current day. That write also updates the Iteration field when the new dates fall in an iteration. An Epic or Feature can keep its own dates until a task or subtask is added, and then those dates come from the tasks under it. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
+            The plan is grouped by Epic. Epics start collapsed — click the orange dot to the left of an Epic name to expand or collapse its Features and tasks. Date bars use the Start and Finish fields. Drag the middle of a bar to move both dates, or drag either end to change Start or Finish. Dragging past either edge expands and scrolls the Timeline so you can move work into the past or future. The vertical Today line marks the current day. That write also updates the Iteration field when the new dates fall in an iteration. An Epic or Feature can keep its own dates until a task or subtask is added, and then those dates come from the tasks under it. A parent is marked Done when every task under it is Done, and it moves back to the first column that is not Done when one of those tasks leaves Done.
           </p>
         </div>
       )}
@@ -1828,6 +1830,8 @@ function TimelineChart({
   const [showCriticalPath, setShowCriticalPath] = useState(readShowCriticalPath);
   // When lines are hidden, hovering a bar temporarily reveals only that bar's connectors (does not flip the toggle).
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null);
+  // Epics default collapsed; ids in this set are expanded. Persisted in localStorage.
+  const [expandedEpicIds, setExpandedEpicIds] = useState(() => new Set(readExpandedEpicIds()));
   const [linkDrag, setLinkDrag] = useState<LinkDragState | null>(null);
   const [pendingLink, setPendingLink] = useState<{ predecessorId: string; successorId: string } | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<LinkEdge | null>(null);
@@ -1895,6 +1899,17 @@ function TimelineChart({
   function endRowDrag() {
     setRowDragId(null);
     setRowDropId(null);
+  }
+
+  /** Toggle one Epic’s child rows. Orange phase dot is the control; default is collapsed. */
+  function toggleEpicExpanded(epicId: string) {
+    setExpandedEpicIds((current) => {
+      const next = new Set(current);
+      if (next.has(epicId)) next.delete(epicId);
+      else next.add(epicId);
+      writeExpandedEpicIds([...next]);
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -2413,8 +2428,30 @@ function TimelineChart({
               band.key === "outside"
                 ? band.rows.map((row, index) => ({ row, range: ranges[index] }))
                 : band.rows.flatMap((row, index) => (row.kind === "epic" ? [] : [{ row, range: ranges[index] }]));
+            // Epics start collapsed; search that keeps child rows temporarily shows them.
+            const epicExpanded = epic ? expandedEpicIds.has(epic.issueId) : true;
+            const showChildren = !epic || epicExpanded || Boolean(matchIds && rows.some((item) => matchIds.has(item.row.issueId)));
             return (
-              <div className="phase active" key={band.key}>
+              <div
+                className={["phase", "active", epic ? "epic" : "", epic && !showChildren ? "collapsed" : ""]
+                  .filter(Boolean)
+                  .join(" ")}
+                key={band.key}
+              >
+                {epic && (
+                  <button
+                    type="button"
+                    className="phase-toggle"
+                    aria-expanded={showChildren}
+                    aria-label={showChildren ? `Collapse ${band.title}` : `Expand ${band.title}`}
+                    title={showChildren ? "Collapse Epic" : "Expand Epic"}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      toggleEpicExpanded(epic.issueId);
+                    }}
+                  />
+                )}
                 <div
                   className={[
                     "timeline-row",
@@ -2472,7 +2509,7 @@ function TimelineChart({
                     onHoverLeave={onBarHoverLeave}
                   />
                 </div>
-                {rows.length > 0 && (
+                {showChildren && rows.length > 0 && (
                   <div className="phase-tasks">
                     {rows.map(({ row, range }) => {
                       const rollup = row.kind === "feature" || row.kind === "epic" || Boolean(range?.fromIteration);

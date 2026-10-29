@@ -753,7 +753,8 @@ button.tab.active {
   border-bottom: 1px solid var(--oc-divider);
 }
 
-.phase::before {
+/* Non-Epic bands keep a decorative rail dot. Epic bands use .phase-toggle instead. */
+.phase:not(.epic)::before {
   content: "";
   position: absolute;
   width: 13px;
@@ -765,8 +766,36 @@ button.tab.active {
   top: 19px;
 }
 
-.phase.active::before {
+.phase.active:not(.epic)::before {
   background: #c9683e;
+  border-color: #c9683e;
+}
+
+/* Clickable Epic expand/collapse control (replaces the decorative orange rail dot). */
+.phase-toggle {
+  position: absolute;
+  box-sizing: border-box;
+  width: 13px;
+  height: 13px;
+  left: -8px;
+  top: 19px;
+  padding: 0;
+  margin: 0;
+  border: 2px solid #c9683e;
+  border-radius: 50%;
+  background: #c9683e;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.phase-toggle:hover,
+.phase-toggle:focus-visible {
+  outline: 2px solid #8a3f1f;
+  outline-offset: 2px;
+}
+
+.phase.collapsed .phase-toggle {
+  background: #fff;
   border-color: #c9683e;
 }
 
