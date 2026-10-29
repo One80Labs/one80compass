@@ -182,6 +182,17 @@ async function putAllowlist(ctx: VaultCtx, vault: VaultIngestDeps, projectId: st
     return validation(ctx.correlationId, "enabled must be a boolean.");
   }
   await vault.saveAllowlist({ customerId: project.customerId, programId: project.projectId }, ctx.body.enabled);
+  // Ingest reads the allowlist, so it must run after the save. Disable is a no-op.
+  // Failures are best-effort: the allowlist response stays 200 even if ingest throws.
+  if (ctx.body.enabled === true) {
+    await maybeAutoIngestProgram({
+      vault,
+      projectId,
+      recordedAt: ctx.deps.now().toISOString(),
+      correlationId: ctx.correlationId,
+      reason: "allowlist-enable",
+    });
+  }
   return json(200, { customerId: project.customerId, programId: project.projectId, enabled: ctx.body.enabled }, ctx.correlationId);
 }
 

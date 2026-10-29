@@ -7,6 +7,7 @@ import documentsLabelingMd from "../../../docs/sop/documents-and-labeling.md?raw
 import planHierarchyMd from "../../../docs/sop/plan-hierarchy.md?raw";
 import projectPlanErdMd from "../../../docs/sop/project-plan-erd.md?raw";
 import riskRegisterMd from "../../../docs/sop/risk-register.md?raw";
+import staffVaultUserGuideMd from "../../../docs/sop/staff-vault-user-guide.md?raw";
 import timelineGanttMd from "../../../docs/sop/timeline-gantt.md?raw";
 import vaultMcpBeginnerMd from "../../../docs/sop/vault-mcp-beginner.md?raw";
 import { MarkdownDoc } from "./markdown-doc";
@@ -86,6 +87,14 @@ const FAQ_TILES: FaqTile[] = [
     viewerTitle: "Documents and labeling",
   },
   {
+    id: "staff-vault",
+    title: "Staff vault",
+    detail: "Allowlist a project, file evidence, ingest, and draft a cited report.",
+    icon: "✎",
+    source: staffVaultUserGuideMd,
+    viewerTitle: "Staff vault",
+  },
+  {
     id: "install-use-mcp",
     title: "Install & Use MCP",
     detail: "Admin-only: connect the staff vault MCP to Cursor or Claude.",
@@ -141,7 +150,7 @@ export function FaqSettings() {
       <h3>Guides</h3>
       <p className="copy">
         Available to every signed-in role. Open a tile to read the full beginner document. Links inside a guide can open another tile here.
-        The MCP tile is readable by all; using those tools still requires an administrator account.
+        The Staff vault and MCP tiles are readable by all; allowlist, ingest, draft, and MCP tools still require an administrator account.
       </p>
       <div className="grid four faq-tiles">
         {FAQ_TILES.map((tile) => (

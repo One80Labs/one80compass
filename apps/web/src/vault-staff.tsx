@@ -99,7 +99,7 @@ export function VaultStaffControls({
       <p className="copy">
         The vault is a staff-only copy of this program. Customers never see it. Label evidence files in the table below
         (vault source label), allowlist this project, then run ingest. Ingest replaces prior vault rows for this program.
-        After ingest, use Reports → Draft from vault. Full steps live in the staff vault SOP.
+        After ingest, use Reports → Draft from vault. Step-by-step: FAQ → Staff vault.
       </p>
       {loading ? (
         <p className="copy muted">Checking allowlist…</p>

@@ -118,6 +118,75 @@ describe("handleVaultIngest", () => {
     expect(allowlist).toEqual([{ customerId: "cust-1", programId: "prog-1" }]);
   });
 
+  it("ingests the program once when an admin enables the allowlist", async () => {
+    const saved: IngestResult[] = [];
+    const { ctx, vault, allowlist } = harness({
+      groups: ["one80-admin"],
+      allowlistSeed: [],
+      onSave: (result) => saved.push(result),
+    });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "PUT", path: "/projects/prog-1/vault-allowlist", body: { enabled: true } },
+      vault,
+    );
+    expect(result?.statusCode).toBe(200);
+    expect(JSON.parse(result!.body)).toEqual({
+      customerId: "cust-1",
+      programId: "prog-1",
+      enabled: true,
+    });
+    expect(allowlist).toEqual([{ customerId: "cust-1", programId: "prog-1" }]);
+    expect(saved).toHaveLength(1);
+  });
+
+  it("removes the allowlist without ingesting when an admin disables it", async () => {
+    const saved: IngestResult[] = [];
+    const { ctx, vault, allowlist } = harness({
+      groups: ["one80-admin"],
+      allowlistSeed: [{ customerId: "cust-1", programId: "prog-1" }],
+      onSave: (result) => saved.push(result),
+    });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "PUT", path: "/projects/prog-1/vault-allowlist", body: { enabled: false } },
+      vault,
+    );
+    expect(result?.statusCode).toBe(200);
+    expect(JSON.parse(result!.body)).toEqual({
+      customerId: "cust-1",
+      programId: "prog-1",
+      enabled: false,
+    });
+    expect(allowlist).toEqual([]);
+    expect(saved).toHaveLength(0);
+  });
+
+  it("returns 200 when enabling the allowlist if ingest saveRows throws", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let saves = 0;
+    const { ctx, vault, allowlist } = harness({
+      groups: ["one80-admin"],
+      allowlistSeed: [],
+      onSave: () => {
+        saves += 1;
+        throw new Error("save blew up");
+      },
+    });
+    const result = await handleVaultIngest(
+      { ...ctx, method: "PUT", path: "/projects/prog-1/vault-allowlist", body: { enabled: true } },
+      vault,
+    );
+    expect(result?.statusCode).toBe(200);
+    expect(JSON.parse(result!.body)).toEqual({
+      customerId: "cust-1",
+      programId: "prog-1",
+      enabled: true,
+    });
+    expect(allowlist).toEqual([{ customerId: "cust-1", programId: "prog-1" }]);
+    expect(saves).toBe(1);
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
   it("does not save chunks for a document belonging to another customer", async () => {
     const saved: IngestResult[] = [];
     const { ctx, vault } = harness({

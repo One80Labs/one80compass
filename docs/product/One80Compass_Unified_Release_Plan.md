@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.12 — 2026-10-29.*
+*Single plan for the portal product and the staff AI vault. Version 1.14 — 2026-10-29.*
 
 This document **combines**:
 
@@ -19,7 +19,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | R2 Project Management + Compass ownership (Phases 1–6) | **Complete** |
 | R3 vault core (Phases 7–9) — Postgres, ingest, cited draft | **Complete** (deployed) |
 | R3 Phase 10 — Staff vault MCP | **Complete** (`services/vault-mcp`; beginner SOP; `GET …/vault-chunks`) |
-| R3 backlog — ingest UI, upload-triggered ingest, richer ontology | **Complete** (EventBridge cron residual) |
+| R3 backlog — ingest UI, upload-triggered ingest, scheduled ingest, richer ontology | **Complete** |
 | Absolute 2-hour browser session sign-out | **Complete** (auth_time + Cognito refresh 2h) |
 | R1 pilot / first external customer gate | **Not started** |
 | Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod; 2h session Done) |
@@ -80,7 +80,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | **R1 — MVP** | Cognito, tenant isolation, admin, navigation, Overview, Documents, GitHub-connected plan/Kanban, progress, basic milestones, manual reports, soft delete, audit | **Complete** in AWS dev | Pilot can complete main workflows without Confluence |
 | **R2 — Project Management** | Hierarchy, Gantt/timeline, dependencies, baselines, milestones, Compass-owned catalogs and full issue editor, GitHub → Compass import | **Complete** in AWS dev | Schedule usable in reviews; Compass can own live work |
-| **R3 — AI & Automation** | Staff vault (Postgres, ingest, cited draft), vault MCP, allowlist/ingest UX, richer ontology | **Complete** (7–10 + backlog UX/ontology); EventBridge cron residual | Staff AI drafts are auditable; agents use the vault via MCP (`services/vault-mcp`) |
+| **R3 — AI & Automation** | Staff vault (Postgres, ingest, cited draft), vault MCP, allowlist/ingest UX, richer ontology | **Complete** (7–10 + backlog UX/ontology) | Staff AI drafts are auditable; agents use the vault via MCP (`services/vault-mcp`) |
 | **R4 — Recovery & Governance** | Selective restore, bulk partial success, conflict retries, advanced document governance | **Not started** | Rich recovery without overwriting active work |
 
 ---
@@ -178,7 +178,7 @@ Code review + security scan closed Critical/High defects, then this slice landed
 | MCP registration + beginner SOP | `docs/sop/staff-vault.md` registration; `docs/sop/vault-mcp-beginner.md` install/use guide; `services/vault-mcp/README.md` | **Done** |
 | Allowlist / ingest UI in Compass | Admin Documents panel; `GET`/`PUT .../vault-allowlist`, `POST .../vault-ingest` | **Done** |
 | Upload-triggered ingest | Auto re-ingest on labeled upload complete / sourceLabel change for allowlisted programs; manual POST remains | **Done** |
-| EventBridge / cron scheduled ingest | Periodic re-ingest for plan-only changes (no document mutation); optional re-ingest on allowlist enable | **Not started** (residual) |
+| EventBridge / cron scheduled ingest | 15-minute rule `VaultIngest` re-ingests every allowlisted program so plan-only edits land without a document upload; enabling the allowlist best-effort re-ingests that program | **Done** |
 | Richer ontology | Populate risks, decisions, people; multi-hop retrieval via relations | **Done** |
 | Customer-login AI | Separate product later | Out of scope |
 | Live Krisp / Fireflies connectors | File exports only for now | Out of scope |
@@ -212,7 +212,8 @@ Moved FAQ out of Settings onto the main sidebar (`/help`) so **View**, **Contrib
 | Plan hierarchy guide | Epic → Feature → Task / Subtask | **Done** |
 | Risk Register guide | Live blocker conflicts; admin edit fields | **Done** |
 | Documents & labeling guide | Upload, versions, recycle bin, vault source labels | **Done** |
-| In-app `faq:` cross-links | Tile switching inside the viewer; MCP tile remains admin-focused | **Done** |
+| Staff vault user guide | `docs/sop/staff-vault-user-guide.md` on FAQ (`?guide=staff-vault`): label, allowlist, ingest, cited draft | **Done** |
+| In-app `faq:` cross-links | Tile switching inside the viewer; Staff vault and MCP tiles remain admin-focused | **Done** |
 
 ---
 
@@ -262,8 +263,8 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | GitHub vs Compass divergence | Skip GitHub sync when `recordSource` is compass; keep webhook/reconcile for github projects |
 | Cross-tenant vault leaks | Filter every vault query by `customerId` and `programId`; automated tests |
 | Vault cost (Aurora idle) | Serverless v2 floor; monitor ACU and Data API usage |
-| MVP / R3 scope creep | Protect exit gates; Phase 10 MCP and ontology shipped; EventBridge cron remains residual |
-| Manual ingest drift | Upload/label auto-ingest shipped; EventBridge cron still residual |
+| MVP / R3 scope creep | Protect exit gates; Phase 10 MCP, ontology, upload/label auto-ingest, allowlist-enable ingest, and EventBridge cron are shipped |
+| Manual ingest drift | Upload/label auto-ingest, allowlist-enable ingest, and EventBridge cron are shipped |
 | MFA off on prod DNS | COMP-31 Secrets Manager done; MFA.REQUIRED still required on dedicated stage/prod (§5 G2) |
 | Silent Dynamo truncation | Mitigated by `queryAll` (§5 G2) |
 
@@ -278,9 +279,10 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | `One80Labs_Portal_Product_Technical_Spec_v7.5.md` | Product/tech requirements (still authoritative for product behavior) |
 | `One80Labs_Portal_GitHub_Backlog_v7.5.csv` | Seed backlog (decompose new work from this plan) |
 | Cursor plan `ai_vault_architecture_*.plan.md` | Same todos for agent execution; keep in sync with §4–5 |
-| `docs/sop/staff-vault.md` | How staff operate the vault today |
+| `docs/sop/staff-vault.md` | Operator SOP for the vault (API examples) |
+| `docs/sop/staff-vault-user-guide.md` | Staff vault user guide — Sidebar → FAQ (`/help?guide=staff-vault`) |
 | `docs/sop/vault-mcp-beginner.md` | Beginner install and use guide for staff vault MCP (Cursor / Claude) |
-| `docs/sop/*` beginner FAQ guides | Timeline, Dependencies & Blockers, Critical path, Baselines, hierarchy, Project Plan ERD, Risk Register, Documents — Sidebar → FAQ (`/help`) |
+| `docs/sop/*` beginner FAQ guides | Timeline, Dependencies & Blockers, Critical path, Baselines, hierarchy, Project Plan ERD, Risk Register, Documents, Staff vault, MCP — Sidebar → FAQ (`/help`) |
 | `services/vault-mcp` | Stdio MCP server package (`one80compass-vault`) |
 
 ---
@@ -303,3 +305,5 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-29 | v1.10 §5 I Gantt dependency enhancements (post-v1) **Complete** (hover, lag/lead, SS/FF/SF, critical path, optional auto-reschedule); mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.11 Sidebar FAQ for all roles (`/help`); seven beginner SOP tiles + MCP; `faq:` in-app cross-links |
 | 2026-10-29 | v1.12 Plan sync: §5 J FAQ guides **Complete** in MD + in-app plan; glance + §4 D checklist updated; Gantt §5 I statuses confirmed Done |
+| 2026-10-29 | v1.13 Vault UX and ontology backlog complete; EventBridge scheduled ingest **Done** in MD; mirrored on One80Compass Dev in-app plan |
+| 2026-10-29 | v1.14 Staff vault user guide on FAQ (`docs/sop/staff-vault-user-guide.md`); mirrored on One80Compass Dev in-app plan |

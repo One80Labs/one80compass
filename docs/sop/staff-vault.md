@@ -4,6 +4,7 @@ How One80 staff use the Compass staff vault: file evidence on a program, copy th
 
 **Audience:** One80 administrators (`one80-admin` Cognito group).  
 **Site:** https://one80compass.ai  
+**In the app:** Sidebar → **FAQ** → **Staff vault** (`docs/sop/staff-vault-user-guide.md`).  
 **Related:** [ADR 0012](../adr/0012-staff-vault.md)
 
 ---
@@ -90,14 +91,16 @@ To remove the program from the allowlist, send `"enabled":false` (or turn the to
 
 ### 3. Ingest the program into the vault
 
-**Auto-ingest (allowlisted programs):** When a document becomes vault-eligible, Compass re-ingests that program in the background:
+**Auto-ingest (allowlisted programs):** Compass re-ingests an allowlisted program in the background:
 
 - Upload completes (`…/versions/{versionId}/complete`) **and** the document already has a vault source label
 - Document `sourceLabel` is set or changed to a vault label while a stored current version exists
+- An administrator enables the program on the allowlist (`"enabled":true`). Disabling (`"enabled":false`) does not ingest.
+- Every 15 minutes, EventBridge rule `VaultIngest` re-ingests every allowlisted program (plan, risks, decisions, people, and already-filed documents) so plan-only edits land without a document upload. The sweep replaces prior vault rows for that program. One program failure does not stop the others. An empty allowlist is a no-op.
 
-Auto-ingest is best-effort: a vault failure is logged and does **not** fail the upload or label API. Manual ingest remains available and is still the reliable path after plan-only changes (issues/milestones) or when you need to force a refresh.
+Auto-ingest is best-effort: a vault failure is logged and does **not** fail the upload, label, or allowlist API. Manual `POST …/vault-ingest` remains the way to force a refresh immediately.
 
-**Manual ingest:** After labels and allowlist are set (or anytime you want to force a refresh), run ingest. This replaces prior vault rows for that program (work items, milestones, filed files, chunks).
+**Manual ingest:** After labels and allowlist are set (or anytime you want to force a refresh immediately), run ingest. This replaces prior vault rows for that program (work items, milestones, filed files, chunks).
 
 ```bash
 curl -sS -X POST \
@@ -112,7 +115,7 @@ If the project is not allowlisted: `409` with message that the project is not on
 
 **When to re-ingest manually**
 
-- After plan changes (issues, milestones) that should appear in the next draft without a document mutation
+- When you need the vault refreshed immediately, instead of waiting for the 15-minute `VaultIngest` sweep. Plan-only edits are included in that sweep. Enabling the allowlist also best-effort ingests that program.
 - If auto-ingest was skipped (project not allowlisted yet) or appears stale in drafts
 
 ### 4. Draft a cited status report
@@ -260,7 +263,7 @@ Tracked in the [unified release plan](../product/One80Compass_Unified_Release_Pl
 
 - **Phase 10:** Staff vault MCP (`services/vault-mcp`) — **Done**
 - Allowlist/ingest UI in Compass — **Done** (Documents → Staff vault for admins)
-- Upload/label-triggered ingest — **Done** for allowlisted programs; EventBridge cron still residual
+- Upload/label auto-ingest, allowlist-enable ingest, and EventBridge cron — **Done**
 - Richer ontology (risks, decisions, people) + multi-hop retrieval — **Done**
 
 ## Revision
@@ -274,3 +277,5 @@ Tracked in the [unified release plan](../product/One80Compass_Unified_Release_Pl
 | 2026-10-29 | Allowlist UI Done note; GET vault-chunks; MCP registration for Cursor/Claude; Phase 10 In progress |
 | 2026-10-29 | Phase 10 Staff vault MCP marked Done |
 | 2026-10-29 | Linked beginner MCP guide (`vault-mcp-beginner.md`) |
+| 2026-10-29 | 15-minute EventBridge sweep (`VaultIngest`) and allowlist-enable ingest; upload/label, allowlist-enable, and EventBridge cron **Done** |
+| 2026-10-29 | In-app user guide `docs/sop/staff-vault-user-guide.md` on FAQ → Staff vault |

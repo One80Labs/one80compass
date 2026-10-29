@@ -269,7 +269,8 @@ export class DevStack extends cdk.Stack {
       projectRoot: path.join(__dirname, "../.."),
       depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
       runtime: lambda.Runtime.NODEJS_20_X,
-      timeout: cdk.Duration.seconds(60),
+      // EventBridge sweep of every allowlisted program; HTTP API keeps its own gateway limit.
+      timeout: cdk.Duration.minutes(5),
       environment: {
         TABLE_NAME: table.tableName,
         USER_POOL_ID: pool.userPoolId,
@@ -403,6 +404,12 @@ export class DevStack extends cdk.Stack {
     });
     apiFunction.addEnvironment("VAULT_FUNCTION_NAME", vault.vaultFunction.functionName);
     vault.vaultFunction.grantInvoke(apiFunction);
+
+    new events.Rule(this, "VaultIngest", {
+      description: "Re-ingest allowlisted staff-vault programs so plan-only edits land without a document upload.",
+      schedule: events.Schedule.rate(cdk.Duration.minutes(15)),
+      targets: [new targets.LambdaFunction(apiFunction)],
+    });
 
     new cdk.CfnOutput(this, "SiteUrl", { value: `https://${SITE_DOMAIN}` });
     new cdk.CfnOutput(this, "VaultFunctionName", { value: vault.vaultFunction.functionName });

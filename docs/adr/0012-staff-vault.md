@@ -1,6 +1,6 @@
 # ADR 0012 — Staff vault
 
-Compass DynamoDB (`one80compass-dev`) remains the live plan for customer work. This Aurora PostgreSQL database is a rebuildable staff vault: a copy of allowlisted programs and the files filed on them for staff analysis, retrieval, and status drafts. Customers do not log into the vault.
+Compass DynamoDB (`one80compass-dev`) remains the live plan for customer work. This Aurora PostgreSQL database is a rebuildable staff vault: a copy of allowlisted programs and the files filed on them for staff analysis, retrieval, and status drafts. Allowlisted programs are re-copied on a 15-minute schedule and when staff enable the allowlist, so plan edits reach the vault without a document upload. Customers do not log into the vault.
 
 The vault uses Aurora PostgreSQL Serverless v2 with the Data API and pgvector. Every vault row keeps `customer_id` and `program_id` (`program_id` is the Compass project id). Ingest, retrieval, and draft modules must filter by those keys.
 

@@ -3,11 +3,13 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { MAX_UPLOAD_BYTES } from "../../../packages/domain/src/index";
+import { dispatchApiEvent } from "./api-dispatch";
 import { createFileSigner } from "./files";
 import { loadGithubSecret } from "./github-secret";
 import { createHandler, type HttpEvent, type HttpResult } from "./router";
 import { DynamoStore } from "./store";
 import { createLoadVaultChunks, createObjectTextReader, createVaultIngestDeps } from "./vault-client";
+import { runScheduledVaultIngest, type ScheduledVaultIngestSummary } from "./vault-schedule";
 
 const tableName = required("TABLE_NAME");
 const userPoolId = required("USER_POOL_ID");
@@ -103,8 +105,23 @@ function getHandler(): Promise<ApiHandler> {
   return ready;
 }
 
-export async function handler(event: HttpEvent): Promise<HttpResult> {
-  return (await getHandler())(event);
+export async function handler(event: unknown): Promise<HttpResult | ScheduledVaultIngestSummary> {
+  return dispatchApiEvent(event, {
+    http: (httpEvent) => getHandler().then((fn) => fn(httpEvent)),
+    runSchedule: async () => {
+      if (vault === null) {
+        console.error(
+          JSON.stringify({ message: "vault scheduled ingest skipped", reason: "VAULT_FUNCTION_NAME missing" }),
+        );
+        return { programs: 0, ingested: 0, skipped: 0, failed: 0, failures: [] };
+      }
+      return runScheduledVaultIngest({
+        vault,
+        recordedAt: new Date().toISOString(),
+        correlationId: crypto.randomUUID(),
+      });
+    },
+  });
 }
 
 function required(name: string): string {

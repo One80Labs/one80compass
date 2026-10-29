@@ -43,9 +43,10 @@ Routes for the first slice:
 - `GET` and `PUT /projects/{projectId}/reports/{reportId}`
 - `POST /projects/{projectId}/reports/{reportId}/submit` and `/revise` for project writers; `/approve` and `/publish` are platform-admin only
 - `GET /projects/{projectId}/vault-allowlist` returns `{ customerId, programId, enabled }` for whether that project is on the staff vault allowlist. Administrator only.
-- `PUT /projects/{projectId}/vault-allowlist` records or clears that project on the staff vault allowlist. Administrator only. The API invokes the vault Lambda; it does not hold the vault secret.
+- `PUT /projects/{projectId}/vault-allowlist` records or clears that project on the staff vault allowlist. Administrator only. The API invokes the vault Lambda; it does not hold the vault secret. Enabling (`enabled: true`) best-effort re-ingests that program immediately; a failure is logged and does not fail the PUT. Disabling (`enabled: false`) does not ingest. The PUT response body is unchanged.
 - `POST /projects/{projectId}/vault-ingest` copies the allowlisted program and its filed documents into the vault. Administrator only. Plan and document text are read from DynamoDB and S3; rows are saved through the vault Lambda.
 - Auto-ingest (same pipeline, best-effort): after upload complete when the document has a vault `sourceLabel`, or after `sourceLabel` is set to a vault label while a stored current version exists — only when the project is on the vault allowlist. Failures are logged and do not fail the document API.
+- EventBridge sweep (not an HTTP route): every 15 minutes, rule `VaultIngest` invokes the API Lambda and re-ingests every allowlisted program. Best-effort per program: one failure does not stop the others. An empty allowlist is a no-op.
 
 Publishing stores an immutable copy and, when `putReportText` is wired, also writes that markdown under the documents bucket. A later revision edits the working draft and leaves that copy unchanged.
 
