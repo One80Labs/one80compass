@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.15 — 2026-10-29.*
+*Single plan for the portal product and the staff AI vault. Version 1.16 — 2026-10-29.*
 
 This document **combines**:
 
@@ -25,7 +25,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod; 2h session Done) |
 | Gantt dependency enhancements (post-v1) | **Complete** |
 | Sidebar FAQ beginner guides (all roles) | **Complete** |
-| Decision Register (Project Plan) | **Not started** — requirements and vault evaluation first |
+| Decision Register (Project Plan) | **Requirements written** — UI not started |
 | R4 Recovery & Governance | **Not started** |
 
 ---
@@ -216,14 +216,28 @@ Moved FAQ out of Settings onto the main sidebar (`/help`) so **View**, **Contrib
 | Staff vault user guide | `docs/sop/staff-vault-user-guide.md` on FAQ (`?guide=staff-vault`): label, allowlist, ingest, cited draft | **Done** |
 | In-app `faq:` cross-links | Tile switching inside the viewer; Staff vault and MCP tiles remain admin-focused | **Done** |
 
-### K — Decision Register — Not started
+### K — Decision Register — Requirements written
 
-Track outstanding questions and decisions on the Project Plan. How the register works is not specified yet. Do not build UI or a data model until requirements exist. Sits under **R2 — Project Management** on the One80Compass Dev plan. R2 Phases 1–6 stay complete.
+Track outstanding questions and the decisions those questions become, tied to one Epic, Feature, or Task. UI is not started. Sits under **R2 — Project Management** on the One80Compass Dev plan. R2 Phases 1–6 stay complete.
+
+View can read, including the source quote and file. Contributors add, edit, comment, resolve, and mark duplicates. Administrators archive. Archive requires a reason. A duplicate points at the surviving item.
+
+One record. Kind is Question or Decision. Status is Outstanding, Resolved, Duplicate, or Archive. Promoting a question keeps the same id and appends a history event. Type 1 (hard to undo) and Type 2 (reversible) apply only to decisions, with who decided and when.
+
+Every item: statement, raised by, raised on, assignees (people on the project), needed from (free text), target date, affects (requirements, direction, timeline, functionality, resources), blocks the linked work, one work-item link, source (kind, quote, speaker, location, when, document), comments. Questions store an answer. Decisions store an outcome and a rationale. History covers status, kind, assignee, target date, outcome, rationale, and the work-item link.
+
+When a question becomes a decision, also record who was consulted, the assumptions, what would change the decision, and what the decision does not mean.
+
+Home screen is a filterable register, not a Kanban board. Header counts: outstanding, overdue, blocking. Assigned-to-me lists outstanding items for the signed-in assignee, overdue first. Default filter is Outstanding. The same drawer adds, edits, and opens from the plan edit screen. That screen shows a count, and a warning when a linked item is outstanding and blocking.
+
+No email alerts. No live email, Teams, or transcript connectors. The suggestion inbox is the next slice: proposals from labeled transcript text (kind, work item, assignee, target date). Hypothetical or already-rejected remarks are labeled and are not a normal Accept. Nothing enters the register until a person accepts it. Accept does not create a plan issue. If the text is edited, keep the original suggestion beside it.
+
+Leave out a pros/cons table, architecture notes that do not affect the project, an informed list, and a PDF export. Options considered, a review-by date, superseded-by, and resulted-in work items come after the first screen.
 
 | Item | Notes | Status |
 | --- | --- | --- |
-| Build Requirements | Define how outstanding questions and decisions are tracked before any screen or schema | **Not started** |
-| Evaluate how Decisions are used in Vault | The vault `decision` table is filled only when a plan issue type is named Decision. That mapping is an implementation convention, not a product requirement, and no live issue uses it. Decide whether the register feeds the vault, replaces that convention, or stays separate | **Not started** |
+| Build Requirements | Accepted requirements are this section | **Done** |
+| Evaluate how Decisions are used in Vault | Recommendation: the register is the source of vault decision rows; stop using issue type Decision. Ingest still uses that convention until a later change | **Done** |
 
 ---
 
@@ -318,3 +332,4 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-29 | v1.13 Vault UX and ontology backlog complete; EventBridge scheduled ingest **Done** in MD; mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.14 Staff vault user guide on FAQ (`docs/sop/staff-vault-user-guide.md`); mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.15 §5 K Decision Register **Not started** (Build Requirements; Evaluate how Decisions are used in Vault); mirrored on One80Compass Dev in-app plan |
+| 2026-10-29 | v1.16 §5 K Decision Register requirements accepted (guidepost fields included); COMP-80 and COMP-81 **Done**; UI not started |
