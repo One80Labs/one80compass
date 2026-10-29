@@ -104,6 +104,9 @@ export interface Store {
   /** Decision rows for one project. Items that do not parse as a decision are skipped. */
   listDecisions(projectId: string): Promise<DecisionRecord[]>;
   putDecision(record: DecisionRecord): Promise<void>;
+  /** Suggestion ids already accepted or dismissed. Missing row means none. */
+  getSuggestionLedger(projectId: string): Promise<{ acceptedIds: string[]; dismissedIds: string[] }>;
+  putSuggestionLedger(projectId: string, ledger: { acceptedIds: string[]; dismissedIds: string[] }): Promise<void>;
   getOverride(projectId: string): Promise<ProgressOverride | null>;
   putOverride(override: ProgressOverride): Promise<void>;
   getSync(projectId: string): Promise<SyncState | null>;
@@ -674,6 +677,27 @@ export class DynamoStore implements Store {
     );
   }
 
+  async getSuggestionLedger(projectId: string): Promise<{ acceptedIds: string[]; dismissedIds: string[] }> {
+    const result = await this.doc.send(new GetCommand({ TableName: this.tableName, Key: { pk: proj(projectId), sk: "SUGGESTION_LEDGER" } }));
+    return suggestionLedgerFromStore(result.Item);
+  }
+
+  async putSuggestionLedger(projectId: string, ledger: { acceptedIds: string[]; dismissedIds: string[] }): Promise<void> {
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          pk: proj(projectId),
+          sk: "SUGGESTION_LEDGER",
+          entity: "suggestion-ledger",
+          projectId,
+          acceptedIds: ledger.acceptedIds,
+          dismissedIds: ledger.dismissedIds,
+        },
+      }),
+    );
+  }
+
   async getOverride(projectId: string): Promise<ProgressOverride | null> {
     const result = await this.doc.send(new GetCommand({ TableName: this.tableName, Key: { pk: proj(projectId), sk: "OVERRIDE" } }));
     return result.Item ? asOverride(result.Item) : null;
@@ -1125,6 +1149,12 @@ function asOverride(item: Item): ProgressOverride {
     actorUserId: String(item.actorUserId),
     at: String(item.at),
   };
+}
+
+function suggestionLedgerFromStore(item: Item | undefined): { acceptedIds: string[]; dismissedIds: string[] } {
+  const ids = (value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "") : []);
+  if (!item) return { acceptedIds: [], dismissedIds: [] };
+  return { acceptedIds: ids(item.acceptedIds), dismissedIds: ids(item.dismissedIds) };
 }
 
 function asReport(item: Item): StatusReport {

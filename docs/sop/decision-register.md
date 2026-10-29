@@ -12,8 +12,8 @@ A question and the decision it becomes are the same record. Changing **Kind** fr
 
 | Role | What you can do |
 | --- | --- |
-| **View** | Read the register, open a row, and read the source and history |
-| **Contributor** | Add and update items, add comments, and mark a duplicate |
+| **View** | Read the register, open a row, read the source and history, and read Suggestions |
+| **Contributor** | Add and update items, add comments, mark a duplicate, and accept or dismiss a suggestion |
 | **Administrator** | Everything a contributor can do, plus archive an item (a reason is required) |
 
 Contributors and administrators can also open the linked work item’s plan edit drawer from the register.
@@ -57,6 +57,36 @@ The page is a filterable list. It is not a board.
 The header counts outstanding items, how many of those are overdue, and how many are blocking the linked work.
 
 **Assigned to me** lists outstanding items assigned to you. Overdue items are first, then items by target date. Click a row to open it.
+
+**Suggestions** sits between Assigned to me and the register. It lists remarks already labeled in Krisp or Fireflies transcripts in the vault. Accept adds a register row. Dismiss leaves the remark off the register. Neither creates an Epic, Feature, or Task.
+
+---
+
+## Suggestions
+
+A suggestion is text wrapped in a mark inside a transcript that is already in the vault. The register does not connect to Krisp or Fireflies live.
+
+Put the whole mark in one stretch of the transcript:
+
+`[suggestion kind=question work="Decision Register" assignee="Ada Lovelace" date=2026-10-29 speaker="Ada" at=12:04] Should we keep the inbox separate? [/suggestion]`
+
+| Attribute | Meaning |
+| --- | --- |
+| `kind` | Required. `question` or `decision`. A mark without a kind is skipped. |
+| `work` | The work-item key (`COMP-79`) or the exact title. A match links the row. No match leaves the label as text. |
+| `assignee` | A project member’s name or email. A match fills the assignee. |
+| `date` | Target date as `YYYY-MM-DD`. The screen shows it as mm-dd-yyyy. A bad date is ignored. |
+| `speaker` | Who said it. Stored on the source. |
+| `at` | Where it sits in the transcript, such as a timestamp. |
+| `label` | Omit it, or use `proposal`, for a normal suggestion. `hypothetical`, `rejected`, `already-rejected`, or `discussed` cannot be accepted. Any other label is treated as only discussed. |
+
+View can read the quote, the source file, and the note (Hypothetical, Already rejected, or Only discussed). Contributors and administrators see **Accept** on a normal suggestion and **Dismiss** on every suggestion.
+
+**Accept** opens a short form: statement, kind, work item, one assignee, and target date. The statement starts as the quote. If you change it, the register keeps the original quote as **Original suggestion** and records who accepted it. Accept does not create a plan issue.
+
+**Dismiss** removes that remark from the inbox. It does not create a row. Editing the quote in the transcript later is a new suggestion.
+
+An empty inbox says **No suggestions from labeled transcripts.** That is also what you see when the project is not on the vault allowlist.
 
 ---
 
@@ -179,9 +209,9 @@ From the register, the pencil beside the **Work item** name opens this same plan
 ## What this screen does not do
 
 - There are no email alerts when a target date passes. Overdue items are marked on the register.
-- There is no suggestion inbox yet. A transcript remark does not enter the register until a later slice, and only after a person accepts it.
+- A transcript remark does not enter the register until a person accepts it. Accept does not create a plan issue.
 - Linking a work item does not create an Epic, Feature, or Task.
-- Source kinds (Email, Transcript, Teams) are a label you record. The register does not connect to those systems.
+- Source kinds (Email, Transcript, Teams) are a label you record. The register does not connect to those systems. Suggestions read Krisp and Fireflies text that is already in the vault.
 
 ---
 

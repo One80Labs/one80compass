@@ -1,6 +1,6 @@
 /**
  * Decision Register records. One row is a question or the decision that question became.
- * The suggestion inbox is a later slice; suggestionText is stored so that slice can fill it.
+ * suggestionText and acceptedBy are set when a person accepts a transcript suggestion.
  */
 
 export type DecisionKind = "question" | "decision";

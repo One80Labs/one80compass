@@ -11,6 +11,8 @@ import {
   type DecisionSource,
   type DecisionSourceKind,
 } from "../../../packages/domain/src/decisions";
+import { parseSuggestionMarks, suggestionIsAcceptable, type ParsedSuggestion, type SuggestionMark } from "../../../packages/domain/src/suggestions";
+import type { VaultChunk } from "../../vault/src/types";
 import type { HandlerDeps, HttpResult } from "./router";
 
 type DecisionCtx = {
@@ -73,6 +75,12 @@ const TEXT_KEYS = [
  * so the main router can keep dispatching.
  */
 export async function handleDecisions(ctx: DecisionCtx): Promise<HttpResult | null> {
+  const accepted = ctx.path.match(/^\/projects\/([^/]+)\/decision-suggestions\/([^/]+)\/accept$/);
+  if (accepted && ctx.method === "POST") return acceptSuggestion(ctx, decodeURIComponent(accepted[1]), decodeURIComponent(accepted[2]));
+  const dismissed = ctx.path.match(/^\/projects\/([^/]+)\/decision-suggestions\/([^/]+)\/dismiss$/);
+  if (dismissed && ctx.method === "POST") return dismissSuggestion(ctx, decodeURIComponent(dismissed[1]), decodeURIComponent(dismissed[2]));
+  const suggestions = ctx.path.match(/^\/projects\/([^/]+)\/decision-suggestions$/);
+  if (suggestions && ctx.method === "GET") return listSuggestions(ctx, decodeURIComponent(suggestions[1]));
   const comment = ctx.path.match(/^\/projects\/([^/]+)\/decisions\/([^/]+)\/comments$/);
   if (comment && ctx.method === "POST") return addComment(ctx, decodeURIComponent(comment[1]), decodeURIComponent(comment[2]));
   const duplicate = ctx.path.match(/^\/projects\/([^/]+)\/decisions\/([^/]+)\/duplicate$/);
@@ -233,6 +241,216 @@ async function loadDecision(ctx: DecisionCtx, projectId: string, decisionId: str
   return rows.find((row) => row.decisionId === decisionId) ?? null;
 }
 
+type OpenSuggestion = ParsedSuggestion & {
+  issueId: string | null;
+  assigneeIds: string[];
+  documentName: string;
+};
+
+async function listSuggestions(ctx: DecisionCtx, projectId: string): Promise<HttpResult> {
+  const project = await readable(ctx, projectId);
+  if (!project) return notFound(ctx.correlationId);
+  const suggestions = await openSuggestions(ctx, project.customerId, projectId, project.projectKey);
+  return json(200, { suggestions: suggestions.map(suggestionResponse) }, ctx.correlationId);
+}
+
+async function acceptSuggestion(ctx: DecisionCtx, projectId: string, suggestionId: string): Promise<HttpResult> {
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  if (!opened) return notFound(ctx.correlationId);
+  const open = await openSuggestions(ctx, opened.customerId, projectId, opened.projectKey);
+  const suggestion = open.find((item) => item.suggestionId === suggestionId);
+  if (!suggestion) return notFound(ctx.correlationId, "That suggestion is not in the inbox.");
+  if (!suggestionIsAcceptable(suggestion.mark)) return validation(ctx.correlationId, blockedMarkMessage(suggestion.mark));
+
+  let statement = suggestion.quote;
+  if (ctx.body.statement !== undefined) {
+    const read = textField(ctx.body.statement, "Statement");
+    if (!read.ok) return validation(ctx.correlationId, read.message);
+    statement = read.value;
+  }
+  if (!statement.trim()) return validation(ctx.correlationId, "A statement is required.");
+  const kind = ctx.body.kind === undefined ? suggestion.kind : ctx.body.kind === "question" || ctx.body.kind === "decision" ? ctx.body.kind : null;
+  if (!kind) return validation(ctx.correlationId, "kind must be question or decision.");
+  const issue = ctx.body.issueId === undefined ? { ok: true as const, value: suggestion.issueId } : await readIssueId(ctx, projectId, ctx.body.issueId);
+  if (!issue.ok) return validation(ctx.correlationId, issue.message);
+  const assignees = ctx.body.assigneeIds === undefined ? { ok: true as const, value: suggestion.assigneeIds } : readAssignees(ctx.body.assigneeIds);
+  if (!assignees.ok) return validation(ctx.correlationId, assignees.message);
+  const target = ctx.body.targetDate === undefined ? { ok: true as const, value: suggestion.targetDate } : readNullableDate(ctx.body.targetDate, "Target date");
+  if (!target.ok) return validation(ctx.correlationId, target.message);
+
+  const document = await ctx.deps.store.getDocument(suggestion.documentId);
+  const documentId = document && document.projectId === projectId ? document.documentId : null;
+  const at = ctx.deps.now().toISOString();
+  const record = createdRecord(
+    ctx,
+    opened.customerId,
+    projectId,
+    {
+      statement: statement.trim(),
+      kind,
+      raisedBy: ctx.principal.userId,
+      raisedOn: at.slice(0, 10),
+      assigneeIds: assignees.value,
+      targetDate: target.value,
+      issueId: issue.value,
+      source: {
+        kind: "transcript",
+        quote: suggestion.quote,
+        speaker: suggestion.speaker,
+        location: suggestion.location,
+        when: null,
+        documentId,
+      },
+    },
+    kind,
+    null,
+    at,
+  );
+  record.suggestionText = suggestion.quote;
+  record.acceptedBy = ctx.principal.userId;
+  await ctx.deps.store.putDecision(record);
+  const ledger = await ctx.deps.store.getSuggestionLedger(projectId);
+  await ctx.deps.store.putSuggestionLedger(projectId, {
+    acceptedIds: [...ledger.acceptedIds, suggestionId],
+    dismissedIds: ledger.dismissedIds,
+  });
+  return json(201, { decision: record }, ctx.correlationId);
+}
+
+async function dismissSuggestion(ctx: DecisionCtx, projectId: string, suggestionId: string): Promise<HttpResult> {
+  const opened = await openForWrite(ctx, projectId);
+  if (opened === "view") return viewOnly(ctx.correlationId);
+  if (!opened) return notFound(ctx.correlationId);
+  const open = await openSuggestions(ctx, opened.customerId, projectId, opened.projectKey);
+  if (!open.some((item) => item.suggestionId === suggestionId)) return notFound(ctx.correlationId, "That suggestion is not in the inbox.");
+  const ledger = await ctx.deps.store.getSuggestionLedger(projectId);
+  await ctx.deps.store.putSuggestionLedger(projectId, {
+    acceptedIds: ledger.acceptedIds,
+    dismissedIds: [...ledger.dismissedIds, suggestionId],
+  });
+  return json(200, { suggestionId }, ctx.correlationId);
+}
+
+function suggestionResponse(suggestion: OpenSuggestion) {
+  return {
+    suggestionId: suggestion.suggestionId,
+    documentId: suggestion.documentId,
+    documentName: suggestion.documentName,
+    quote: suggestion.quote,
+    kind: suggestion.kind,
+    mark: suggestion.mark,
+    acceptable: suggestionIsAcceptable(suggestion.mark),
+    issueId: suggestion.issueId,
+    workLabel: suggestion.workLabel,
+    assigneeIds: suggestion.assigneeIds,
+    assigneeLabel: suggestion.assigneeLabel,
+    targetDate: suggestion.targetDate,
+    speaker: suggestion.speaker,
+    location: suggestion.location,
+  };
+}
+
+function blockedMarkMessage(mark: SuggestionMark): string {
+  if (mark === "hypothetical") return "This remark is hypothetical. It cannot be accepted as a commitment.";
+  if (mark === "rejected") return "This remark was already rejected. It cannot be accepted as a commitment.";
+  return "This remark was only discussed. It cannot be accepted as a commitment.";
+}
+
+async function openSuggestions(ctx: DecisionCtx, customerId: string, projectId: string, projectKey: string | null): Promise<OpenSuggestion[]> {
+  const [ledger, documents, issues, settings, memberships, texts] = await Promise.all([
+    ctx.deps.store.getSuggestionLedger(projectId),
+    ctx.deps.store.listDocuments(projectId),
+    ctx.deps.store.listIssues(projectId),
+    ctx.deps.store.getSettings(projectId),
+    ctx.deps.store.listMembershipsForCustomer(customerId),
+    transcriptText(ctx, customerId, projectId),
+  ]);
+  const closed = new Set([...ledger.acceptedIds, ...ledger.dismissedIds]);
+  const names = new Map(documents.map((document) => [document.documentId, document.name]));
+  const works = issues
+    .filter((issue) => !issue.deletedAt && !issue.archived)
+    .map((issue) => ({ issueId: issue.issueId, title: issue.title, keyNumber: issue.keyNumber }));
+  const people = [
+    ...memberships.map((member) => ({ id: member.userId, labels: [member.name, member.email] })),
+    ...(settings?.assignableUsers ?? []).map((user) => ({ id: user.id, labels: [user.name ?? "", user.login] })),
+  ];
+  const open: OpenSuggestion[] = [];
+  for (const [documentId, text] of texts) {
+    for (const mark of parseSuggestionMarks(documentId, text)) {
+      if (closed.has(mark.suggestionId)) continue;
+      open.push({
+        ...mark,
+        issueId: matchIssue(mark.workLabel, projectKey, works),
+        assigneeIds: matchPeople(mark.assigneeLabel, people),
+        documentName: names.get(documentId) ?? "",
+      });
+    }
+  }
+  return open;
+}
+
+async function transcriptText(ctx: DecisionCtx, customerId: string, projectId: string): Promise<Map<string, string>> {
+  const load = ctx.deps.loadVaultChunks;
+  if (!load) return new Map();
+  let chunks: VaultChunk[] = [];
+  try {
+    chunks = await load(customerId, projectId);
+  } catch {
+    return new Map();
+  }
+  const grouped = new Map<string, VaultChunk[]>();
+  for (const chunk of chunks) {
+    if (chunk.customerId !== customerId || chunk.programId !== projectId) continue;
+    if (chunk.sourceLabel !== "krisp" && chunk.sourceLabel !== "fireflies") continue;
+    const list = grouped.get(chunk.documentId) ?? [];
+    list.push(chunk);
+    grouped.set(chunk.documentId, list);
+  }
+  const texts = new Map<string, string>();
+  for (const [documentId, list] of grouped) {
+    list.sort((left, right) => chunkIndex(left.id) - chunkIndex(right.id));
+    texts.set(documentId, list.map((chunk) => chunk.body).join("\n"));
+  }
+  return texts;
+}
+
+function chunkIndex(id: string): number {
+  const last = id.split(":").pop() ?? "";
+  const index = Number(last);
+  return Number.isInteger(index) ? index : 0;
+}
+
+function matchIssue(
+  label: string,
+  projectKey: string | null,
+  issues: { issueId: string; title: string; keyNumber: number | null }[],
+): string | null {
+  const text = label.trim();
+  if (!text) return null;
+  const key = projectKey?.trim();
+  if (key) {
+    const match = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-(\\d+)$`, "i").exec(text);
+    if (match) {
+      const number = Number(match[1]);
+      const found = issues.find((issue) => issue.keyNumber === number);
+      if (found) return found.issueId;
+    }
+  }
+  const titled = issues.find((issue) => issue.title.trim().toLowerCase() === text.toLowerCase());
+  return titled?.issueId ?? null;
+}
+
+function matchPeople(label: string, people: { id: string; labels: string[] }[]): string[] {
+  const text = label.trim().toLowerCase();
+  if (!text) return [];
+  const ids: string[] = [];
+  for (const person of people) {
+    if (person.labels.some((item) => item.trim().toLowerCase() === text) && !ids.includes(person.id)) ids.push(person.id);
+  }
+  return ids;
+}
+
 function createdRecord(
   ctx: DecisionCtx,
   customerId: string,
@@ -270,7 +488,6 @@ function createdRecord(
     doesNotMean: fields.doesNotMean ?? "",
     duplicateOfId: null,
     archiveReason: "",
-    // Filled later by the suggestion inbox. Accept does not create a plan issue.
     suggestionText: null,
     acceptedBy: null,
     comments: [],
@@ -564,8 +781,8 @@ function validation(correlationId: string, message: string): HttpResult {
   return json(400, { code: "VALIDATION", message, correlationId }, correlationId);
 }
 
-function notFound(correlationId: string): HttpResult {
-  return json(404, { code: "NOT_FOUND", message: "Not found.", correlationId }, correlationId);
+function notFound(correlationId: string, message = "Not found."): HttpResult {
+  return json(404, { code: "NOT_FOUND", message, correlationId }, correlationId);
 }
 
 function json(statusCode: number, payload: unknown, correlationId: string): HttpResult {

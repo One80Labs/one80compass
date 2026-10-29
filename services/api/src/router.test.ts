@@ -275,6 +275,12 @@ function memoryStore(): Store & {
       if (index >= 0) decisions[index] = record;
       else decisions.push(record);
     },
+    async getSuggestionLedger() {
+      return { acceptedIds: [] as string[], dismissedIds: [] as string[] };
+    },
+    async putSuggestionLedger() {
+      return undefined;
+    },
     documents,
     folders,
     versions,

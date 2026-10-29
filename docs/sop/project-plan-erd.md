@@ -289,7 +289,7 @@ One DynamoDB item is either a **question** or the **decision** that question bec
 | `consulted`, `assumptions`, `whatWouldChange`, `doesNotMean` | string | Guidepost fields on promote |
 | `duplicateOfId` | string \| null | Pointer to surviving decision |
 | `archiveReason` | string | Why archived |
-| `suggestionText`, `acceptedBy` | string \| null | Reserved for suggestion inbox |
+| `suggestionText`, `acceptedBy` | string \| null | Original transcript quote and who accepted it. Null on a row added by hand |
 | `comments` | `{ commentId, at, by, body }[]` | Embedded thread |
 | `history` | `{ at, by, field, from, to }[]` | Status / kind / assignee / … events |
 | `createdAt`, `updatedAt`, `updatedBy` | string | Audit |

@@ -423,3 +423,135 @@ describe("decision register API", () => {
     expect(decisionsFrom(response)).toEqual([stored]);
   });
 });
+
+describe("suggestion inbox", () => {
+  const transcript = [
+    "[suggestion kind=question work=ALPH-79 assignee=\"Ada Lovelace\" date=2026-11-13 speaker=Nick at=00:04]",
+    "Should the register stay a list?",
+    "[/suggestion]",
+    "[suggestion kind=decision label=hypothetical]",
+    "We might drop the register.",
+    "[/suggestion]",
+  ].join("\n");
+
+  function inboxHarness() {
+    const { rows, issues, documents, ctx, send } = harness();
+    const ledger = { acceptedIds: [] as string[], dismissedIds: [] as string[] };
+    issues.push({ issueId: "issue-9", projectId: "proj-1", title: "Decision Register", keyNumber: 79, deletedAt: null, archived: false } as never);
+    documents.push({ documentId: "doc-1", projectId: "proj-1", name: "Standup" } as never);
+    const deps = ctx("contributor", "GET", "/projects/proj-1/decision-suggestions").deps;
+    deps.store.listDocuments = async (projectId: string) =>
+      documents.filter((document) => document.projectId === projectId) as Awaited<ReturnType<Store["listDocuments"]>>;
+    deps.store.getSettings = async () => null;
+    deps.store.listMembershipsForCustomer = async () => [{ ...member("user-1", "ada@example.com", "contributor"), name: "Ada Lovelace" }];
+    deps.store.getSuggestionLedger = async () => ledger;
+    deps.store.putSuggestionLedger = async (_projectId: string, next: { acceptedIds: string[]; dismissedIds: string[] }) => {
+      ledger.acceptedIds = next.acceptedIds;
+      ledger.dismissedIds = next.dismissedIds;
+    };
+    deps.store.putIssue = async () => {
+      throw new Error("accept must not create a plan issue");
+    };
+    deps.loadVaultChunks = async () => [
+      {
+        id: "cust-1:proj-1:doc-1:ver-1:1",
+        customerId: "cust-1",
+        programId: "proj-1",
+        sourceType: "document",
+        sourceId: "doc-1",
+        recordedAt: NOW,
+        sourceLabel: "fireflies",
+        documentId: "doc-1",
+        versionId: "ver-1",
+        body: transcript,
+        embedding: null,
+      },
+      {
+        id: "cust-1:proj-1:doc-2:ver-1:0",
+        customerId: "cust-1",
+        programId: "proj-1",
+        sourceType: "document",
+        sourceId: "doc-2",
+        recordedAt: NOW,
+        sourceLabel: "compass-upload",
+        documentId: "doc-2",
+        versionId: "ver-1",
+        body: "[suggestion kind=question]This upload is not a transcript.[/suggestion]",
+        embedding: null,
+      },
+    ];
+    return { rows, issues, ledger, send };
+  }
+
+  it("lists transcript proposals and keeps hypothetical remarks from a normal accept", async () => {
+    const { send, rows } = inboxHarness();
+    const listed = await send("view", "GET", "/projects/proj-1/decision-suggestions");
+    expect(listed.statusCode).toBe(200);
+    const suggestions = (JSON.parse(listed.body) as { suggestions: { suggestionId: string; quote: string; mark: string; acceptable: boolean; issueId: string | null; assigneeIds: string[]; documentName: string }[] }).suggestions;
+    expect(suggestions.map((item) => [item.quote, item.mark, item.acceptable])).toEqual([
+      ["Should the register stay a list?", "proposal", true],
+      ["We might drop the register.", "hypothetical", false],
+    ]);
+    expect(suggestions[0].issueId).toBe("issue-9");
+    expect(suggestions[0].assigneeIds).toEqual(["user-1"]);
+    expect(suggestions[0].documentName).toBe("Standup");
+
+    const blocked = await send("contributor", "POST", `/projects/proj-1/decision-suggestions/${suggestionId(suggestions[1])}/accept`, {});
+    expect(blocked.statusCode).toBe(400);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("accepts an edited proposal onto the register and does not create a plan issue", async () => {
+    const { send, rows, issues } = inboxHarness();
+    const listed = await send("contributor", "GET", "/projects/proj-1/decision-suggestions");
+    const suggestions = (JSON.parse(listed.body) as { suggestions: { suggestionId: string; quote: string }[] }).suggestions;
+    const denied = await send("view", "POST", `/projects/proj-1/decision-suggestions/${suggestions[0].suggestionId}/accept`, {
+      statement: "Keep the register a list.",
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const accepted = await send("contributor", "POST", `/projects/proj-1/decision-suggestions/${suggestions[0].suggestionId}/accept`, {
+      statement: "Keep the register a list.",
+      kind: "question",
+      issueId: "issue-9",
+      assigneeIds: ["user-1"],
+      targetDate: "2026-11-13",
+    });
+    expect(accepted.statusCode).toBe(201);
+    expect(decisionFrom(accepted)).toMatchObject({
+      statement: "Keep the register a list.",
+      suggestionText: "Should the register stay a list?",
+      acceptedBy: "user-1",
+      kind: "question",
+      issueId: "issue-9",
+      assigneeIds: ["user-1"],
+      targetDate: "2026-11-13",
+      source: { kind: "transcript", quote: "Should the register stay a list?", documentId: "doc-1", speaker: "Nick" },
+    });
+    expect(rows).toHaveLength(1);
+    expect(issues).toHaveLength(1);
+
+    const again = await send("contributor", "POST", `/projects/proj-1/decision-suggestions/${suggestions[0].suggestionId}/accept`, {
+      statement: "Keep the register a list.",
+    });
+    expect(again.statusCode).toBe(404);
+    expect(rows).toHaveLength(1);
+    const remaining = (JSON.parse((await send("view", "GET", "/projects/proj-1/decision-suggestions")).body) as { suggestions: { quote: string }[] }).suggestions;
+    expect(remaining.map((item) => item.quote)).toEqual(["We might drop the register."]);
+  });
+
+  it("dismisses a proposal without adding a register row", async () => {
+    const { send, rows } = inboxHarness();
+    const listed = await send("contributor", "GET", "/projects/proj-1/decision-suggestions");
+    const suggestions = (JSON.parse(listed.body) as { suggestions: { suggestionId: string }[] }).suggestions;
+    const dismissed = await send("contributor", "POST", `/projects/proj-1/decision-suggestions/${suggestions[1].suggestionId}/dismiss`, {});
+    expect(dismissed.statusCode).toBe(200);
+    expect(rows).toHaveLength(0);
+    const remaining = (JSON.parse((await send("view", "GET", "/projects/proj-1/decision-suggestions")).body) as { suggestions: { suggestionId: string }[] }).suggestions;
+    expect(remaining.map((item) => item.suggestionId)).toEqual([suggestions[0].suggestionId]);
+  });
+});
+
+function suggestionId(suggestion: { suggestionId?: string }): string {
+  return suggestion.suggestionId ?? "";
+}

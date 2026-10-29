@@ -67,3 +67,47 @@ export function duplicateDecision(projectId: string, idToken: string, decisionId
 export function archiveDecision(projectId: string, idToken: string, decisionId: string, reason: string): Promise<DecisionResponse> {
   return api<DecisionResponse>(`/projects/${projectId}/decisions/${decisionId}/archive`, idToken, { method: "POST", body: { reason } });
 }
+
+export type DecisionSuggestion = {
+  suggestionId: string;
+  documentId: string;
+  documentName: string;
+  quote: string;
+  kind: "question" | "decision";
+  mark: "proposal" | "hypothetical" | "rejected" | "discussed";
+  acceptable: boolean;
+  issueId: string | null;
+  workLabel: string;
+  assigneeIds: string[];
+  assigneeLabel: string;
+  targetDate: string | null;
+  speaker: string;
+  location: string;
+};
+
+export type SuggestionAccept = {
+  statement: string;
+  kind: "question" | "decision";
+  issueId: string | null;
+  assigneeIds: string[];
+  targetDate: string | null;
+};
+
+/** Proposals parsed from Krisp and Fireflies transcripts. Accepted and dismissed rows are omitted. */
+export async function listSuggestions(projectId: string, idToken: string): Promise<{ suggestions: DecisionSuggestion[] }> {
+  const result = await api<{ suggestions: DecisionSuggestion[] }>(`/projects/${projectId}/decision-suggestions`, idToken);
+  return { suggestions: Array.isArray(result.suggestions) ? result.suggestions : [] };
+}
+
+/** Creates a register row from a proposal. Does not create a plan issue. */
+export function acceptSuggestion(projectId: string, idToken: string, suggestionId: string, body: SuggestionAccept): Promise<DecisionResponse> {
+  return api<DecisionResponse>(`/projects/${projectId}/decision-suggestions/${encodeURIComponent(suggestionId)}/accept`, idToken, {
+    method: "POST",
+    body,
+  });
+}
+
+/** Drops a proposal. Does not create a register row. */
+export function dismissSuggestion(projectId: string, idToken: string, suggestionId: string): Promise<void> {
+  return api(`/projects/${projectId}/decision-suggestions/${encodeURIComponent(suggestionId)}/dismiss`, idToken, { method: "POST", body: {} });
+}

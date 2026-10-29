@@ -2589,6 +2589,32 @@ form.dialog {
   line-height: 1.5;
 }
 
+.decision-assigned h2,
+.suggestion-inbox h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.suggestion-quote {
+  white-space: normal;
+  max-width: 28rem;
+}
+
+.suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.suggestion-accept {
+  margin-top: 8px;
+  max-width: 36rem;
+}
+
+.suggestion-accept label + label {
+  margin-top: 10px;
+}
+
 .decision-table {
   width: 100%;
   border-collapse: collapse;

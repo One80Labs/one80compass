@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.17 — 2026-10-29.*
+*Single plan for the portal product and the staff AI vault. Version 1.18 — 2026-10-29.*
 
 This document **combines**:
 
@@ -25,7 +25,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod; 2h session Done) |
 | Gantt dependency enhancements (post-v1) | **Complete** |
 | Sidebar FAQ beginner guides (all roles) | **Complete** |
-| Decision Register (Project Plan) | **In progress** — register and plan marker shipped; suggestion inbox not started |
+| Decision Register (Project Plan) | **Complete** — register, plan marker, and suggestion inbox |
 | R4 Recovery & Governance | **Not started** |
 
 ---
@@ -216,9 +216,9 @@ Moved FAQ out of Settings onto the main sidebar (`/help`) so **View**, **Contrib
 | Staff vault user guide | `docs/sop/staff-vault-user-guide.md` on FAQ (`?guide=staff-vault`): label, allowlist, ingest, cited draft | **Done** |
 | In-app `faq:` cross-links | Tile switching inside the viewer; Staff vault and MCP tiles remain admin-focused | **Done** |
 
-### K — Decision Register — In progress
+### K — Decision Register — Complete
 
-Track outstanding questions and the decisions those questions become, tied to one Epic, Feature, or Task. The register, the detail drawer, and the plan-edit marker are in the app. The suggestion inbox is not started. Sits under **R2 — Project Management** on the One80Compass Dev plan. R2 Phases 1–6 stay complete.
+Track outstanding questions and the decisions those questions become, tied to one Epic, Feature, or Task. The register, the detail drawer, the plan-edit marker, and the suggestion inbox are in the app. Sits under **R2 — Project Management** on the One80Compass Dev plan. R2 Phases 1–6 stay complete.
 
 View can read, including the source quote and file. Contributors add, edit, comment, resolve, and mark duplicates. Administrators archive. Archive requires a reason. A duplicate points at the surviving item.
 
@@ -230,7 +230,7 @@ When a question becomes a decision, also record who was consulted, the assumptio
 
 Home screen is a filterable register, not a Kanban board. Header counts: outstanding, overdue, blocking. Assigned-to-me lists outstanding items for the signed-in assignee, overdue first. Default filter is Outstanding. The same drawer adds, edits, and opens from the plan edit screen. That screen shows a count, and a warning when a linked item is outstanding and blocking.
 
-No email alerts. No live email, Teams, or transcript connectors. The suggestion inbox is the next slice: proposals from labeled transcript text (kind, work item, assignee, target date). Hypothetical or already-rejected remarks are labeled and are not a normal Accept. Nothing enters the register until a person accepts it. Accept does not create a plan issue. If the text is edited, keep the original suggestion beside it.
+No email alerts. No live email, Teams, or transcript connectors. Suggestions come from labeled transcript text already in the vault (kind, work item, assignee, target date). Hypothetical, already-rejected, or only-discussed remarks are labeled and are not a normal Accept. Nothing enters the register until a person accepts it. Accept does not create a plan issue. If the text is edited, the original suggestion stays beside the saved statement. Vault ingest still uses the issue-type convention until a later change.
 
 Leave out a pros/cons table, architecture notes that do not affect the project, an informed list, and a PDF export. Options considered, a review-by date, superseded-by, and resulted-in work items come after the first screen.
 
@@ -239,7 +239,7 @@ Leave out a pros/cons table, architecture notes that do not affect the project, 
 | Build Requirements | Accepted requirements are this section | **Done** |
 | Evaluate how Decisions are used in Vault | Recommendation: the register is the source of vault decision rows; stop using issue type Decision. Ingest still uses that convention until a later change | **Done** |
 | Register screen | Filterable register, detail drawer, manual source, and the plan-edit count and blocking warning | **Done** |
-| Suggestion inbox | Proposals from labeled transcript text. A person accepts or dismisses. Accept does not create a plan issue | **Not started** |
+| Suggestion inbox | Proposals from labeled transcript text. A person accepts or dismisses. Accept does not create a plan issue | **Done** |
 
 ---
 
@@ -336,3 +336,4 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-29 | v1.15 §5 K Decision Register **Not started** (Build Requirements; Evaluate how Decisions are used in Vault); mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.16 §5 K Decision Register requirements accepted (guidepost fields included); COMP-80 and COMP-81 **Done**; UI not started |
 | 2026-10-29 | v1.17 §5 K Decision Register screen **Done** (register, drawer, plan marker); suggestion inbox **Not started**; mirrored on One80Compass Dev in-app plan |
+| 2026-10-29 | v1.18 §5 K suggestion inbox **Done**; COMP-79 and COMP-82 **Done**; vault ingest still uses the issue-type convention |

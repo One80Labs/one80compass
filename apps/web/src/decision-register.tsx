@@ -21,6 +21,7 @@ import {
 } from "./decision-client";
 import { DecisionDrawer } from "./decision-drawer";
 import { PlanIssueEditDrawer, usePlan } from "./plan";
+import { SuggestionInbox } from "./suggestion-inbox";
 import { usePortal } from "./shell";
 import { EditRowButton, PageHead, Pill, formatWhen } from "./ui";
 
@@ -226,6 +227,16 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
               </div>
             )}
           </section>
+          {session && (
+            <SuggestionInbox
+              projectId={projectId}
+              idToken={session.idToken}
+              canWrite={canWrite}
+              issues={issues}
+              members={members}
+              onAccepted={refreshDecisions}
+            />
+          )}
           <section className="panel">
             <div className="toolbar decision-filters">
               <label>
