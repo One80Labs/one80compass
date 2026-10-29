@@ -346,7 +346,13 @@ export function DecisionDrawer(props: {
         </label>
         <label>
           When
-          <input className="field" value={source.when ?? ""} readOnly={locked} placeholder="YYYY-MM-DD or ISO-8601" onChange={(event) => editSource({ when: event.target.value || null })} />
+          <input
+            className="field"
+            value={locked ? formatWhen(source.when ?? "") : (source.when ?? "")}
+            readOnly={locked}
+            placeholder="YYYY-MM-DD"
+            onChange={(event) => editSource({ when: event.target.value || null })}
+          />
         </label>
         <label>
           Document
@@ -646,11 +652,11 @@ function siblingStatement(siblings: DecisionRecord[], id: string): string {
 function showStored(value: string | null, members: PersonOption[]): string {
   if (!value) return "—";
   if (members.some((person) => person.id === value)) return personName(members, value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return formatWhen(value);
   return VALUE_LABEL[value] ?? value;
 }
 
 function showWhen(value: string): string {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return formatWhen(value);
 }
 

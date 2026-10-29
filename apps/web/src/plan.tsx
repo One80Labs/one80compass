@@ -85,7 +85,7 @@ import {
   type KanbanIssueTypeFilter,
 } from "./kanban-filters";
 import { matchPlanIssues, planSearchIsActive, planSearchKeepIds } from "./plan-search";
-import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs } from "./ui";
+import { EditDrawer, EditRowButton, Notice, PageHead, Pill, Tabs, formatWhen } from "./ui";
 
 type PlanIssue = {
   issueId: string;
@@ -313,30 +313,13 @@ export function PlanPage({ session }: { session: Session | null }) {
         />
       )}
       {plan.review && (
-        <div className="dialog-layer">
-          <div className="dialog" role="dialog" aria-labelledby="dependency-review-title">
-            <h2 id="dependency-review-title">Later tasks are affected</h2>
-            <p>Approving moves each task below so it starts the day after the task it depends on. Keeping the later dates leaves the overlap on the plan.</p>
-            <ul>
-              {plan.review.proposals.map((proposal) => (
-                <li key={proposal.issueId}>
-                  {proposal.title} moves from {proposal.fromStart} – {proposal.fromFinish} to {proposal.toStart} – {proposal.toFinish}.
-                </li>
-              ))}
-            </ul>
-            <div className="dialog-actions">
-              <button className="btn primary" type="button" disabled={plan.busy} onClick={() => void plan.decide("approve")}>
-                Approve the moves
-              </button>
-              <button className="btn" type="button" disabled={plan.busy} onClick={() => void plan.decide("reject")}>
-                Keep the later dates
-              </button>
-              <button className="btn" type="button" disabled={plan.busy} onClick={plan.clearReview}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <DependencyReviewDialog
+          proposals={plan.review.proposals}
+          busy={plan.busy}
+          onApprove={() => void plan.decide("approve")}
+          onReject={() => void plan.decide("reject")}
+          onCancel={plan.clearReview}
+        />
       )}
       {addKind && (
         <AddPlanDrawer
@@ -1127,6 +1110,166 @@ function IssueDrawer({
   );
 }
 
+/** Asks before a date change moves later tasks. Shared by the plan and the Decision Register. */
+function DependencyReviewDialog({
+  proposals,
+  busy,
+  onApprove,
+  onReject,
+  onCancel,
+}: {
+  proposals: ProposedShift[];
+  busy: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="dialog-layer">
+      <div className="dialog" role="dialog" aria-labelledby="dependency-review-title">
+        <h2 id="dependency-review-title">Later tasks are affected</h2>
+        <p>Approving moves each task below so it starts the day after the task it depends on. Keeping the later dates leaves the overlap on the plan.</p>
+        <ul>
+          {proposals.map((proposal) => (
+            <li key={proposal.issueId}>
+              {proposal.title} moves from {proposal.fromStart} – {proposal.fromFinish} to {proposal.toStart} – {proposal.toFinish}.
+            </li>
+          ))}
+        </ul>
+        <div className="dialog-actions">
+          <button className="btn primary" type="button" disabled={busy} onClick={onApprove}>
+            Approve the moves
+          </button>
+          <button className="btn" type="button" disabled={busy} onClick={onReject}>
+            Keep the later dates
+          </button>
+          <button className="btn" type="button" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Plan edit drawer for one work item. The Decision Register opens this from the pencil
+ * beside the Work item name. Stays mounted so a dependency review can finish after the drawer closes.
+ */
+export function PlanIssueEditDrawer({
+  plan,
+  session,
+  issueId,
+  canWrite,
+  canArchive,
+  onClose,
+}: {
+  plan: ReturnType<typeof usePlan>;
+  session: Session | null;
+  issueId: string | null;
+  canWrite: boolean;
+  canArchive: boolean;
+  onClose: () => void;
+}) {
+  const { projectId = "" } = useParams();
+  const stored = plan.data?.issues ?? [];
+  const active = activePlanIssues(stored);
+  const editing = issueId ? (stored.find((issue) => issue.issueId === issueId && !issue.deletedAt) ?? null) : null;
+  const issues = editing && !active.some((issue) => issue.issueId === editing.issueId) ? [editing, ...active] : active;
+  const columns = plan.data?.settings?.columns?.length ? plan.data.settings.columns : defaultColumns;
+  const workstreamNumber = plan.data?.settings?.workstreamNumber ?? null;
+  const projectKey = plan.data?.projectKey ?? null;
+  const decisionMarker = editing ? (
+    <IssueDecisionMarker
+      projectId={projectId}
+      issueId={editing.issueId}
+      session={session}
+      canWrite={canWrite}
+      canArchive={canArchive}
+      issues={issues}
+      projectKey={projectKey}
+      members={decisionMembers(plan.data)}
+    />
+  ) : null;
+
+  return (
+    <>
+      {plan.review && (
+        <DependencyReviewDialog
+          proposals={plan.review.proposals}
+          busy={plan.busy}
+          onApprove={() => void plan.decide("approve")}
+          onReject={() => void plan.decide("reject")}
+          onCancel={plan.clearReview}
+        />
+      )}
+      {editing && canWrite && plan.data?.settings?.recordSource === "compass" && (
+        <CompassIssueDrawer
+          key={editing.issueId}
+          issue={editing}
+          issues={issues}
+          displayKey={actionItemKey(plan.data.projectKey, editing.keyNumber)}
+          catalogs={{
+            statusOptions: plan.data.settings.statusOptions ?? [],
+            labels: plan.data.settings.labels ?? [],
+            issueTypes: plan.data.settings.issueTypes ?? [],
+            priorityOptions: plan.data.settings.priorityOptions ?? [],
+            milestones: plan.data.settings.milestones ?? [],
+          }}
+          members={plan.data.members ?? []}
+          columns={columns}
+          iterations={plan.data.settings.iterations ?? []}
+          users={plan.data.settings.assignableUsers ?? []}
+          datesDerived={derivedDates(editing, issues, workstreamNumber)}
+          derivedStart={rolledDates(editing, issues, workstreamNumber)?.startDate ?? null}
+          derivedFinish={rolledDates(editing, issues, workstreamNumber)?.finishDate ?? null}
+          onClose={onClose}
+          onSave={async (id, change) => {
+            await plan.saveIssue(id, change);
+            onClose();
+          }}
+          onDelete={
+            hasActiveChildren(editing.issueId, issues)
+              ? null
+              : async () => {
+                  await plan.deleteIssue(editing.issueId);
+                  onClose();
+                }
+          }
+          decisionMarker={decisionMarker}
+        />
+      )}
+      {editing && canWrite && plan.data && plan.data.settings?.recordSource !== "compass" && (
+        <IssueDrawer
+          key={editing.issueId}
+          issue={editing}
+          displayKey={actionItemKey(plan.data.projectKey, editing.keyNumber)}
+          columns={columns}
+          iterations={plan.data.settings?.iterations ?? []}
+          users={plan.data.settings?.assignableUsers ?? []}
+          datesDerived={derivedDates(editing, issues, workstreamNumber)}
+          derivedStart={rolledDates(editing, issues, workstreamNumber)?.startDate ?? null}
+          derivedFinish={rolledDates(editing, issues, workstreamNumber)?.finishDate ?? null}
+          onClose={onClose}
+          onSave={async (id, change) => {
+            await plan.saveIssue(id, change);
+            onClose();
+          }}
+          onDelete={
+            hasActiveChildren(editing.issueId, issues)
+              ? null
+              : async () => {
+                  await plan.deleteIssue(editing.issueId);
+                  onClose();
+                }
+          }
+          decisionMarker={decisionMarker}
+        />
+      )}
+    </>
+  );
+}
+
 function derivedDates(issue: PlanIssue, issues: PlanIssue[], workstreamNumber: number | null): boolean {
   return derivedSchedule(issues.map(planNode), workstreamNumber, issue.issueId) !== null;
 }
@@ -1510,7 +1653,8 @@ function GithubForm({
   );
 }
 
-function usePlan(session: Session | null) {
+/** Loads the project plan and saves issue edits. The Decision Register uses this for the Work item drawer. */
+export function usePlan(session: Session | null) {
   const { projectId = "" } = useParams();
   const [data, setData] = useState<PlanResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -3375,8 +3519,7 @@ function statusTone(status: string): "" | "good" | "orange" | "blue" {
 }
 
 function shortDate(iso: string): string {
-  const [, month, day] = iso.split("-");
-  return `${Number(month)}/${Number(day)}`;
+  return formatWhen(iso);
 }
 
 /** Short parenthetical for UI copy when lag/lead is non-zero. Empty string when lag is 0. */
@@ -3862,9 +4005,9 @@ export function MilestonePanel({
                 </Pill>
               </div>
               <p className="small muted">
-                Target {milestone.targetDate ?? "not set"}. Forecast {milestone.forecastDate ?? "not set"}. {milestone.doneCount} done,{" "}
-                {milestone.openCount} open.
-                {milestone.confirmedAt ? ` Confirmed ${milestone.confirmedAt.slice(0, 10)}.` : ""}
+                Target {milestone.targetDate ? formatWhen(milestone.targetDate) : "not set"}. Forecast{" "}
+                {milestone.forecastDate ? formatWhen(milestone.forecastDate) : "not set"}. {milestone.doneCount} done, {milestone.openCount} open.
+                {milestone.confirmedAt ? ` Confirmed ${formatWhen(milestone.confirmedAt)}.` : ""}
               </p>
               {milestone.state === "confirmed" && milestone.workOpen && (
                 <p className="copy">A task on this milestone is open again. Reopen the confirmation and include the reason.</p>

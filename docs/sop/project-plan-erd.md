@@ -2,7 +2,7 @@
 
 One80Compass stores the live **Project Plan** in a single DynamoDB table (`one80compass-dev` in dev). Rows share one physical primary key (`pk` + `sk`). The diagram below is the **logical** model: entities, composite keys, and application-level foreign keys.
 
-**Related:** [Plan hierarchy](faq:plan-hierarchy) · [Baselines](faq:baselines) · [Risk Register](faq:risk-register) · [Dependencies and Blockers](faq:dependencies-blockers)
+**Related:** [Plan hierarchy](faq:plan-hierarchy) · [Baselines](faq:baselines) · [Risk Register](faq:risk-register) · [Decision Register](faq:decision-register) · [Dependencies and Blockers](faq:dependencies-blockers)
 
 ---
 
@@ -29,6 +29,7 @@ erDiagram
   PROJECT ||--o{ PLAN_ISSUE : contains
   PROJECT ||--o{ BASELINE : snapshots
   PROJECT ||--o{ RISK : register
+  PROJECT ||--o{ DECISION : register
   PROJECT ||--o{ MILESTONE_CONFIRM : confirms
   PROJECT ||--o| PROGRESS_OVERRIDE : progress
   PROJECT ||--o| SYNC_STATE : sync
@@ -40,6 +41,11 @@ erDiagram
   BASELINE ||--o{ BASELINE_TASK : embeds
   RISK }o--|| PLAN_ISSUE : "issueId"
   RISK }o--o| PLAN_ISSUE : "predecessorId"
+  DECISION }o--o| PLAN_ISSUE : "issueId"
+  DECISION ||--o{ DECISION : "duplicateOfId"
+  DECISION ||--o{ DECISION_COMMENT : embeds
+  DECISION ||--o{ DECISION_HISTORY : embeds
+  DECISION ||--o| DECISION_SOURCE : embeds
 
   CUSTOMER {
     string pk_PK "CUST#customerId"
@@ -144,6 +150,46 @@ erDiagram
     string dateCleared
   }
 
+  DECISION {
+    string pk_PK "PROJ#projectId"
+    string sk_PK "DECISION#decisionId"
+    string decisionId
+    string projectId_FK
+    string customerId_FK
+    string kind "question|decision"
+    string status
+    string statement
+    string issueId_FK
+    string duplicateOfId_FK
+    boolean blocksWork
+    list assigneeIds
+    list comments
+    list history
+  }
+
+  DECISION_COMMENT {
+    string commentId
+    string at
+    string by
+    string body
+  }
+
+  DECISION_HISTORY {
+    string at
+    string by
+    string field
+    string from
+    string to
+  }
+
+  DECISION_SOURCE {
+    string kind
+    string quote
+    string speaker
+    string documentId_FK
+    string when
+  }
+
   MILESTONE_CONFIRM {
     string pk_PK "PROJ#projectId"
     string sk_PK "MILESTONE#key"
@@ -188,6 +234,7 @@ Every item uses composite **`pk` + `sk`**. Optional **GSI1** uses `gsi1pk` + `gs
 | Baseline | `PROJ#{projectId}` | `BASELINE#{baselineId}` | Schedule snapshot |
 | Baseline sequence | `PROJ#{projectId}` | `BASELINE_SEQ` | Next baseline number |
 | Risk | `PROJ#{projectId}` | `RISK#{riskId}` | Risk Register row |
+| Decision | `PROJ#{projectId}` | `DECISION#{decisionId}` | Decision Register (question or decision) |
 | Milestone confirm | `PROJ#{projectId}` | `MILESTONE#{key}` | Confirm/reopen history |
 | Progress override | `PROJ#{projectId}` | `OVERRIDE` | One row per project |
 | Sync state | `PROJ#{projectId}` | `SYNC` | GitHub sync health |
@@ -210,6 +257,42 @@ Every item uses composite **`pk` + `sk`**. Optional **GSI1** uses `gsi1pk` + `gs
 | Baseline task | `issueId` | Plan issue | Snapshot of that task |
 | Risk | `issueId` | Plan issue | Successor in a schedule conflict |
 | Risk | `predecessorId` | Plan issue | Blocker that conflicts |
+| Decision | `issueId` | Plan issue | One linked Epic / Feature / Task |
+| Decision | `duplicateOfId` | Decision | Surviving row when status is duplicate |
+| Decision | `source.documentId` | Document | Optional evidence document |
+| Decision | `assigneeIds[]` | Membership users | People on the project |
+
+---
+
+## Decision fields (attributes)
+
+One DynamoDB item is either a **question** or the **decision** that question became (`kind`). Promoting keeps the same `decisionId`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `decisionId` | string | Logical id; also in `sk` |
+| `kind` | question \| decision | Promote in place |
+| `status` | outstanding \| resolved \| duplicate \| archive | |
+| `statement` | string | The question or decision statement |
+| `raisedBy`, `raisedOn` | string / YYYY-MM-DD | Who raised it and when |
+| `assigneeIds` | string[] | Project members |
+| `neededFrom` | string | Free text |
+| `targetDate` | YYYY-MM-DD \| null | Answer or decide by |
+| `affects` | string[] | requirements, direction, timeline, functionality, resources |
+| `blocksWork` | boolean | Blocks the linked work item |
+| `issueId` | string \| null | One Epic, Feature, or Task |
+| `source` | object \| null | kind, quote, speaker, location, when, documentId |
+| `answer` | string | Used while kind is question |
+| `outcome`, `rationale` | string | Used when kind is decision |
+| `decisionType` | type1 \| type2 \| null | Only on decisions |
+| `decidedBy`, `decidedOn` | string \| null | Who decided and when |
+| `consulted`, `assumptions`, `whatWouldChange`, `doesNotMean` | string | Guidepost fields on promote |
+| `duplicateOfId` | string \| null | Pointer to surviving decision |
+| `archiveReason` | string | Why archived |
+| `suggestionText`, `acceptedBy` | string \| null | Reserved for suggestion inbox |
+| `comments` | `{ commentId, at, by, body }[]` | Embedded thread |
+| `history` | `{ at, by, field, from, to }[]` | Status / kind / assignee / … events |
+| `createdAt`, `updatedAt`, `updatedBy` | string | Audit |
 
 ---
 
@@ -253,6 +336,7 @@ Settings also store GitHub field maps plus catalogs: `labels`, `issueTypes`, `pr
 | **Embedded list** | Nested objects on a parent item (relationships, blockerEdges, baseline tasks, catalogs) |
 | **Hierarchy** | `parentIssueId` — see [Plan hierarchy](faq:plan-hierarchy) |
 | **Hard Blocker** | `predecessorIds` + optional `blockerEdges` — see [Dependencies and Blockers](faq:dependencies-blockers) |
+| **Decision Register** | Separate `DECISION#` rows linked by `issueId` — see [Decision Register](faq:decision-register) |
 
 ---
 
@@ -264,5 +348,7 @@ Settings also store GitHub field maps plus catalogs: `labels`, `issueTypes`, `pr
 | Orphan parent | `parentIssueId` must exist on the same project and not form a loop |
 | Soft dep ignored by schedule | Soft links live in `relationships`, not `predecessorIds` |
 | Risk id unstable | Schedule risks use `schedule:{issueId}:{predecessorId}` |
+| Decision missing after query | Confirm `sk` starts with `DECISION#` under the same `PROJ#{projectId}` |
+| Promote created a second row | Promote updates `kind` on the same `decisionId`; do not allocate a new id |
 
-Code: `services/api/src/store.ts` (keys) · `packages/domain` (`PlanIssue`, `BaselineRecord`, `RiskRecord`, `ProjectSettings`).
+Code: `services/api/src/store.ts` (keys) · `packages/domain` (`PlanIssue`, `BaselineRecord`, `RiskRecord`, `DecisionRecord`, `ProjectSettings`).

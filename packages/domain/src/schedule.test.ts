@@ -7,6 +7,7 @@ import {
   dayOffset,
   expandSpanToFit,
   isIsoDate,
+  displayDate,
   iterationDisplayDate,
   iterationFinish,
   iterationForDates,
@@ -70,9 +71,12 @@ describe("schedule", () => {
   });
 
   it("labels an iteration with name and start–finish dates", () => {
-    expect(iterationDisplayDate("2026-10-24")).toBe("10.24.2026");
-    expect(iterationOptionLabel({ title: "I1", startDate: "2026-10-24", duration: 6 })).toBe("I1: 10.24.2026 - 10.29.2026");
+    expect(iterationDisplayDate("2026-10-24")).toBe("10-24-2026");
+    expect(iterationOptionLabel({ title: "I1", startDate: "2026-10-24", duration: 6 })).toBe("I1: 10-24-2026 - 10-29-2026");
     expect(iterationOptionLabel({ title: "Sprint", startDate: "bad", duration: 6 })).toBe("Sprint");
+    expect(displayDate("2026-10-29T14:45:00.000Z")).toBe("10-29-2026");
+    expect(displayDate("2026-02-31")).toBe("2026-02-31");
+    expect(displayDate("not a date")).toBe("not a date");
   });
 
   it("gives an unscheduled plan a two-week scale and pads a scheduled one, keeping today on the chart", () => {
@@ -98,6 +102,7 @@ describe("schedule", () => {
       fromIteration: false,
     });
     expect(scheduleText({ startDate: null, finishDate: null })).toBe("Not scheduled");
+    expect(scheduleText({ startDate: "2026-10-24", finishDate: "2026-10-29" })).toBe("10-24-2026 – 10-29-2026");
     expect(datesAfterIterationPick({ hadIteration: false, pickedBefore: false, startDate: "2026-01-01", iterationStart: "2026-10-25", iterationEnd: "2026-11-07" })).toEqual({
       startDate: "2026-10-25",
       finishDate: "2026-11-07",

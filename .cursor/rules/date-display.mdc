@@ -1,0 +1,12 @@
+---
+description: Show dates to people as mm-dd-yyyy
+alwaysApply: true
+---
+
+# Date display
+
+People see calendar dates as **mm-dd-yyyy** (example: 10-29-2026).
+
+- Format displayed dates with `displayDate` in `packages/domain/src/schedule.ts`, or `formatWhen` in `apps/web/src/ui.tsx`. Both accept `YYYY-MM-DD` and timestamps.
+- Keep stored values, API fields, and `<input type="date">` values as `YYYY-MM-DD`. The browser date control requires that value.
+- Do not format a date-only string with `new Date(iso)`. That can shift the calendar day.

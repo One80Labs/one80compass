@@ -82,17 +82,28 @@ export function iterationFinish(start: string, duration: number): string | null 
   return addDays(start, duration - 1);
 }
 
-/** Dropdown label: `I1: 10.24.2026 - 10.29.2026`. Falls back to the title when dates are missing. */
+/** Dropdown label: `I1: 10-24-2026 - 10-29-2026`. Falls back to the title when dates are missing. */
 export function iterationOptionLabel(item: { title: string; startDate: string; duration: number }): string {
   const end = iterationFinish(item.startDate, item.duration);
   if (!end || !isIsoDate(item.startDate)) return item.title;
   return `${item.title}: ${iterationDisplayDate(item.startDate)} - ${iterationDisplayDate(end)}`;
 }
 
-/** ISO date as MM.DD.YYYY for iteration dropdowns. */
+/**
+ * Calendar date people see: mm-dd-yyyy. A leading YYYY-MM-DD is enough, so timestamps format too.
+ * Invalid calendar days are left unchanged. Stored values and date inputs stay YYYY-MM-DD.
+ */
+export function displayDate(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+  if (!match) return value;
+  const iso = `${match[1]}-${match[2]}-${match[3]}`;
+  if (!isIsoDate(iso)) return value;
+  return `${match[2]}-${match[3]}-${match[1]}`;
+}
+
+/** ISO date as mm-dd-yyyy for iteration dropdowns. */
 export function iterationDisplayDate(iso: string): string {
-  if (!isIsoDate(iso)) return iso;
-  return `${iso.slice(5, 7)}.${iso.slice(8, 10)}.${iso.slice(0, 4)}`;
+  return displayDate(iso);
 }
 
 export type IterationWindow = { id: string; startDate: string; duration: number };
@@ -179,7 +190,7 @@ export function datesAfterIterationPick(input: {
 export function scheduleText(issue: { startDate: string | null; finishDate: string | null }): string {
   const range = scheduledRange(issue);
   if (!range) return "Not scheduled";
-  return `${range.start} – ${range.finish}`;
+  return `${displayDate(range.start)} – ${displayDate(range.finish)}`;
 }
 
 type ChartRow = { depth: number; kind?: string } & Parameters<typeof scheduledRange>[0];

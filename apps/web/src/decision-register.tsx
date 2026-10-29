@@ -20,8 +20,9 @@ import {
   type DecisionDraft,
 } from "./decision-client";
 import { DecisionDrawer } from "./decision-drawer";
+import { PlanIssueEditDrawer, usePlan } from "./plan";
 import { usePortal } from "./shell";
-import { PageHead, Pill } from "./ui";
+import { EditRowButton, PageHead, Pill, formatWhen } from "./ui";
 
 type StatusFilter = DecisionStatus | "all";
 type KindFilter = DecisionKind | "all";
@@ -50,6 +51,7 @@ type ListedDocument = { documentId: string; name: string; currentFileName: strin
 /**
  * Decision register: counts, assigned-to-me, and a filterable table.
  * The same drawer adds an item and opens a row. It does not create plan issues.
+ * The pencil to the left of a Work item name opens that item's plan edit drawer.
  */
 export function DecisionRegisterPage({ session }: { session: Session | null }) {
   const { projectId = "" } = useParams();
@@ -61,8 +63,6 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
   const today = new Date().toISOString().slice(0, 10);
 
   const [decisions, setDecisions] = useState<DecisionRecord[]>([]);
-  const [issues, setIssues] = useState<DrawerIssue[]>([]);
-  const [members, setMembers] = useState<DrawerMember[]>([]);
   const [documents, setDocuments] = useState<DrawerDocument[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +73,11 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
   const [blockingFilter, setBlockingFilter] = useState<"all" | "blocking">("all");
   const [overdueFilter, setOverdueFilter] = useState<"all" | "overdue">("all");
   const [open, setOpen] = useState<{ decisionId: string | null } | null>(null);
+  /** Plan issue open in the edit drawer. Null keeps the register on the decision row. */
+  const [editingIssueId, setEditingIssueId] = useState<string | null>(null);
+  const plan = usePlan(session);
+  const issues = issuesFromPlan(plan.data);
+  const members = membersFromPlan(plan.data);
 
   useEffect(() => {
     if (!session) return;
@@ -80,6 +85,7 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
     setLoaded(false);
     setError(null);
     setOpen(null);
+    setEditingIssueId(null);
 
     listDecisions(projectId, session.idToken)
       .then((result) => {
@@ -92,18 +98,6 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
       })
       .finally(() => {
         if (!cancelled) setLoaded(true);
-      });
-
-    api<PlanLookup>(`/projects/${projectId}/plan`, session.idToken)
-      .then((plan) => {
-        if (cancelled) return;
-        setIssues(issuesFromPlan(plan));
-        setMembers(membersFromPlan(plan));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setIssues([]);
-        setMembers([]);
       });
 
     api<{ documents: ListedDocument[] }>(`/projects/${projectId}/documents`, session.idToken)
@@ -173,17 +167,7 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
 
   return (
     <div className="decision-register">
-      <PageHead
-        title="Decision register."
-        subtitle={`Questions and the decisions they become for ${name}.`}
-        action={
-          session && canWrite ? (
-            <button className="btn primary" type="button" onClick={() => setOpen({ decisionId: null })}>
-              Add
-            </button>
-          ) : undefined
-        }
-      />
+      <PageHead title="Decision register." subtitle={`Questions and the decisions they become for ${name}.`} />
       {!session && <p>Sign in to open the decision register.</p>}
       {error && (
         <p className="error" role="alert">
@@ -233,7 +217,7 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
                         onClick={() => setOpen({ decisionId: item.decisionId })}
                       >
                         <td>{item.statement}</td>
-                        <td>{item.targetDate ?? "—"}</td>
+                        <td>{item.targetDate ? formatWhen(item.targetDate) : "—"}</td>
                         <td>{decisionIsOverdue(item, today) ? "Overdue" : ""}</td>
                       </tr>
                     ))}
@@ -243,7 +227,7 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
             )}
           </section>
           <section className="panel">
-            <div className="toolbar">
+            <div className="toolbar decision-filters">
               <label>
                 Status
                 <select className="field" value={statusFilter} aria-label="Filter by status" onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
@@ -297,6 +281,11 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
                   <option value="overdue">Overdue</option>
                 </select>
               </label>
+              {canWrite && (
+                <button className="btn primary decision-add" type="button" onClick={() => setOpen({ decisionId: null })}>
+                  Add
+                </button>
+              )}
             </div>
             <div className="table-wrap">
               <table className="decision-table">
@@ -327,11 +316,13 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
                         </td>
                         <td>{assigneeLabel(item.assigneeIds, members)}</td>
                         <td>
-                          {item.targetDate ?? "—"}
+                          {item.targetDate ? formatWhen(item.targetDate) : "—"}
                           {decisionIsOverdue(item, today) ? " · Overdue" : ""}
                         </td>
                         <td>{affectLabel(item.affects)}</td>
-                        <td>{workItemLabel(linked, item.issueId)}</td>
+                        <td>
+                          <WorkItemCell issue={linked} issueId={item.issueId} canWrite={canWrite} onEdit={setEditingIssueId} />
+                        </td>
                       </tr>
                     );
                   })}
@@ -363,7 +354,45 @@ export function DecisionRegisterPage({ session }: { session: Session | null }) {
           }
         />
       )}
+      {session && (
+        <PlanIssueEditDrawer
+          plan={plan}
+          session={session}
+          issueId={editingIssueId}
+          canWrite={canWrite}
+          canArchive={canArchive}
+          onClose={() => setEditingIssueId(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Work item name from the project plan. The pencil on the left opens that item's edit drawer.
+ * The name itself still opens the decision row.
+ */
+function WorkItemCell({
+  issue,
+  issueId,
+  canWrite,
+  onEdit,
+}: {
+  issue: DrawerIssue | undefined;
+  issueId: string | null;
+  canWrite: boolean;
+  onEdit: (issueId: string) => void;
+}) {
+  if (!issueId || !issue?.title) return "—";
+  return (
+    <span className="decision-work-item">
+      {canWrite && (
+        <span className="decision-work-item-edit" onClick={(event) => event.stopPropagation()}>
+          <EditRowButton label={`Edit ${issue.title}`} onClick={() => onEdit(issueId)} />
+        </span>
+      )}
+      <span>{issue.title}</span>
+    </span>
   );
 }
 
@@ -381,7 +410,8 @@ function compareAssigned(left: DecisionRecord, right: DecisionRecord, today: str
   return left.targetDate.localeCompare(right.targetDate);
 }
 
-function issuesFromPlan(plan: PlanLookup): DrawerIssue[] {
+function issuesFromPlan(plan: PlanLookup | null): DrawerIssue[] {
+  if (!plan) return [];
   const projectKey = plan.projectKey ?? null;
   const issues = Array.isArray(plan.issues) ? plan.issues : [];
   return issues
@@ -395,7 +425,8 @@ function issuesFromPlan(plan: PlanLookup): DrawerIssue[] {
 }
 
 /** Plan members first, then assignable users that are not already listed. */
-function membersFromPlan(plan: PlanLookup): DrawerMember[] {
+function membersFromPlan(plan: PlanLookup | null): DrawerMember[] {
+  if (!plan) return [];
   const byId = new Map<string, DrawerMember>();
   const members = Array.isArray(plan.members) ? plan.members : [];
   const users = Array.isArray(plan.settings?.assignableUsers) ? plan.settings.assignableUsers : [];
@@ -438,11 +469,6 @@ function assigneeLabel(ids: string[], members: DrawerMember[]): string {
 function affectLabel(affects: DecisionRecord["affects"]): string {
   if (affects.length === 0) return "—";
   return affects.map((affect) => affect.charAt(0).toUpperCase() + affect.slice(1)).join(", ");
-}
-
-function workItemLabel(issue: DrawerIssue | undefined, issueId: string | null): string {
-  if (!issueId || !issue?.title) return "—";
-  return issue.title;
 }
 
 function statusLabel(status: DecisionStatus): string {

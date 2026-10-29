@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { RISK_SEVERITIES, type RiskRegisterRow, type RiskSeverity } from "../../../packages/domain/src/risks";
+import { formatWhen } from "./ui";
 
 type Draft = {
   title: string;
@@ -175,7 +176,7 @@ export function RiskRegisterPanel({
                           aria-label={`Date cleared for ${row.title}`}
                         />
                       ) : (
-                        row.dateCleared ?? "—"
+                        row.dateCleared ? formatWhen(row.dateCleared) : "—"
                       )}
                     </td>
                     <td>

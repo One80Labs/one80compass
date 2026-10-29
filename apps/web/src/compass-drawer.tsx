@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { catalogColorHex } from "../../../packages/domain/src/index";
-import { datesAfterIterationPick, iterationFinish, iterationOptionLabel } from "../../../packages/domain/src/schedule";
+import { datesAfterIterationPick, displayDate, iterationFinish, iterationOptionLabel } from "../../../packages/domain/src/schedule";
 import type { IssueRelationship, IssueSave } from "./api";
 import { PlanDeleteSection } from "./plan-delete";
 import { EditDrawer } from "./ui";
@@ -273,7 +273,7 @@ export function CompassIssueDrawer({
         ) : (
           <input className="field" value={milestoneId} onChange={(event) => setMilestoneId(event.target.value)} maxLength={120} placeholder="No milestone" />
         )}
-        {milestoneDue && <span className="muted small">Due {milestoneDue}.</span>}
+        {milestoneDue && <span className="muted small">Due {displayDate(milestoneDue)}.</span>}
       </label>
       <label>
         Priority

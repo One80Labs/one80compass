@@ -184,7 +184,7 @@ export function OverviewPage({ session }: { session: Session | null }) {
                 {data.milestones.map((item) => (
                   <div className={`timeline-step ${item.state === "confirmed" ? "" : "current"}`} key={item.key}>
                     <strong>{item.title}</strong>
-                    {item.targetDate ? ` Target ${item.targetDate}` : " No target date"}
+                    {item.targetDate ? ` Target ${formatWhen(item.targetDate)}` : " No target date"}
                     {item.late ? " · Late" : ""}
                     {item.state === "ready" ? " · Ready for confirmation" : item.state === "confirmed" ? " · Confirmed" : " · Open"}
                   </div>

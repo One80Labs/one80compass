@@ -32,7 +32,7 @@ function OverviewPreview() {
     <>
       <PageHead title="Project overview." subtitle="Key information and status for Amur." action={<button className="btn primary" type="button">Edit overview</button>} />
       <div className="meta-strip">
-        {[["Customer", "Sample"], ["Status", "Green"], ["Milestone", "Discovery"], ["Started", "Oct 24, 2026"], ["Target end date", "Not set"]].map(([label, value]) => (
+        {[["Customer", "Sample"], ["Status", "Green"], ["Milestone", "Discovery"], ["Started", "10-24-2026"], ["Target end date", "Not set"]].map(([label, value]) => (
           <div key={label}>
             <label>{label}</label>
             <strong>{value}</strong>
@@ -168,7 +168,7 @@ function DocumentsPreview() {
               <td>
                 <Pill tone="good">Current</Pill>
               </td>
-              <td>Oct 24, 2026</td>
+              <td>10-24-2026</td>
               <td>
                 <button className="btn small" type="button">Open</button>
               </td>

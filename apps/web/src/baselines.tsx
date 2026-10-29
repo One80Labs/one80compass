@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { baselineVariance, type BaselineRecord, type VarianceKind } from "../../../packages/domain/src/baselines";
+import { formatWhen } from "./ui";
 
 const varianceLabel: Record<VarianceKind, string> = {
   newly_scheduled: "Newly scheduled",
@@ -57,7 +58,7 @@ export function BaselinesPanel({
             <span className="pill good">Approved</span>
           </div>
           <p className="small muted">
-            {baseline.createdAt.slice(0, 10)}. {baseline.tasks.length} tasks. {baseline.tasks.filter((task) => !task.startDate || !task.finishDate).length} unscheduled. {baseline.explanation}
+            {formatWhen(baseline.createdAt)}. {baseline.tasks.length} tasks. {baseline.tasks.filter((task) => !task.startDate || !task.finishDate).length} unscheduled. {baseline.explanation}
           </p>
         </article>
       ))}
@@ -68,7 +69,7 @@ export function BaselinesPanel({
             <span className="pill orange">Waiting</span>
           </div>
           <p className="small muted">
-            {proposed.createdAt.slice(0, 10)}. {proposed.tasks.length} tasks. {proposed.explanation}
+            {formatWhen(proposed.createdAt)}. {proposed.tasks.length} tasks. {proposed.explanation}
           </p>
           {admin ? (
             <DecisionForm busy={busy} onDecide={(action, explanation) => onDecide(proposed.baselineId, action, explanation)} />

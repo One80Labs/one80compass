@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "./api";
+import { formatWhen } from "./ui";
 import type { Session } from "./auth";
 
 type AuditEvent = {
@@ -50,7 +51,7 @@ export function AuditPage({ session }: { session: Session | null }) {
           <tbody>
             {events.map((event) => (
               <tr key={event.eventId}>
-                <td>{event.at}</td>
+                <td>{formatWhen(event.at)}</td>
                 <td>{event.actorUserId === actor ? "You" : event.actorUserId}</td>
                 <td>{event.action}</td>
                 <td>

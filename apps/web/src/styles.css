@@ -2545,6 +2545,14 @@ form.dialog {
   gap: 12px;
 }
 
+.decision-filters {
+  align-items: flex-end;
+}
+
+.decision-add {
+  margin-left: auto;
+}
+
 .decision-counts {
   display: flex;
   flex-wrap: wrap;
@@ -2589,6 +2597,17 @@ form.dialog {
 .decision-table tr.overdue td {
   background: #fbf4ec;
   box-shadow: inset 3px 0 0 var(--oc-warning);
+}
+
+.decision-work-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.decision-work-item-edit {
+  display: inline-flex;
+  flex: none;
 }
 
 .decision-plan-marker {
