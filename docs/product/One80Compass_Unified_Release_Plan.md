@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.11 — 2026-10-29.*
+*Single plan for the portal product and the staff AI vault. Version 1.12 — 2026-10-29.*
 
 This document **combines**:
 
@@ -24,6 +24,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | R1 pilot / first external customer gate | **Not started** |
 | Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod; 2h session Done) |
 | Gantt dependency enhancements (post-v1) | **Complete** |
+| Sidebar FAQ beginner guides (all roles) | **Complete** |
 | R4 Recovery & Governance | **Not started** |
 
 ---
@@ -117,7 +118,9 @@ Also complete in app:
 
 - [x] GitHub App sync for `recordSource: github` projects
 - [x] Timeline/Gantt, dependencies, baselines, milestones, progress
+- [x] Hard Blocker vs soft Dependency (v1); post-v1 lag/kinds/critical path/hover/auto-reschedule (§5 I)
 - [x] Catalog colors for labels (tag border) and issue types (Gantt bar)
+- [x] Sidebar FAQ beginner guides for all roles (§5 J)
 
 ### E — Status Reports (R1) — Complete
 
@@ -194,6 +197,22 @@ Hard Blocker vs soft Dependency v1 shipped. Post-v1 backlog (also ADR 0007 Follo
 | Other link kinds | Start-to-start, finish-to-finish, start-to-finish (with FS default) | **Done** |
 | Critical path | Highlight longest Hard Blocker path on Timeline | **Done** |
 | Optional auto-reschedule on Blocker create | Offer existing dependency-review move flow; warn-only remains default | **Done** |
+
+### J — Sidebar FAQ beginner guides — Complete
+
+Moved FAQ out of Settings onto the main sidebar (`/help`) so **View**, **Contributor**, and **Administrator** can open guides. Markdown SOPs under `docs/sop/` are embedded as FAQ tiles with in-app `faq:` cross-links (`?guide=` deep links).
+
+| Item | Notes | Status |
+| --- | --- | --- |
+| FAQ on main nav (all roles) | Sidebar label **FAQ** → `/help`; removed from Settings | **Done** |
+| Timeline / Gantt guide | Bars, drag dates, dependency-lines toggle, hover-reveal | **Done** |
+| Dependencies & Blockers guide | Soft vs Hard, lag/lead, FS/SS/FF/SF, optional auto-reschedule | **Done** |
+| Critical path guide | Timeline toggle; Hard Blocker graph only | **Done** |
+| Baselines guide | Baseline 1, proposals, approve/reject, comparison | **Done** |
+| Plan hierarchy guide | Epic → Feature → Task / Subtask | **Done** |
+| Risk Register guide | Live blocker conflicts; admin edit fields | **Done** |
+| Documents & labeling guide | Upload, versions, recycle bin, vault source labels | **Done** |
+| In-app `faq:` cross-links | Tile switching inside the viewer; MCP tile remains admin-focused | **Done** |
 
 ---
 
@@ -283,3 +302,4 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-29 | v1.9 Plan sync: 2h session **Done**; Phase 10 subtasks (vault-chunks, beginner SOP) **Done**; EventBridge residual explicit; mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.10 §5 I Gantt dependency enhancements (post-v1) **Complete** (hover, lag/lead, SS/FF/SF, critical path, optional auto-reschedule); mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.11 Sidebar FAQ for all roles (`/help`); seven beginner SOP tiles + MCP; `faq:` in-app cross-links |
+| 2026-10-29 | v1.12 Plan sync: §5 J FAQ guides **Complete** in MD + in-app plan; glance + §4 D checklist updated; Gantt §5 I statuses confirmed Done |

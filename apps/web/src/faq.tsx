@@ -86,7 +86,10 @@ const FAQ_TILES: FaqTile[] = [
   },
 ];
 
-/** Sidebar FAQ: tile grid; each tile opens an SOP markdown guide in a large dialog. */
+/**
+ * Sidebar FAQ tile grid for all signed-in roles (View / Contributor / Administrator).
+ * Guides are local markdown — no admin API and no write permission required to open them.
+ */
 export function FaqSettings() {
   const [searchParams, setSearchParams] = useSearchParams();
   const guideParam = searchParams.get("guide");
@@ -127,7 +130,10 @@ export function FaqSettings() {
   return (
     <section className="panel">
       <h3>Guides</h3>
-      <p className="copy">Open a tile to read the full beginner document. Links inside a guide can open another tile here.</p>
+      <p className="copy">
+        Available to every signed-in role. Open a tile to read the full beginner document. Links inside a guide can open another tile here.
+        The MCP tile is readable by all; using those tools still requires an administrator account.
+      </p>
       <div className="grid four faq-tiles">
         {FAQ_TILES.map((tile) => (
           <button key={tile.id} type="button" className="tile" onClick={() => openGuide(tile.id)}>

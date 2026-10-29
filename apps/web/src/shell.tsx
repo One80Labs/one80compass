@@ -250,6 +250,7 @@ export function Shell({
             <Link className={location.pathname === "/settings" ? "nav-link active" : "nav-link"} to="/settings" onClick={closeNav}>
               <span className="ico">⚙</span>Settings
             </Link>
+            {/* FAQ is for every signed-in role; do not gate on adminGroup or canWrite. */}
             <Link className={location.pathname === "/help" ? "nav-link active" : "nav-link"} to="/help" onClick={closeNav}>
               <span className="ico">ⓘ</span>FAQ
             </Link>

@@ -524,14 +524,16 @@ function SettingsPage({ session }: { session: Session | null }) {
   );
 }
 
-/** Sidebar FAQ: beginner guides for every signed-in role (View, Contributor, Administrator). */
+/** Sidebar FAQ: available to every signed-in role (View, Contributor, Administrator). No project write access required. */
 function HelpPage() {
   return (
     <>
       <header className="page-head">
         <div>
           <h1 className="page-title">FAQ.</h1>
-          <p className="subtitle">Beginner guides for One80Compass. Open a tile to read the full document.</p>
+          <p className="subtitle">
+            Beginner guides for every signed-in person — View, Contributor, and Administrator. Open a tile to read the full document.
+          </p>
         </div>
       </header>
       <FaqSettings />
