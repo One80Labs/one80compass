@@ -1,9 +1,6 @@
-import { createRequire } from "node:module";
 import { Workbook, type CellValue } from "exceljs";
 import mammoth from "mammoth";
 import { isTextContent } from "../../vault/src/chunk-text";
-
-const require = createRequire(import.meta.url);
 
 type ParsedAddress = { text?: string };
 type ParsedMail = {
@@ -14,8 +11,9 @@ type ParsedMail = {
   html?: string | false;
 };
 
-const { simpleParser } = require("mailparser") as {
-  simpleParser: (source: Buffer) => Promise<ParsedMail>;
+type MailParserModule = {
+  simpleParser?: (source: Buffer) => Promise<ParsedMail>;
+  default?: { simpleParser: (source: Buffer) => Promise<ParsedMail> };
 };
 
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -146,7 +144,10 @@ function unescapeMarkdown(value: string): string {
 }
 
 async function emailToMarkdown(bytes: Uint8Array): Promise<string> {
-  const mail = await simpleParser(Buffer.from(bytes));
+  const loaded = (await import("mailparser")) as MailParserModule;
+  const parse = loaded.simpleParser ?? loaded.default?.simpleParser;
+  if (!parse) throw new Error("mailparser did not load.");
+  const mail = await parse(Buffer.from(bytes));
   const header = [
     `**From:** ${addressLine(mail.from)}`,
     `**To:** ${addressLine(mail.to)}`,
