@@ -50,6 +50,38 @@ describe("draftStatus", () => {
     });
   });
 
+  it("cites a matching decision by id and not by a document label", () => {
+    const result = draftStatus({
+      customerId: "cust-1",
+      programId: "prog-1",
+      question: "Which vendor did we keep?",
+      workItems: [],
+      chunks: [],
+      decisions: [
+        {
+          customerId: "cust-1",
+          programId: "prog-1",
+          sourceId: "dec-1",
+          title: "Which vendor?",
+          body: "Outcome: keep the current vendor.",
+        },
+        {
+          customerId: "cust-other",
+          programId: "prog-1",
+          sourceId: "dec-secret",
+          title: "Which vendor?",
+          body: "Outcome: keep the current vendor.",
+        },
+      ],
+    });
+    expect(result.body).toContain("[decision dec-1]");
+    expect(result.body).not.toContain("dec-secret");
+    expect(result.body).not.toContain("compass-upload");
+    expect(result.citations).toEqual([]);
+    expect(result.claims[0]?.decisionId).toBe("dec-1");
+    expect(result.claims[0]?.citation).toBeUndefined();
+  });
+
   it("ignores a chunk for another customer", () => {
     const result = draftStatus({
       customerId: "cust-1",

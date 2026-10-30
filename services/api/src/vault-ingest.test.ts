@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Principal } from "../../../packages/authz/src/index";
 import type { AllowlistEntry } from "../../vault/src/allowlist";
-import type { IngestDocument, IngestResult, IngestVersion } from "../../vault/src/ingest";
+import type { IngestDecision, IngestDocument, IngestResult, IngestVersion } from "../../vault/src/ingest";
 import type { VaultChunk } from "../../vault/src/types";
 import type { HandlerDeps } from "./router";
 import {
@@ -351,6 +351,7 @@ function harness(options: {
   allowlistSeed?: AllowlistEntry[];
   documents?: IngestDocument[];
   versions?: IngestVersion[];
+  decisions?: IngestDecision[];
   chunks?: VaultChunk[];
   onSave?: (result: IngestResult) => void;
   onLoadChunks?: (customerId: string, programId: string) => Promise<VaultChunk[]> | VaultChunk[];
@@ -390,6 +391,7 @@ function harness(options: {
         ],
         milestones: [],
         risks: [],
+        decisions: options.decisions ?? [],
       };
     },
     async loadDocuments() {

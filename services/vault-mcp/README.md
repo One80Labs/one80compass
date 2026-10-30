@@ -28,6 +28,10 @@ npx tsx services/vault-mcp/src/index.ts
 
 Logs go to **stderr**; stdout is reserved for MCP JSON-RPC.
 
+## Tools
+
+`vault_list_decisions` lists Decision register rows copied into the vault for one allowlisted program. Admin-only. It calls `GET /projects/{projectId}/vault-decisions` and requires `program_id`. It does not change the live plan.
+
 ## Cursor `mcp.json` snippet
 
 ```json

@@ -4,6 +4,7 @@ import type {
   PortalClient,
   VaultAllowlistState,
   VaultChunkSummary,
+  VaultDecisionSummary,
   VaultDraftResult,
   VaultIngestSummary,
 } from "./types.js";
@@ -51,6 +52,15 @@ function fakeClient(overrides: Partial<PortalClient> = {}): PortalClient {
       chunk({ id: "c2", body: "BETA vendor SOW signed" }),
       chunk({ id: "c3", body: "unrelated memo" }),
     ]),
+    listDecisions: vi.fn(async () => [
+      {
+        sourceId: "dec-1",
+        title: "Which vendor?",
+        body: "Outcome: keep the current vendor.",
+        customerId: "cust-1",
+        programId: "prog-1",
+      },
+    ]),
     draftFromVault: vi.fn(async () => draft),
     ...overrides,
   };
@@ -70,6 +80,7 @@ describe("buildTools", () => {
       "vault_set_allowlist",
       "vault_ingest",
       "vault_list_chunks",
+      "vault_list_decisions",
       "vault_draft_status",
     ]);
   });
@@ -121,6 +132,16 @@ describe("buildTools", () => {
     })) as VaultChunkSummary[];
     expect(client.listChunks).toHaveBeenCalledWith("prog-1");
     expect(result.map((c) => c.id)).toEqual(["c2"]);
+  });
+
+  it("filters decisions by title or body", async () => {
+    const client = fakeClient();
+    const result = (await byName(buildTools(client), "vault_list_decisions").handler({
+      program_id: "prog-1",
+      query: "VENDOR",
+    })) as VaultDecisionSummary[];
+    expect(client.listDecisions).toHaveBeenCalledWith("prog-1");
+    expect(result.map((row) => row.sourceId)).toEqual(["dec-1"]);
   });
 
   it("routes vault_draft_status to client.draftFromVault", async () => {

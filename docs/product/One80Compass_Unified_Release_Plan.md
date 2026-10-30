@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.19 — 2026-10-30.*
+*Single plan for the portal product and the staff AI vault. Version 1.20 — 2026-10-30.*
 
 This document **combines**:
 
@@ -26,7 +26,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | Gantt dependency enhancements (post-v1) | **Complete** |
 | Sidebar FAQ beginner guides (all roles) | **Complete** |
 | Decision Register (Project Plan) | **Complete** — register, plan marker, and suggestion inbox |
-| Decision register in the vault | **Not started** — ingest still skips the register and its history |
+| Decision register in the vault | **Complete** — ingest copies each record, its comments, and its history; drafts and MCP cite the decision id |
 | R4 Recovery & Governance | **Not started** |
 
 ---
@@ -175,15 +175,15 @@ Code review + security scan closed Critical/High defects, then this slice landed
 
 | Item | Notes | Status |
 | --- | --- | --- |
-| **Phase 10 — Staff vault MCP** | Cursor/Claude via `services/vault-mcp`: tools `vault_get_allowlist`, `vault_set_allowlist`, `vault_ingest`, `vault_list_chunks`, `vault_draft_status`. Admin auth; portal API only (no Aurora in MCP). | **Done** |
+| **Phase 10 — Staff vault MCP** | Cursor/Claude via `services/vault-mcp`: tools `vault_get_allowlist`, `vault_set_allowlist`, `vault_ingest`, `vault_list_chunks`, `vault_list_decisions`, `vault_draft_status`. Admin auth; portal API only (no Aurora in MCP). | **Done** |
 | Admin `GET …/vault-chunks` | List filed chunks for an allowlisted program (embeddings stripped); used by MCP list/search | **Done** |
 | MCP registration + beginner SOP | `docs/sop/staff-vault.md` registration; `docs/sop/vault-mcp-beginner.md` install/use guide; `services/vault-mcp/README.md` | **Done** |
 | Allowlist / ingest UI in Compass | Admin Documents panel; `GET`/`PUT .../vault-allowlist`, `POST .../vault-ingest` | **Done** |
 | Upload-triggered ingest | Auto re-ingest on labeled upload complete / sourceLabel change for allowlisted programs; manual POST remains | **Done** |
 | EventBridge / cron scheduled ingest | 15-minute rule `VaultIngest` re-ingests every allowlisted program so plan-only edits land without a document upload; enabling the allowlist best-effort re-ingests that program | **Done** |
 | Richer ontology | Populate risks, people, and plan items whose type is Decision; multi-hop retrieval via relations | **Done** |
-| Copy Decision register and history on ingest | Each register record, its comments, and its history become one vault decision row keyed by `decisionId`. Link `issueId` with `decided` and `duplicateOfId` with `supersedes`. Keep plan items typed Decision until this replaces that convention | **Not started** |
-| Cite Decision register in drafts and MCP | Draft and MCP search those vault rows. Document chunk labels cannot name a decision | **Not started** |
+| Copy Decision register and history on ingest | Each register record, its comments, and its history become one vault decision row keyed by `decisionId`. Link `issueId` with `decided` and `duplicateOfId` with `supersedes`. Plan items typed Decision stay as their own rows | **Done** |
+| Cite Decision register in drafts and MCP | Draft and MCP search those vault rows. A claim names the decision id. Document chunk labels cannot name a decision | **Done** |
 | Customer-login AI | Separate product later | Out of scope |
 | Live Krisp / Fireflies connectors | File exports only for now | Out of scope |
 | GitHub export from Compass | — | Out of scope |
@@ -233,14 +233,14 @@ When a question becomes a decision, also record who was consulted, the assumptio
 
 Home screen is a filterable register, not a Kanban board. Header counts: outstanding, overdue, blocking. Assigned-to-me lists outstanding items for the signed-in assignee, overdue first. Default filter is Outstanding. The same drawer adds, edits, and opens from the plan edit screen. That screen shows a count, and a warning when a linked item is outstanding and blocking.
 
-No email alerts. No live email, Teams, or transcript connectors. Suggestions come from labeled transcript text already in the vault (kind, work item, assignee, target date). Hypothetical, already-rejected, or only-discussed remarks are labeled and are not a normal Accept. Nothing enters the register until a person accepts it. Accept does not create a plan issue. If the text is edited, the original suggestion stays beside the saved statement. Vault ingest still stores a plan item whose type is Decision. The register and its history are not copied. That work is the two **Not started** rows in §5 H.
+No email alerts. No live email, Teams, or transcript connectors. Suggestions come from labeled transcript text already in the vault (kind, work item, assignee, target date). Hypothetical, already-rejected, or only-discussed remarks are labeled and are not a normal Accept. Nothing enters the register until a person accepts it. Accept does not create a plan issue. If the text is edited, the original suggestion stays beside the saved statement. Vault ingest copies each register record, its comments, and its history, and still stores a plan item whose type is Decision as its own row. Drafts and MCP name the decision id.
 
 Leave out a pros/cons table, architecture notes that do not affect the project, an informed list, and a PDF export. Options considered, a review-by date, superseded-by, and resulted-in work items come after the first screen.
 
 | Item | Notes | Status |
 | --- | --- | --- |
 | Build Requirements | Accepted requirements are this section | **Done** |
-| Evaluate how Decisions are used in Vault | Recommendation: the register is the source of vault decision rows; stop using issue type Decision. Ingest still uses that convention. Follow-on is §5 H | **Done** |
+| Evaluate how Decisions are used in Vault | The register is copied on ingest. Plan items typed Decision remain their own vault rows | **Done** |
 | Register screen | Filterable register, detail drawer, manual source, and the plan-edit count and blocking warning | **Done** |
 | Suggestion inbox | Proposals from labeled transcript text. A person accepts or dismisses. Accept does not create a plan issue | **Done** |
 
@@ -341,3 +341,4 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-29 | v1.17 §5 K Decision Register screen **Done** (register, drawer, plan marker); suggestion inbox **Not started**; mirrored on One80Compass Dev in-app plan |
 | 2026-10-29 | v1.18 §5 K suggestion inbox **Done**; COMP-79 and COMP-82 **Done**; vault ingest still uses the issue-type convention |
 | 2026-10-30 | v1.19 MCP SOP states ingest skips the Decision register and its history. §5 H adds copy-on-ingest and draft/MCP citation as **Not started**; mirrored on One80Compass Dev |
+| 2026-10-30 | v1.20 Decision register vault ingest **Done** (COMP-83, COMP-84, COMP-85): copy comments and history, cite the decision id in drafts and MCP; mirrored on One80Compass Dev |

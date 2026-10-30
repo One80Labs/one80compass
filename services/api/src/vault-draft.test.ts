@@ -73,6 +73,7 @@ describe("handleVaultDraft", () => {
           body: "The vendor signed a secret deal.",
         }),
       ],
+      loadDecisions: async () => [],
       createReport: async (report) => {
         reports.push(report);
       },
@@ -243,6 +244,7 @@ describe("draft path plan isolation", () => {
         listMembershipsForUser: async () => [],
         loadWorkItems: async () => [],
         loadChunks: async () => [],
+        loadDecisions: async () => [],
         createReport,
         newId: () => "report-2",
         now: () => new Date("2026-10-24T12:00:00.000Z"),

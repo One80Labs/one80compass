@@ -41,6 +41,70 @@ export type IngestRisk = {
   dateCleared: string | null;
 };
 
+/** One comment copied from a Decision register record. */
+export type IngestDecisionComment = {
+  at: string;
+  by: string;
+  body: string;
+};
+
+/** One history event copied from a Decision register record. */
+export type IngestDecisionHistoryEvent = {
+  at: string;
+  by: string;
+  field: string;
+  from: string | null;
+  to: string | null;
+};
+
+/** Provenance copied when a register record has a source. */
+export type IngestDecisionSource = {
+  kind: string;
+  quote: string;
+  speaker: string;
+  location: string;
+  when: string | null;
+  documentId: string | null;
+};
+
+/**
+ * Decision register fields ingest copies. Matches Compass DecisionRecord for these keys.
+ * sourceId on the vault row is decisionId, never the linked issue id.
+ */
+export type IngestDecision = {
+  decisionId: string;
+  projectId: string;
+  customerId: string;
+  kind: string;
+  status: string;
+  statement: string;
+  raisedBy: string;
+  raisedOn: string;
+  assigneeIds: string[];
+  neededFrom: string;
+  targetDate: string | null;
+  affects: string[];
+  blocksWork: boolean;
+  issueId: string | null;
+  source: IngestDecisionSource | null;
+  answer: string;
+  outcome: string;
+  rationale: string;
+  decisionType: string | null;
+  decidedBy: string | null;
+  decidedOn: string | null;
+  consulted: string;
+  assumptions: string;
+  whatWouldChange: string;
+  doesNotMean: string;
+  duplicateOfId: string | null;
+  archiveReason: string;
+  suggestionText: string | null;
+  acceptedBy: string | null;
+  comments: IngestDecisionComment[];
+  history: IngestDecisionHistoryEvent[];
+};
+
 export type IngestMilestone = { id: string; title: string; dueOn: string | null };
 
 export type IngestDocument = {
@@ -69,6 +133,8 @@ export type IngestInput = {
   milestones: IngestMilestone[];
   /** Compass risk register rows for this program. Defaults to []. */
   risks?: IngestRisk[];
+  /** Compass decision register rows for this program. Defaults to []. */
+  decisions?: IngestDecision[];
   documents: IngestDocument[];
   versions: IngestVersion[];
   /** Fixed timestamp so tests do not depend on the clock. */
@@ -222,6 +288,39 @@ export function ingestProgram(input: IngestInput): IngestResult {
     }
   }
 
+  // Register rows are keyed by decisionId. An issue whose type is Decision stays a separate row.
+  for (const decision of input.decisions ?? []) {
+    if (decision.customerId !== program.customerId || decision.projectId !== program.programId) continue;
+    const body = decisionRegisterBody(decision);
+    rows.push({
+      ...identity(decision.decisionId),
+      table: "decision",
+      title: decision.statement,
+      body,
+      description: body,
+    });
+    if (decision.issueId) {
+      relations.push({
+        ...identity(`decided:${decision.decisionId}->${decision.issueId}`),
+        kind: "decided",
+        fromType: "decision",
+        toType: "work_item",
+        fromSourceId: decision.decisionId,
+        toSourceId: decision.issueId,
+      });
+    }
+    if (decision.duplicateOfId) {
+      relations.push({
+        ...identity(`supersedes:${decision.duplicateOfId}->${decision.decisionId}`),
+        kind: "supersedes",
+        fromType: "decision",
+        toType: "decision",
+        fromSourceId: decision.duplicateOfId,
+        toSourceId: decision.decisionId,
+      });
+    }
+  }
+
   const versionsById = new Map(input.versions.map((version) => [version.versionId, version]));
 
   for (const document of input.documents) {
@@ -281,6 +380,92 @@ function riskBody(risk: IngestRisk): string {
   if (risk.severity) parts.push(`Severity: ${risk.severity}`);
   if (risk.dateCleared) parts.push(`Cleared: ${risk.dateCleared}`);
   return parts.join("\n\n");
+}
+
+/**
+ * Plain-text body for one Decision register row.
+ * Non-empty fields stay in register order, then a Comments section, a History section, and source lines.
+ * Omit a section when it has no lines. Null history values render as "(empty)".
+ */
+export function decisionRegisterBody(decision: IngestDecision): string {
+  const blocks: string[] = [];
+  const fields = labeledLines([
+    ["Kind", decision.kind],
+    ["Status", decision.status],
+    ["Statement", decision.statement],
+    ["Raised by", decision.raisedBy],
+    ["Raised on", decision.raisedOn],
+    ["Assignees", joinList(decision.assigneeIds)],
+    ["Needed from", decision.neededFrom],
+    ["Target date", decision.targetDate],
+    ["Affects", joinList(decision.affects)],
+    ["Blocks work", decision.blocksWork ? "yes" : "no"],
+    ["Work item", decision.issueId],
+    ["Answer", decision.answer],
+    ["Outcome", decision.outcome],
+    ["Rationale", decision.rationale],
+    ["Decision type", decision.decisionType],
+    ["Decided by", decision.decidedBy],
+    ["Decided on", decision.decidedOn],
+    ["Consulted", decision.consulted],
+    ["Assumptions", decision.assumptions],
+    ["What would change", decision.whatWouldChange],
+    ["Does not mean", decision.doesNotMean],
+    ["Duplicate of", decision.duplicateOfId],
+    ["Archive reason", decision.archiveReason],
+    ["Suggestion", decision.suggestionText],
+    ["Accepted by", decision.acceptedBy],
+  ]);
+  if (fields) blocks.push(fields);
+
+  const comments = sectionLines(
+    "Comments",
+    (decision.comments ?? []).map((comment) => `- ${comment.at} ${comment.by}: ${comment.body}`),
+  );
+  if (comments) blocks.push(comments);
+
+  const history = sectionLines(
+    "History",
+    (decision.history ?? []).map((event) => {
+      const from = event.from == null ? "(empty)" : event.from;
+      const to = event.to == null ? "(empty)" : event.to;
+      return `- ${event.at} ${event.by} ${event.field}: ${from} -> ${to}`;
+    }),
+  );
+  if (history) blocks.push(history);
+
+  if (decision.source) {
+    const source = labeledLines([
+      ["Source kind", decision.source.kind],
+      ["Quote", decision.source.quote],
+      ["Speaker", decision.source.speaker],
+      ["Location", decision.source.location],
+      ["When", decision.source.when],
+      ["Source document", decision.source.documentId],
+    ]);
+    if (source) blocks.push(source);
+  }
+
+  return blocks.join("\n\n");
+}
+
+function joinList(values: readonly string[] | null | undefined): string {
+  return (values ?? []).map((value) => value.trim()).filter((value) => value.length > 0).join(", ");
+}
+
+function labeledLines(pairs: ReadonlyArray<readonly [string, string | null | undefined]>): string {
+  const lines: string[] = [];
+  for (const [label, value] of pairs) {
+    const text = (value ?? "").trim();
+    if (!text) continue;
+    lines.push(`${label}: ${text}`);
+  }
+  return lines.join("\n");
+}
+
+function sectionLines(title: string, lines: string[]): string {
+  if (lines.length === 0) return "";
+  return [title, ...lines].join("\n");
 }
 
 function isFiledDocument(

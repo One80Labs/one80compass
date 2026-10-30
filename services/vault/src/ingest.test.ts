@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { deterministicEmbed } from "./embed";
 import {
+  decisionRegisterBody,
   ingestProgram,
+  type IngestDecision,
   type IngestDocument,
   type IngestIssue,
   type IngestRisk,
@@ -254,6 +256,187 @@ describe("ingestProgram", () => {
     expect(result).toEqual({ rows: [], relations: [], chunks: [] });
   });
 
+  it("copies decision register rows, including comments and history, and still emits issue-type decisions", () => {
+    const question = decision({
+      decisionId: "dec-q",
+      statement: "Should we use Aurora?",
+      raisedBy: "ada",
+      raisedOn: "2026-10-01",
+      assigneeIds: ["U_ada", "U_bob"],
+      neededFrom: "platform",
+      targetDate: "2026-10-15",
+      affects: ["timeline", "resources"],
+      blocksWork: true,
+      answer: "Not yet",
+      comments: [
+        { at: "2026-10-02T15:00:00.000Z", by: "ada", body: "Checking cost" },
+        { at: "2026-10-02T16:00:00.000Z", by: "bob", body: "Agreed" },
+      ],
+      history: [
+        { at: "2026-10-03T15:00:00.000Z", by: "bob", field: "status", from: null, to: "outstanding" },
+        { at: "2026-10-04T15:00:00.000Z", by: "ada", field: "outcome", from: "pending", to: null },
+      ],
+      source: {
+        kind: "transcript",
+        quote: "We should decide soon",
+        speaker: "Ada",
+        location: "12:04",
+        when: "2026-10-01T14:00:00.000Z",
+        documentId: "doc-1",
+      },
+    });
+    const linked = decision({
+      decisionId: "dec-linked",
+      kind: "decision",
+      status: "resolved",
+      statement: "Use Aurora",
+      issueId: "issue-work",
+      outcome: "Serverless v2",
+      decisionType: "type1",
+      decidedBy: "ada",
+      decidedOn: "2026-10-20",
+    });
+    const duplicate = decision({
+      decisionId: "dec-dup",
+      status: "duplicate",
+      statement: "Repeated question",
+      duplicateOfId: "dec-keep",
+    });
+    const foreign = decision({
+      decisionId: "dec-foreign",
+      customerId: "other-cust",
+      statement: "Secret",
+    });
+    const otherProgram = decision({
+      decisionId: "dec-other-program",
+      projectId: "other-prog",
+      statement: "Wrong program",
+    });
+    const questionBody = [
+      [
+        "Kind: question",
+        "Status: outstanding",
+        "Statement: Should we use Aurora?",
+        "Raised by: ada",
+        "Raised on: 2026-10-01",
+        "Assignees: U_ada, U_bob",
+        "Needed from: platform",
+        "Target date: 2026-10-15",
+        "Affects: timeline, resources",
+        "Blocks work: yes",
+        "Answer: Not yet",
+      ].join("\n"),
+      ["Comments", "- 2026-10-02T15:00:00.000Z ada: Checking cost", "- 2026-10-02T16:00:00.000Z bob: Agreed"].join("\n"),
+      [
+        "History",
+        "- 2026-10-03T15:00:00.000Z bob status: (empty) -> outstanding",
+        "- 2026-10-04T15:00:00.000Z ada outcome: pending -> (empty)",
+      ].join("\n"),
+      [
+        "Source kind: transcript",
+        "Quote: We should decide soon",
+        "Speaker: Ada",
+        "Location: 12:04",
+        "When: 2026-10-01T14:00:00.000Z",
+        "Source document: doc-1",
+      ].join("\n"),
+    ].join("\n\n");
+
+    expect(decisionRegisterBody(question)).toBe(questionBody);
+
+    const result = ingestProgram({
+      allowlist: [{ customerId: CUSTOMER, programId: PROGRAM }],
+      program: { customerId: CUSTOMER, programId: PROGRAM, title: "Alpha" },
+      issues: [
+        issue({ issueId: "issue-work", title: "Build the database" }),
+        issue({
+          issueId: "issue-dec",
+          title: "Plan decision",
+          description: "From the plan",
+          issueType: "decision",
+        }),
+      ],
+      milestones: [],
+      decisions: [question, linked, duplicate, foreign, otherProgram],
+      documents: [],
+      versions: [],
+      recordedAt: RECORDED,
+    });
+
+    const questionRow = result.rows.find((row) => row.table === "decision" && row.sourceId === "dec-q");
+    expect(questionRow).toMatchObject({
+      customerId: CUSTOMER,
+      programId: PROGRAM,
+      sourceType: "compass",
+      recordedAt: RECORDED,
+      title: "Should we use Aurora?",
+      body: questionBody,
+      description: questionBody,
+    });
+    expect(questionRow?.sourceLabel).toBeUndefined();
+
+    expect(result.rows.find((row) => row.table === "decision" && row.sourceId === "dec-linked")).toMatchObject({
+      title: "Use Aurora",
+      body: decisionRegisterBody(linked),
+      description: decisionRegisterBody(linked),
+    });
+    expect(decisionRegisterBody(linked)).not.toContain("Comments");
+    expect(decisionRegisterBody(linked)).not.toContain("History");
+    expect(decisionRegisterBody(linked)).toContain("Work item: issue-work");
+    expect(decisionRegisterBody(linked)).toContain("Blocks work: no");
+
+    expect(result.rows.find((row) => row.table === "decision" && row.sourceId === "issue-dec")).toMatchObject({
+      title: "Plan decision",
+      body: "From the plan",
+      description: "From the plan",
+    });
+    expect(result.rows.some((row) => row.table === "decision" && row.sourceId === "dec-foreign")).toBe(false);
+    expect(result.rows.some((row) => row.table === "decision" && row.sourceId === "dec-other-program")).toBe(false);
+    expect(result.rows.some((row) => row.table === "decision" && row.sourceId === "issue-work")).toBe(false);
+
+    expect(result.relations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "decided",
+          fromType: "decision",
+          toType: "work_item",
+          fromSourceId: "dec-linked",
+          toSourceId: "issue-work",
+          sourceId: "decided:dec-linked->issue-work",
+          customerId: CUSTOMER,
+          programId: PROGRAM,
+        }),
+        expect.objectContaining({
+          kind: "supersedes",
+          fromType: "decision",
+          toType: "decision",
+          fromSourceId: "dec-keep",
+          toSourceId: "dec-dup",
+          sourceId: "supersedes:dec-keep->dec-dup",
+        }),
+      ]),
+    );
+    expect(result.relations.some((row) => row.fromSourceId === "dec-foreign" || row.toSourceId === "dec-foreign")).toBe(false);
+    expect(result.relations.some((row) => row.kind === "decided" && row.fromSourceId === "dec-q")).toBe(false);
+    expect(result.chunks).toEqual([]);
+  });
+
+  it("does not throw when the decision register is empty", () => {
+    const result = ingestProgram({
+      allowlist: [{ customerId: CUSTOMER, programId: PROGRAM }],
+      program: { customerId: CUSTOMER, programId: PROGRAM, title: "Alpha" },
+      issues: [],
+      milestones: [],
+      decisions: [],
+      documents: [],
+      versions: [],
+      recordedAt: RECORDED,
+    });
+    expect(result.rows.map((row) => row.table)).toEqual(["program"]);
+    expect(result.relations).toEqual([]);
+    expect(result.chunks).toEqual([]);
+  });
+
   it("rejects an empty allowlist", () => {
     const result = ingestProgram({
       allowlist: [],
@@ -277,6 +460,43 @@ function issue(partial: Partial<IngestIssue> & Pick<IngestIssue, "issueId" | "ti
     finishDate: null,
     predecessorIds: [],
     assignees: [],
+    ...partial,
+  };
+}
+
+function decision(
+  partial: Partial<IngestDecision> & Pick<IngestDecision, "decisionId" | "statement">,
+): IngestDecision {
+  return {
+    projectId: PROGRAM,
+    customerId: CUSTOMER,
+    kind: "question",
+    status: "outstanding",
+    raisedBy: "",
+    raisedOn: "",
+    assigneeIds: [],
+    neededFrom: "",
+    targetDate: null,
+    affects: [],
+    blocksWork: false,
+    issueId: null,
+    source: null,
+    answer: "",
+    outcome: "",
+    rationale: "",
+    decisionType: null,
+    decidedBy: null,
+    decidedOn: null,
+    consulted: "",
+    assumptions: "",
+    whatWouldChange: "",
+    doesNotMean: "",
+    duplicateOfId: null,
+    archiveReason: "",
+    suggestionText: null,
+    acceptedBy: null,
+    comments: [],
+    history: [],
     ...partial,
   };
 }

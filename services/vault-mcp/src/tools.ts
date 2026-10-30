@@ -1,4 +1,4 @@
-import type { PortalClient, VaultChunkSummary } from "./types.js";
+import type { PortalClient, VaultChunkSummary, VaultDecisionSummary } from "./types.js";
 
 /** MCP tool defs: handlers return plain JSON; index.ts wraps MCP content. */
 export type ToolDefs = {
@@ -37,11 +37,19 @@ function filterChunksByQuery(chunks: VaultChunkSummary[], query: string): VaultC
   return chunks.filter((c) => c.body.toLowerCase().includes(needle));
 }
 
+/** Case-insensitive substring filter over decision title or body. */
+function filterDecisionsByQuery(rows: VaultDecisionSummary[], query: string): VaultDecisionSummary[] {
+  const needle = query.toLowerCase();
+  return rows.filter(
+    (row) => row.title.toLowerCase().includes(needle) || row.body.toLowerCase().includes(needle),
+  );
+}
+
 const ADMIN_SCOPED =
   "Admin-only. Tenant-scoped to program_id. Does not mutate live plan dates or status.";
 
 /**
- * Staff vault MCP tools (Phase 10): allowlist, ingest, list/search chunks, cited draft.
+ * Staff vault MCP tools: allowlist, ingest, list/search chunks and decisions, cited draft.
  * Portal HTTP only — no Aurora credentials; draft creates a Compass report draft only.
  */
 export function buildTools(client: PortalClient): ToolDefs {
@@ -124,8 +132,32 @@ export function buildTools(client: PortalClient): ToolDefs {
       },
     },
     {
+      name: "vault_list_decisions",
+      description: `${ADMIN_SCOPED} Lists vault decision rows (Decision register and plan Decision items) for one program. Optional query filters title or body client-side (case-insensitive).`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          program_id: { type: "string", description: "Compass program id" },
+          query: {
+            type: "string",
+            description: "Optional case-insensitive substring filter on decision title or body",
+          },
+        },
+        required: ["program_id"],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const programId = requireProgramId(args);
+        const decisions = await client.listDecisions(programId);
+        if (typeof args.query === "string" && args.query.length > 0) {
+          return filterDecisionsByQuery(decisions, args.query);
+        }
+        return decisions;
+      },
+    },
+    {
       name: "vault_draft_status",
-      description: `${ADMIN_SCOPED} Creates a cited Compass report draft from vault evidence only (not live plan writes).`,
+      description: `${ADMIN_SCOPED} Creates a cited Compass report draft from vault evidence only (not live plan writes). The portal draft path loads decision rows and names matching source ids in the draft body.`,
       inputSchema: {
         type: "object",
         properties: {

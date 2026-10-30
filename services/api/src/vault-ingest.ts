@@ -2,6 +2,7 @@ import { adminAccess, type Principal } from "../../../packages/authz/src/index";
 import { DOCUMENT_SOURCE_LABELS, type DocumentSourceLabel } from "../../../packages/domain/src/index";
 import {
   ingestProgram,
+  type IngestDecision,
   type IngestDocument,
   type IngestIssue,
   type IngestMilestone,
@@ -29,6 +30,8 @@ export type VaultIngestDeps = {
     issues: IngestIssue[];
     milestones: IngestMilestone[];
     risks: IngestRisk[];
+    /** Decision register rows for this program. Omitted means none. */
+    decisions?: IngestDecision[];
   } | null>;
   loadDocuments: (projectId: string) => Promise<IngestDocument[]>;
   loadVersionText: (documentId: string, versionId: string) => Promise<IngestVersion | null>;
@@ -90,6 +93,7 @@ export async function ingestAllowlistedProgram(
     issues: plan.issues,
     milestones: plan.milestones,
     risks: plan.risks,
+    decisions: plan.decisions ?? [],
     documents,
     versions,
     recordedAt,

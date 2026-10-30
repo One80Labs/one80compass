@@ -1,6 +1,6 @@
 import type { AllowlistEntry } from "./allowlist";
 import type { IngestResult, VaultEntityRow, VaultRelationRow } from "./ingest";
-import type { VaultChunk } from "./types";
+import type { VaultChunk, VaultDecisionRow } from "./types";
 import { EMBEDDING_DIMENSIONS } from "./types";
 import { createVaultDb, type VaultDb } from "./db";
 import type { SqlParameter } from "@aws-sdk/client-rds-data";
@@ -146,6 +146,33 @@ export async function listChunks(customerId: string, programId: string, db: Vaul
     body: String(record[8]?.stringValue ?? ""),
     recordedAt: String(record[9]?.stringValue ?? ""),
     embedding: null,
+  }));
+}
+
+/**
+ * Decision rows for one customer and program.
+ * Register rows and plan items typed Decision share this table.
+ * Selects source id, title, and body. customer_id and program_id come back so callers can drop a mismatched row.
+ * No embeddings and no document source label.
+ */
+export async function listDecisions(
+  customerId: string,
+  programId: string,
+  db: VaultDb = createVaultDb(),
+): Promise<VaultDecisionRow[]> {
+  const result = await db.execute(
+    `SELECT source_id, title, body, customer_id, program_id
+     FROM decision
+     WHERE customer_id = :customer_id AND program_id = :program_id
+     ORDER BY source_id`,
+    [str("customer_id", customerId), str("program_id", programId)],
+  );
+  return (result.records ?? []).map((record) => ({
+    sourceId: String(record[0]?.stringValue ?? ""),
+    title: String(record[1]?.stringValue ?? ""),
+    body: String(record[2]?.stringValue ?? ""),
+    customerId: String(record[3]?.stringValue ?? ""),
+    programId: String(record[4]?.stringValue ?? ""),
   }));
 }
 

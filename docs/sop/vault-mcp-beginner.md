@@ -46,6 +46,8 @@ Contributors and View users cannot use these tools (the API returns 403).
 | **Chunk** | A searchable text slice from a labeled filed document. Register rows are not chunks. List those with `vault_list_decisions`. |
 | **Draft from vault** | Creates a normal Compass **status report** in `draft` with citations from plan work items, Decision register rows, and filed chunks. A register claim names the decision id and does not use a document source label. It does **not** change live issue dates or status. |
 
+Before MCP will find evidence, someone must label documents and (usually) allowlist + ingest. See [staff-vault.md](./staff-vault.md) for the full UI procedure.
+
 ## What ingest copies
 
 - Plan work items
@@ -56,8 +58,6 @@ Contributors and View users cannot use these tools (the API returns 403).
 - Decision register (statement, comments, history)
 
 A plan item whose type is **Decision** is still copied as a decision row. Customers never see the vault.
-
-Before MCP will find evidence, someone must label documents and (usually) allowlist + ingest. See [staff-vault.md](./staff-vault.md) for the full UI procedure.
 
 ---
 
@@ -202,7 +202,7 @@ Always use a real Compass **project id** as `program_id`.
 
 You need allowlist **on** first (otherwise you get a conflict / 409). After ingest you should see counts such as `rowCount`, `relationCount`, `chunkCount`.
 
-Ingest copies the live plan, milestones, the risk register, people, labeled files, and the Decision register. Each register record keeps its decision id. The title is the statement. The body includes the current fields plus every comment and every history event. A linked work item becomes a decided relation from the decision to the work item. A duplicateOfId becomes a supersedes relation from the surviving decision to the duplicate. A plan item whose type is **Decision** is still stored as a decision row. Drafts and `vault_list_decisions` read those rows. A draft claim names the decision id and does not use a document source label. The live plan is not modified.
+Ingest copies the live plan, milestones, the risk register, people, labeled files, and the Decision register. Each register record keeps its decision id. The title is the statement. The body includes the current fields plus every comment and every history event. A linked work item becomes a decided relation from the decision to the work item. A duplicateOfId becomes a supersedes relation from the surviving decision to the duplicate. A plan item whose type is **Decision** is still stored as a decision row. Drafts and `vault_list_decisions` can read those rows. A draft claim names the decision id and does not use a document source label. The live plan is not modified.
 
 ### 4. List or search chunks
 

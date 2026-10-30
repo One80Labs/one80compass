@@ -4,6 +4,7 @@ import type {
   PortalClient,
   VaultAllowlistState,
   VaultChunkSummary,
+  VaultDecisionSummary,
   VaultDraftResult,
   VaultIngestSummary,
 } from "./types.js";
@@ -61,6 +62,24 @@ function parseChunks(data: unknown): VaultChunkSummary[] {
     throw new Error("Invalid vault chunks response.");
   }
   return data.chunks.map(parseChunk);
+}
+
+function parseDecision(raw: unknown): VaultDecisionSummary {
+  if (!isRecord(raw)) throw new Error("Invalid vault decision entry.");
+  return {
+    sourceId: asString(raw.sourceId),
+    title: asString(raw.title),
+    body: asString(raw.body),
+    customerId: asString(raw.customerId),
+    programId: asString(raw.programId),
+  };
+}
+
+function parseDecisions(data: unknown): VaultDecisionSummary[] {
+  if (!isRecord(data) || !Array.isArray(data.decisions)) {
+    throw new Error("Invalid vault decisions response.");
+  }
+  return data.decisions.map(parseDecision);
 }
 
 function parseDraft(data: unknown): VaultDraftResult {
@@ -153,6 +172,11 @@ export function createPortalClient(config: VaultMcpConfig): PortalClient {
     async listChunks(programId: string): Promise<VaultChunkSummary[]> {
       const data = await requestJson(config, "GET", `/projects/${encodeURIComponent(programId)}/vault-chunks`);
       return parseChunks(data);
+    },
+
+    async listDecisions(programId: string): Promise<VaultDecisionSummary[]> {
+      const data = await requestJson(config, "GET", `/projects/${encodeURIComponent(programId)}/vault-decisions`);
+      return parseDecisions(data);
     },
 
     async draftFromVault(programId: string, question: string): Promise<VaultDraftResult> {

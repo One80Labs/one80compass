@@ -23,10 +23,11 @@ import { handleDecisions } from "./decisions";
 import { handlePlan } from "./plan";
 import { handleCatalogs } from "./catalogs";
 import { handleReports } from "./reports";
+import { handleVaultDecisions } from "./vault-decisions";
 import { handleVaultDraft } from "./vault-draft";
 import { handleVaultIngest, isVaultSourceLabel, maybeAutoIngestProgram, type VaultIngestDeps } from "./vault-ingest";
 import type { Store } from "./store";
-import type { VaultChunk } from "../../vault/src/types";
+import type { VaultChunk, VaultDecisionRow } from "../../vault/src/types";
 import { acceptWebhook } from "./webhook";
 
 export type HttpEvent = {
@@ -65,6 +66,8 @@ export type HandlerDeps = {
   vault?: VaultIngestDeps;
   /** Chunks already filtered by customer and program for a status draft. */
   loadVaultChunks?: (customerId: string, programId: string) => Promise<VaultChunk[]>;
+  /** Decision rows for one customer and program (Lambda list-decisions). */
+  loadVaultDecisions?: (customerId: string, programId: string) => Promise<VaultDecisionRow[]>;
   maxUploadBytes?: number;
   enqueue: (message: SyncMessage) => Promise<void>;
   githubConfigured: boolean;
@@ -127,6 +130,18 @@ export function createHandler(deps: HandlerDeps) {
         const vaulted = await handleVaultIngest({ deps, principal, method, path, body, correlationId }, deps.vault);
         if (vaulted) return vaulted;
       }
+      if (deps.vault && deps.loadVaultDecisions) {
+        const listed = await handleVaultDecisions({
+          principal,
+          method,
+          path,
+          correlationId,
+          getProject: (projectId) => deps.store.getProject(projectId),
+          readAllowlist: () => deps.vault!.readAllowlist(),
+          loadDecisions: (customerId, programId) => deps.loadVaultDecisions!(customerId, programId),
+        });
+        if (listed) return listed;
+      }
       if (deps.loadVaultChunks) {
         const drafted = await handleVaultDraft({
           deps: {
@@ -145,6 +160,8 @@ export function createHandler(deps: HandlerDeps) {
                 predecessorIds: issue.predecessorIds ?? [],
               })),
             loadChunks: (customerId, programId) => deps.loadVaultChunks!(customerId, programId),
+            loadDecisions: (customerId, programId) =>
+              deps.loadVaultDecisions ? deps.loadVaultDecisions(customerId, programId) : Promise.resolve([]),
             createReport: (report) => deps.store.createReport(report),
             newId: deps.newId,
             now: deps.now,

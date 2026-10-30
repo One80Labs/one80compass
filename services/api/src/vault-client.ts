@@ -65,10 +65,11 @@ export function createVaultIngestDeps(options: {
     async loadPlan(projectId) {
       const project = await store.getProject(projectId);
       if (!project) return null;
-      const [issues, settings, risks] = await Promise.all([
+      const [issues, settings, risks, decisions] = await Promise.all([
         store.listIssues(projectId),
         store.getSettings(projectId),
         store.listRisks(projectId),
+        store.listDecisions(projectId),
       ]);
       const mappedIssues: IngestIssue[] = issues.map((issue) => ({
         issueId: issue.issueId,
@@ -104,6 +105,8 @@ export function createVaultIngestDeps(options: {
         issues: mappedIssues,
         milestones,
         risks: mappedRisks,
+        // Register records, including comments and history. Ingest skips other customers.
+        decisions,
       };
     },
     async loadDocuments(projectId) {

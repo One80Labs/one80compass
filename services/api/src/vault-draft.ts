@@ -1,7 +1,7 @@
 import { adminAccess, canAccessProject, type Principal } from "../../../packages/authz/src/index";
 import type { StatusReport } from "../../../packages/domain/src/index";
 import { draftStatus, type DraftWorkItem } from "../../vault/src/draft";
-import type { VaultChunk } from "../../vault/src/types";
+import type { VaultChunk, VaultDecisionRow } from "../../vault/src/types";
 import type { HttpResult } from "./router";
 
 export type VaultDraftDeps = {
@@ -10,6 +10,8 @@ export type VaultDraftDeps = {
   loadWorkItems: (projectId: string) => Promise<DraftWorkItem[]>;
   /** Caller already scopes retrieval; draftStatus still drops mismatched customer or program rows. */
   loadChunks: (customerId: string, programId: string) => Promise<VaultChunk[]>;
+  /** Decision-register and plan Decision rows for this customer and program. */
+  loadDecisions: (customerId: string, programId: string) => Promise<VaultDecisionRow[]>;
   createReport: (report: StatusReport) => Promise<void>;
   newId: () => string;
   now: () => Date;
@@ -24,7 +26,7 @@ type VaultDraftCtx = {
   correlationId: string;
 };
 
-/** POST /projects/:projectId/reports/draft — admin-only vault status draft. Does not write issues. */
+/** POST /projects/:projectId/reports/draft — admin-only vault status draft. Does not write issues or the live plan. */
 export async function handleVaultDraft(ctx: VaultDraftCtx): Promise<HttpResult | null> {
   const match = ctx.path.match(/^\/projects\/([^/]+)\/reports\/draft$/);
   if (!match || ctx.method !== "POST") return null;
@@ -49,12 +51,14 @@ export async function handleVaultDraft(ctx: VaultDraftCtx): Promise<HttpResult |
 
   const workItems = await ctx.deps.loadWorkItems(projectId);
   const chunks = await ctx.deps.loadChunks(project.customerId, projectId);
+  const decisions = await ctx.deps.loadDecisions(project.customerId, projectId);
   const drafted = draftStatus({
     customerId: project.customerId,
     programId: projectId,
     question,
     workItems,
     chunks,
+    decisions,
   });
 
   const now = ctx.deps.now().toISOString();

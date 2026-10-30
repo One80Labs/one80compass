@@ -40,6 +40,46 @@ describe("vault client wiring", () => {
         async getSettings() {
           return { milestones: [{ id: "m1", title: "Launch", dueOn: "2026-12-01" }] };
         },
+        async listDecisions() {
+          return [
+            {
+              decisionId: "dec-1",
+              projectId: "prog-1",
+              customerId: "cust-1",
+              kind: "question",
+              status: "outstanding",
+              statement: "Which database?",
+              raisedBy: "ada",
+              raisedOn: "2026-10-01",
+              assigneeIds: ["U_ada"],
+              neededFrom: "",
+              targetDate: null,
+              affects: [],
+              blocksWork: false,
+              issueId: null,
+              source: null,
+              answer: "",
+              outcome: "",
+              rationale: "",
+              decisionType: null,
+              decidedBy: null,
+              decidedOn: null,
+              consulted: "",
+              assumptions: "",
+              whatWouldChange: "",
+              doesNotMean: "",
+              duplicateOfId: null,
+              archiveReason: "",
+              suggestionText: null,
+              acceptedBy: null,
+              comments: [{ commentId: "c1", at: "2026-10-02T15:00:00.000Z", by: "ada", body: "Noted" }],
+              history: [{ at: "2026-10-03T15:00:00.000Z", by: "ada", field: "status", from: null, to: "outstanding" }],
+              createdAt: "2026-10-01T00:00:00.000Z",
+              updatedAt: "2026-10-01T00:00:00.000Z",
+              updatedBy: "ada",
+            },
+          ];
+        },
         async listRisks() {
           return [
             {
@@ -86,6 +126,14 @@ describe("vault client wiring", () => {
     const plan = await deps!.loadPlan("prog-1");
     expect(plan?.milestones).toEqual([{ id: "m1", title: "Launch", dueOn: "2026-12-01" }]);
     expect(plan?.issues[0]?.assignees).toEqual([{ id: "U_ada", login: "ada", name: "Ada" }]);
+    expect(plan?.decisions).toEqual([
+      expect.objectContaining({
+        decisionId: "dec-1",
+        statement: "Which database?",
+        comments: [{ commentId: "c1", at: "2026-10-02T15:00:00.000Z", by: "ada", body: "Noted" }],
+        history: [{ at: "2026-10-03T15:00:00.000Z", by: "ada", field: "status", from: null, to: "outstanding" }],
+      }),
+    ]);
     expect(plan?.risks).toEqual([
       {
         riskId: "risk-1",

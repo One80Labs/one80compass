@@ -1,5 +1,5 @@
 import { expandRelatedEntityIds, type MultiHopRelation } from "./multi-hop";
-import type { SourceLabel, VaultChunk } from "./types";
+import type { SourceLabel, VaultChunk, VaultDecisionRow } from "./types";
 
 export type DraftWorkItem = {
   issueId: string;
@@ -24,6 +24,8 @@ export type DraftCitation = {
 export type DraftClaim = {
   text: string;
   workItemId?: string;
+  /** Vault decision source id (register decisionId or plan issue id). Not a document citation. */
+  decisionId?: string;
   citation?: { sourceLabel: SourceLabel; documentId: string; versionId: string };
 };
 
@@ -33,6 +35,11 @@ export type DraftStatusInput = {
   question: string;
   workItems: DraftWorkItem[];
   chunks: VaultChunk[];
+  /**
+   * Decision-register rows and plan items stored in the vault decision table.
+   * Omitted or empty changes nothing. Rows for another customer or program are dropped.
+   */
+  decisions?: VaultDecisionRow[];
   /**
    * Optional relation edges for 1-hop expansion after primary work-item hits.
    * When omitted, `blocks` edges are derived from each work item's `predecessorIds`.
@@ -49,10 +56,13 @@ export type DraftStatusResult = {
 
 const EMPTY_BODY = "No filed source supports that.";
 
-/** Pure status draft from work items and filed chunks. Does not write issues or plans. */
+/** Pure status draft from work items, filed chunks, and decision rows. Does not write issues or plans. */
 export function draftStatus(input: DraftStatusInput): DraftStatusResult {
   const kept = input.chunks.filter(
     (chunk) => chunk.customerId === input.customerId && chunk.programId === input.programId,
+  );
+  const keptDecisions = (input.decisions ?? []).filter(
+    (row) => row.customerId === input.customerId && row.programId === input.programId,
   );
   const claims: DraftClaim[] = [];
   const citations: DraftCitation[] = [];
@@ -82,6 +92,15 @@ export function draftStatus(input: DraftStatusInput): DraftStatusResult {
     citations.push({ ...citation, excerpt });
   }
 
+  for (const row of keptDecisions) {
+    const sourceId = row.sourceId.trim();
+    if (!sourceId) continue;
+    if (!answersQuestion(input.question, decisionHaystack(row))) continue;
+    const text = decisionClaimText(row);
+    if (!text) continue;
+    claims.push({ text, decisionId: sourceId });
+  }
+
   // 1-hop via filed relations only: related work must already be in workItems (no invented claims).
   const relations = input.relations ?? blockerRelationsFromWorkItems(input);
   const relatedIds = new Set(
@@ -107,22 +126,31 @@ export function draftStatus(input: DraftStatusInput): DraftStatusResult {
     claimedWorkItems.add(item.issueId);
   }
 
-  if (claims.length === 0) {
+  const sourced = claims.filter(hasFiledSource);
+  if (sourced.length === 0) {
     return { title: "Status draft", body: EMPTY_BODY, citations: [], claims: [] };
   }
 
-  const body = claims
-    .map((claim) => {
-      if (claim.workItemId) return `${claim.text} [work item ${claim.workItemId}]`;
-      if (claim.citation) {
-        const { sourceLabel, documentId, versionId } = claim.citation;
-        return `${claim.text} [${sourceLabel} ${documentId} ${versionId}]`;
-      }
-      return claim.text;
-    })
-    .join("\n");
+  const lines = sourced.map(claimLine).filter((line): line is string => line != null);
+  if (lines.length === 0) {
+    return { title: "Status draft", body: EMPTY_BODY, citations: [], claims: [] };
+  }
 
-  return { title: "Status draft", body, citations, claims };
+  return { title: "Status draft", body: lines.join("\n"), citations, claims: sourced };
+}
+
+function hasFiledSource(claim: DraftClaim): boolean {
+  return Boolean(claim.workItemId) || Boolean(claim.decisionId) || Boolean(claim.citation);
+}
+
+function claimLine(claim: DraftClaim): string | null {
+  if (claim.workItemId) return `${claim.text} [work item ${claim.workItemId}]`;
+  if (claim.decisionId) return `${claim.text} [decision ${claim.decisionId}]`;
+  if (claim.citation) {
+    const { sourceLabel, documentId, versionId } = claim.citation;
+    return `${claim.text} [${sourceLabel} ${documentId} ${versionId}]`;
+  }
+  return null;
 }
 
 function blockerRelationsFromWorkItems(input: DraftStatusInput): MultiHopRelation[] {
@@ -157,6 +185,20 @@ function relationKindBetween(
     }
   }
   return null;
+}
+
+function decisionHaystack(row: VaultDecisionRow): string {
+  return `${row.title} ${row.body}`;
+}
+
+function decisionClaimText(row: VaultDecisionRow): string | null {
+  const title = row.title.trim().replace(/\s+/g, " ");
+  const body = row.body.trim().replace(/\s+/g, " ");
+  const filed = title && body ? `${title}. ${body}` : title || body;
+  if (!filed) return null;
+  const excerpt = excerptOf(filed);
+  if (!excerpt) return null;
+  return fileClaimText(filed, excerpt);
 }
 
 function workItemHaystack(item: DraftWorkItem): string {

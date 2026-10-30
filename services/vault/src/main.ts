@@ -1,14 +1,15 @@
 import type { AllowlistEntry } from "./allowlist";
 import { applySchema } from "./apply-schema";
 import type { IngestResult } from "./ingest";
-import { listChunks, readAllowlist, saveAllowlist, saveIngestResult } from "./persist";
+import { listChunks, listDecisions, readAllowlist, saveAllowlist, saveIngestResult } from "./persist";
 
 export type VaultEvent =
   | { type: "apply-schema" }
   | { type: "read-allowlist" }
   | { type: "save-allowlist"; entry: AllowlistEntry; enabled: boolean }
   | { type: "save-rows"; result: IngestResult }
-  | { type: "list-chunks"; customerId: string; programId: string };
+  | { type: "list-chunks"; customerId: string; programId: string }
+  | { type: "list-decisions"; customerId: string; programId: string };
 
 /**
  * Staff vault Lambda. The portal API invokes these events; it does not hold the vault secret.
@@ -48,6 +49,16 @@ export async function handler(event: unknown): Promise<Record<string, unknown>> 
       throw new Error("list-chunks program is not allowlisted");
     }
     return { chunks: await listChunks(typed.customerId, typed.programId) };
+  }
+  if (typed.type === "list-decisions") {
+    if (!typed.customerId || !typed.programId) {
+      throw new Error("list-decisions requires customerId and programId");
+    }
+    const allowlist = await readAllowlist();
+    if (!allowlist.some((entry) => entry.customerId === typed.customerId && entry.programId === typed.programId)) {
+      throw new Error("list-decisions program is not allowlisted");
+    }
+    return { decisions: await listDecisions(typed.customerId, typed.programId) };
   }
 
   const unexpected = (typed as { type: string }).type;

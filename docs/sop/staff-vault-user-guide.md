@@ -65,7 +65,7 @@ Turning the allowlist **on** starts a background copy of that project. Turning i
 
 ## 3. Ingest
 
-**Run vault ingest** copies the plan and labeled files immediately and shows how many rows, relations, and chunks were saved. Use it when you want the vault refreshed now.
+**Run vault ingest** copies the plan, the Decision register, and labeled files immediately and shows how many rows, relations, and chunks were saved. Use it when you want the vault refreshed now.
 
 Compass also copies an allowlisted project in the background when:
 

@@ -8,6 +8,7 @@ import { createFileSigner } from "./files";
 import { loadGithubSecret } from "./github-secret";
 import { createHandler, type HttpEvent, type HttpResult } from "./router";
 import { DynamoStore } from "./store";
+import { createLoadVaultDecisions } from "./vault-decisions";
 import { createLoadVaultChunks, createObjectBytesReader, createVaultIngestDeps } from "./vault-client";
 import { runScheduledVaultIngest, type ScheduledVaultIngestSummary } from "./vault-schedule";
 
@@ -24,6 +25,7 @@ const store = new DynamoStore(DynamoDBDocumentClient.from(new DynamoDBClient({})
 const cognito = new CognitoIdentityProviderClient({});
 const vault = createVaultIngestDeps({ store, vaultFunctionName, readObjectBytes });
 const loadVaultChunks = createLoadVaultChunks({ vaultFunctionName });
+const loadVaultDecisions = createLoadVaultDecisions({ vaultFunctionName });
 
 type ApiHandler = (event: HttpEvent) => Promise<HttpResult>;
 let ready: Promise<ApiHandler> | null = null;
@@ -46,6 +48,7 @@ async function buildHandler(): Promise<ApiHandler> {
     putReportText: files.putReportText,
     vault: vault ?? undefined,
     loadVaultChunks,
+    loadVaultDecisions,
     webhookSecret,
     githubConfigured,
     listAdminUserIds: async () => {
