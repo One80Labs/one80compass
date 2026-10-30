@@ -1,6 +1,6 @@
 # Beginner guide — Install and use the Staff Vault MCP
 
-This guide walks you through connecting the **One80Compass staff vault MCP server** to Cursor or Claude Desktop so you can allowlist a program, ingest evidence, search filed chunks, and draft a cited status report — from the chat, without writing curl commands.
+This guide walks you through connecting the **One80Compass staff vault MCP server** to Cursor or Claude Desktop so you can allowlist a program, ingest evidence, search filed chunks, list Decision register rows, and draft a cited status report — from the chat, without writing curl commands.
 
 You do **not** need to know Postgres, Aurora, or AWS Lambda. The MCP server talks only to the Compass **admin API**.
 
@@ -14,7 +14,7 @@ You do **not** need to know Postgres, Aurora, or AWS Lambda. The MCP server talk
 
 **MCP** (Model Context Protocol) lets an AI app (Cursor, Claude Desktop) call small, named **tools** on your machine.
 
-Think of it like giving the assistant a remote control with five vault buttons. You ask in plain English; the assistant chooses a tool; the tool calls Compass as you (admin).
+Think of it like giving the assistant a remote control with six vault buttons. You ask in plain English; the assistant chooses a tool; the tool calls Compass as you (admin).
 
 | Without MCP | With MCP |
 | --- | --- |
@@ -27,7 +27,7 @@ Think of it like giving the assistant a remote control with five vault buttons. 
 
 | Requirement | Why |
 | --- | --- |
-| One80 **administrator** (`one80-admin` Cognito group) | Vault allowlist, ingest, chunks, and draft are admin-only |
+| One80 **administrator** (`one80-admin` Cognito group) | Vault allowlist, ingest, chunks, decisions, and draft are admin-only |
 | Access to the One80compass git repo on your computer | The MCP process runs from `services/vault-mcp` in that clone |
 | Node.js **18+** and npm installed | Used to start the MCP process (`npx tsx …`) |
 
@@ -42,9 +42,20 @@ Contributors and View users cannot use these tools (the API returns 403).
 | **Program** / `program_id` | A Compass **project**. In the browser URL it looks like `/projects/YOUR-PROJECT-ID/…`. That id is what you pass as `program_id`. |
 | **Staff vault** | A rebuildable **copy** of an allowlisted program plus labeled documents. Customers never log into it. |
 | **Allowlist** | Turns vault copy on or off for one program. |
-| **Ingest** | Copies the current plan + labeled files into the vault (replaces prior vault rows for that program). |
-| **Chunk** | A searchable text slice from a labeled filed document. |
-| **Draft from vault** | Creates a normal Compass **status report** in `draft` with citations. It does **not** change live issue dates or status. |
+| **Ingest** | Replaces the vault copy for one allowlisted program. It copies plan work items, milestones, the risk register, people, labeled files, and the Decision register. Each register record keeps its decision id. A plan item whose type is **Decision** is still stored as a decision. |
+| **Chunk** | A searchable text slice from a labeled filed document. Register rows are not chunks. List those with `vault_list_decisions`. |
+| **Draft from vault** | Creates a normal Compass **status report** in `draft` with citations from plan work items, Decision register rows, and filed chunks. A register claim names the decision id and does not use a document source label. It does **not** change live issue dates or status. |
+
+## What ingest copies
+
+- Plan work items
+- Milestones
+- Risk register
+- People
+- Labeled files
+- Decision register (statement, comments, history)
+
+A plan item whose type is **Decision** is still copied as a decision row. Customers never see the vault.
 
 Before MCP will find evidence, someone must label documents and (usually) allowlist + ingest. See [staff-vault.md](./staff-vault.md) for the full UI procedure.
 
@@ -191,6 +202,8 @@ Always use a real Compass **project id** as `program_id`.
 
 You need allowlist **on** first (otherwise you get a conflict / 409). After ingest you should see counts such as `rowCount`, `relationCount`, `chunkCount`.
 
+Ingest copies the live plan, milestones, the risk register, people, labeled files, and the Decision register. Each register record keeps its decision id. The title is the statement. The body includes the current fields plus every comment and every history event. A linked work item becomes a decided relation from the decision to the work item. A duplicateOfId becomes a supersedes relation from the surviving decision to the duplicate. A plan item whose type is **Decision** is still stored as a decision row. Drafts and `vault_list_decisions` read those rows. A draft claim names the decision id and does not use a document source label. The live plan is not modified.
+
 ### 4. List or search chunks
 
 **Ask:** “List vault chunks for project `PROJECT_ID`.”  
@@ -201,14 +214,23 @@ You need allowlist **on** first (otherwise you get a conflict / 409). After inge
 
 If `chunkCount` was 0 at ingest, label text files in Documents and ingest again ([staff-vault.md](./staff-vault.md)).
 
-### 5. Draft a cited status report
+### 5. List Decision register rows
+
+**Ask:** “List vault decisions for project `PROJECT_ID`.”
+
+**Tool:** `vault_list_decisions`  
+**Args:** `program_id`
+
+The program must be allowlisted (otherwise you get a conflict / 409). Each row keeps its decision id. This tool does not change the live plan.
+
+### 6. Draft a cited status report
 
 **Ask:** “Draft a vault status report for project `PROJECT_ID` answering: What progress did we make this week?”
 
 **Tool:** `vault_draft_status`  
 **Args:** `program_id`, `question`
 
-This creates a Compass report in **draft** with citations. Open Reports in the UI, review citations, then submit → approve → publish as usual. The draft **cannot** change live plan fields.
+This creates a Compass report in **draft** with citations. A claim about a Decision register record names the decision id and does not use a document source label. Open Reports in the UI, review citations, then submit → approve → publish as usual. The draft **cannot** change live plan fields.
 
 ---
 
@@ -229,9 +251,10 @@ This creates a Compass report in **draft** with citations. Open Reports in the U
 | --- | --- | --- |
 | `vault_get_allowlist` | Read allowlist flag for one program | `program_id` |
 | `vault_set_allowlist` | Enable or clear allowlist | `program_id`, `enabled` |
-| `vault_ingest` | Copy program + labeled files into the vault | `program_id` |
+| `vault_ingest` | Copy plan work items, milestones, the risk register, people, labeled files, and the Decision register (statement, comments, history). Plan items typed Decision are still copied | `program_id` |
 | `vault_list_chunks` | List/search filed chunks for one program | `program_id` (+ optional `query`) |
-| `vault_draft_status` | Create a cited report draft in Compass | `program_id`, `question` |
+| `vault_list_decisions` | List Decision register rows copied into the vault. Administrator only; the program must be allowlisted | `program_id` |
+| `vault_draft_status` | Create a cited report draft in Compass. A register claim names the decision id and does not use a document source label | `program_id`, `question` |
 
 ---
 
@@ -243,8 +266,9 @@ This creates a Compass report in **draft** with citations. Open Reports in the U
 | “ONE80COMPASS_API_URL is required” / ID token required | Env not set in mcp config | Add both env vars under `env` |
 | Not admin / 403 | Token is not `one80-admin` | Sign in as administrator; copy a new token |
 | Auth failed after it worked earlier | Token or 2-hour session expired | Sign in again; paste a fresh ID token; restart MCP |
-| 409 on ingest or list chunks | Program not allowlisted | Run `vault_set_allowlist` with `enabled: true` |
-| Zero chunks | No labeled stored text files | Label files; finish upload; ingest again |
+| 409 on ingest, list chunks, or list decisions | Program not allowlisted | Run `vault_set_allowlist` with `enabled: true` |
+| Zero chunks | No labeled stored text files | Label text, markdown, CSV, or JSON; finish upload; ingest again |
+| Decision register missing from a draft | Allowlist is off, or ingest has not run since the register changed | Allowlist the program, run `vault_ingest`, then `vault_list_decisions` |
 | Draft says nothing supports the question | Empty vault or odd question | Ingest; widen the question; confirm labels |
 | Fear of changing the live plan | — | Draft/report tools do not write issue dates or status |
 
@@ -280,3 +304,4 @@ Logs appear on **stderr**. Leave stdout alone — that channel is for MCP protoc
 | Date | Change |
 | --- | --- |
 | 2026-10-29 | Initial beginner install and use guide for staff vault MCP |
+| 2026-10-30 | Ingest copies the Decision register (statement, comments, and history) and keeps each decision id. Draft claims name that id and do not use a document source label. Plan items typed Decision are still copied |

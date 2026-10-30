@@ -75,5 +75,5 @@ Contributors can still upload; they cannot allowlist, ingest, or draft from vaul
 | Mistake | Fix |
 | --- | --- |
 | Upload stuck / no version number | Finish the upload flow until status is current |
-| MCP / vault draft finds no chunks | Label text files, ensure a current version, then ingest (admin) |
+| MCP / vault draft finds no chunks | Label a stored text, `.xlsx`, `.docx`, or `.eml` file, ensure a current version, then ingest (admin) |
 | Cannot set a source label | You need the administrator role |

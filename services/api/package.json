@@ -15,6 +15,9 @@
     "@aws-sdk/client-secrets-manager": "^3.967.0",
     "@aws-sdk/client-sqs": "^3.682.0",
     "@aws-sdk/lib-dynamodb": "^3.682.0",
-    "@aws-sdk/s3-request-presigner": "^3.682.0"
+    "@aws-sdk/s3-request-presigner": "^3.682.0",
+    "exceljs": "^4.4.0",
+    "mailparser": "^3.9.21",
+    "mammoth": "^1.13.0"
   }
 }

@@ -10,6 +10,7 @@ import type {
   IngestVersion,
 } from "../../vault/src/ingest";
 import type { VaultChunk } from "../../vault/src/types";
+import { extractVaultText } from "./extract-vault-text";
 import type { Store } from "./store";
 import type { VaultIngestDeps } from "./vault-ingest";
 
@@ -33,14 +34,14 @@ export function createVaultInvoker(functionName: string, client = new LambdaClie
   };
 }
 
-/** Read UTF-8 object text from the documents bucket. Binary or missing objects yield an empty string. */
-export function createObjectTextReader(bucket: string, client = new S3Client({})) {
-  return async function readObjectText(objectKey: string): Promise<string> {
+/** Read stored document bytes. Missing objects yield an empty buffer. This does not write the object. */
+export function createObjectBytesReader(bucket: string, client = new S3Client({})) {
+  return async function readObjectBytes(objectKey: string): Promise<Uint8Array> {
     try {
       const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: objectKey }));
-      return (await result.Body?.transformToString("utf-8")) ?? "";
+      return (await result.Body?.transformToByteArray()) ?? new Uint8Array();
     } catch {
-      return "";
+      return new Uint8Array();
     }
   };
 }
@@ -52,13 +53,13 @@ export function createObjectTextReader(bucket: string, client = new S3Client({})
 export function createVaultIngestDeps(options: {
   store: Store;
   vaultFunctionName: string | undefined;
-  readObjectText: (objectKey: string) => Promise<string>;
+  readObjectBytes: (objectKey: string) => Promise<Uint8Array>;
   invokeVault?: VaultInvoke;
 }): VaultIngestDeps | null {
   const functionName = options.vaultFunctionName?.trim();
   if (!functionName) return null;
   const invoke = options.invokeVault ?? createVaultInvoker(functionName);
-  const { store, readObjectText } = options;
+  const { store, readObjectBytes } = options;
 
   return {
     async loadPlan(projectId) {
@@ -122,14 +123,16 @@ export function createVaultIngestDeps(options: {
     async loadVersionText(documentId, versionId) {
       const version = await store.getVersion(documentId, versionId);
       if (!version) return null;
-      const text = await readObjectText(version.objectKey);
+      const bytes = await readObjectBytes(version.objectKey);
+      // Chunk the extracted text. The stored content type and object bytes stay as uploaded.
+      const extracted = await extractVaultText(bytes, version.contentType, version.fileName);
       const loaded: IngestVersion = {
         versionId: version.versionId,
         documentId: version.documentId,
-        contentType: version.contentType,
+        contentType: extracted.contentType,
         fileName: version.fileName,
         status: version.status,
-        text,
+        text: extracted.text,
       };
       return loaded;
     },

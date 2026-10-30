@@ -51,7 +51,7 @@ function OverviewPreview() {
           </ul>
         </div>
       </div>
-      <Tabs label="Overview" tabs={["Timeline", "Key stakeholders", "Links", "GitHub"]} value={tab} onChange={setTab} />
+      <Tabs label="Overview" tabs={["Timeline", "Key stakeholders", "Links"]} value={tab} onChange={setTab} />
       <div className="timeline">
         <div className="timeline-step current">
           <strong>Discovery</strong>No dates stored

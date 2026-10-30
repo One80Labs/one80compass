@@ -48,7 +48,7 @@ The copy includes work items, milestones, risks, people (assignees), and decisio
 | `other` | Another staff-chosen text file |
 | **No vault label** | Keep the file out of the vault and out of drafts |
 
-Leave the label empty to exclude a file. Soft-deleted files are excluded. Text, markdown, CSV, and JSON can be searched. Other file types can be labeled and still may not produce searchable text.
+Leave the label empty to exclude a file. Soft-deleted files are excluded. Text, markdown, CSV, and JSON can be searched as stored. Excel `.xlsx` is searched as CSV, and Word `.docx` and email `.eml` are searched as Markdown. The uploaded file stays unchanged. Screenshots, video, and older `.xls`, `.doc`, and `.msg` files can be labeled and still produce no searchable text.
 
 Live Krisp or Fireflies connections are not part of this release. Export the file, upload it, and label it.
 
@@ -72,7 +72,7 @@ Compass also copies an allowlisted project in the background when:
 - A labeled upload finishes
 - An administrator sets or changes a vault source label on a file that already has a stored version
 - An administrator turns the allowlist on
-- About every 15 minutes, so plan-only edits (issues, risks, people, decisions) land without a new document upload
+- About every 15 minutes, so plan-only edits (issues, risks, people, the Decision register, and plan items whose type is Decision) land without a new document upload
 
 Background ingest is best-effort. If a draft looks stale, click **Run vault ingest**.
 
@@ -87,6 +87,8 @@ Background ingest is best-effort. If a draft looks stale, click **Run vault inge
 5. If nothing filed supports the question, the body is exactly: `No filed source supports that.` That is an empty result, not a finished status update.
 
 Citations name the source label, document, and version. Claims about plan work name the issue.
+
+Ingest also copies each Decision register record. The record keeps its decision id, the title is the statement, and the body includes the current fields plus every comment and every history event. A draft claim about that record names the decision id and does not use a document source label. Plan items whose type is Decision are still copied. The live plan is not modified.
 
 ---
 
@@ -120,7 +122,7 @@ Publish still does not write dates or status back onto the live plan.
 | --- | --- |
 | No **Staff vault** panel or **Draft from vault** | Sign in as an administrator |
 | Ingest says the project is not allowlisted | Turn on **Allowlist this project for vault ingest**, then run ingest again |
-| Ingest reports 0 chunks | Label a stored text file (`compass-upload`, `krisp`, `fireflies`, or `other`) and ingest again |
+| Ingest reports 0 chunks | Label a stored text, `.xlsx`, `.docx`, or `.eml` file and ingest again |
 | Draft says “No filed source supports that.” | Widen the question, confirm the file is labeled and current, then ingest again |
 | A plan edit is missing from the draft | Run **Run vault ingest**, or wait for the 15-minute refresh |
 | You expected the live issue dates to change | The vault draft never edits the live plan |

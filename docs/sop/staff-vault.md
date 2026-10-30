@@ -13,11 +13,13 @@ How One80 staff use the Compass staff vault: file evidence on a program, copy th
 
 | In Compass (live) | In the vault (staff copy) |
 | --- | --- |
-| Plan, issues, dates, catalogs | Copied work items and milestones for one allowlisted program |
+| Plan, issues, dates, catalogs | Copied work items, milestones, and Decision register records for one allowlisted program |
 | Documents in S3 | Only files that have a vault source label and a stored current version |
-| Status reports (draft → publish) | Draft text built from vault work items and filed chunks, with citations |
+| Status reports (draft → publish) | Draft text built from vault work items, Decision register rows, and filed chunks, with citations |
 
 The draft does **not** change issue dates, status, or any other live plan field. Publish still uses the normal report review flow.
+
+Ingest also copies the risk register, people, and the Decision register. Each register record keeps its decision id. The title is the statement. The body includes the current fields plus every comment and every history event. A linked work item becomes a decided relation from the decision to the work item. A duplicateOfId becomes a supersedes relation from the surviving decision to the duplicate. A plan item whose type is **Decision** is still stored as a decision.
 
 ---
 
@@ -63,7 +65,7 @@ Every vault row keeps `customerId` and `programId` (the Compass project id). Ret
 - Soft-deleted document
 - No current version, or version still pending upload
 - Document belongs to another customer
-- Non-text content types do not produce searchable chunks (text, markdown, CSV, JSON, and common `.txt` / `.md` / `.csv` / `.json` names do)
+- Searchable text comes from text, markdown, CSV, and JSON as stored. On ingest, `.xlsx` is read as CSV (one block per sheet, saved cell values) and `.docx` and `.eml` are read as Markdown. The file in Documents is not replaced. Images, video, `.xls`, `.doc`, and `.msg` do not produce chunks.
 
 Live Krisp or Fireflies API sync is out of scope; file exports manually and label them.
 
@@ -96,11 +98,11 @@ To remove the program from the allowlist, send `"enabled":false` (or turn the to
 - Upload completes (`…/versions/{versionId}/complete`) **and** the document already has a vault source label
 - Document `sourceLabel` is set or changed to a vault label while a stored current version exists
 - An administrator enables the program on the allowlist (`"enabled":true`). Disabling (`"enabled":false`) does not ingest.
-- Every 15 minutes, EventBridge rule `VaultIngest` re-ingests every allowlisted program (plan, risks, decisions, people, and already-filed documents) so plan-only edits land without a document upload. The sweep replaces prior vault rows for that program. One program failure does not stop the others. An empty allowlist is a no-op.
+- Every 15 minutes, EventBridge rule `VaultIngest` re-ingests every allowlisted program (plan, risks, people, Decision register records, plan items whose type is Decision, and already-filed documents) so plan-only edits land without a document upload. The sweep replaces prior vault rows for that program. One program failure does not stop the others. An empty allowlist is a no-op.
 
 Auto-ingest is best-effort: a vault failure is logged and does **not** fail the upload, label, or allowlist API. Manual `POST …/vault-ingest` remains the way to force a refresh immediately.
 
-**Manual ingest:** After labels and allowlist are set (or anytime you want to force a refresh immediately), run ingest. This replaces prior vault rows for that program (work items, milestones, filed files, chunks).
+**Manual ingest:** After labels and allowlist are set (or anytime you want to force a refresh immediately), run ingest. This replaces prior vault rows for that program (work items, milestones, Decision register records, filed files, chunks).
 
 ```bash
 curl -sS -X POST \
@@ -123,7 +125,7 @@ If the project is not allowlisted: `409` with message that the project is not on
 1. Open the project → **Reports**.
 2. Under **Draft from vault**, enter a **Question** (what the draft should answer).
 3. Click **Draft from vault**.
-4. Compass creates a normal report in status `draft` and opens it. Citations name the source label, document id, and version id. Work-item claims name the issue id.
+4. Compass creates a normal report in status `draft` and opens it. Citations for filed chunks name the source label, document id, and version id. Work-item claims name the issue id. Decision register claims name the decision id and do not use a document source label.
 5. If nothing in the vault supports the question, the body is exactly: `No filed source supports that.` Do not treat that as a finished status update.
 
 ### 5. List vault chunks (admin API / MCP)
@@ -230,9 +232,9 @@ Refresh the ID token when Cognito session expires. Do not put vault DB credentia
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| `403` on allowlist, ingest, chunks, or draft | Not in `one80-admin` | Use an administrator account |
-| `409` on ingest or vault-chunks | Project not allowlisted | Enable in Documents → Staff vault (or `PUT` with `enabled: true`) |
-| `chunkCount` is 0 | No labeled stored text files | Set source labels; confirm upload completed; re-ingest |
+| `403` on allowlist, ingest, chunks, decisions, or draft | Not in `one80-admin` | Use an administrator account |
+| `409` on ingest, vault-chunks, or vault-decisions | Project not allowlisted | Enable in Documents → Staff vault (or `PUT` with `enabled: true`) |
+| `chunkCount` is 0 | No labeled stored text, or the file type has no extractor | Label a stored text, `.xlsx`, `.docx`, or `.eml` file; confirm upload completed; re-ingest |
 | Draft says “No filed source supports that.” | Question unmatched, or vault empty for this program | Re-ingest; widen the question; confirm files are labeled and filed on this project |
 | Draft missing a file you expect | Wrong label, deleted file, or ingest not re-run | Fix label; re-ingest |
 | Cite another customer’s document | Must not happen; filters drop foreign rows | If seen, stop and escalate; do not publish |
@@ -248,7 +250,7 @@ Compass UI / API / vault-mcp
   → invokes vault Lambda only (no vault DB password on the API or MCP)
 
 Vault Lambda + Aurora PostgreSQL (pgvector)
-  → allowlist, persist ingest rows, list chunks for drafts and MCP
+  → allowlist, persist ingest rows, list chunks and decision rows for drafts and MCP
 ```
 
 Decision record: [ADR 0012 — Staff vault](../adr/0012-staff-vault.md).  
@@ -279,3 +281,4 @@ Tracked in the [unified release plan](../product/One80Compass_Unified_Release_Pl
 | 2026-10-29 | Linked beginner MCP guide (`vault-mcp-beginner.md`) |
 | 2026-10-29 | 15-minute EventBridge sweep (`VaultIngest`) and allowlist-enable ingest; upload/label, allowlist-enable, and EventBridge cron **Done** |
 | 2026-10-29 | In-app user guide `docs/sop/staff-vault-user-guide.md` on FAQ → Staff vault |
+| 2026-10-30 | Ingest copies Decision register records (statement, comments, and history) and keeps each decision id. Draft claims name that id and do not use a document source label. Plan items typed Decision are still copied |

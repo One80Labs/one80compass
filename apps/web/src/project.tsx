@@ -62,7 +62,6 @@ export function OverviewPage({ session }: { session: Session | null }) {
   const project = portal.projects.find((item) => item.projectId === projectId);
   const customer = portal.customers.find((item) => item.customerId === portal.customerId);
   const [data, setData] = useState<OverviewResponse | null>(null);
-  const [sync, setSync] = useState("Checking GitHub…");
   const [tab, setTab] = useState("Timeline");
   const [editing, setEditing] = useState(false);
   const [health, setHealth] = useState<Health>("");
@@ -81,9 +80,6 @@ export function OverviewPage({ session }: { session: Session | null }) {
         setNotes(result.overview.notes);
       })
       .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not open the project."));
-    api<{ sync: { status: string; detail: string | null } }>(`/projects/${projectId}/plan`, session.idToken)
-      .then((result) => setSync(result.sync.detail || result.sync.status))
-      .catch(() => setSync("GitHub status is unavailable."));
   }, [projectId, session]);
 
   async function save(event: FormEvent) {
@@ -175,11 +171,12 @@ export function OverviewPage({ session }: { session: Session | null }) {
               />
             </div>
           </div>
-          <Tabs label="Overview" tabs={["Timeline", "Key stakeholders", "Links", "GitHub"]} value={tab} onChange={setTab} />
+          <Tabs label="Overview" tabs={["Timeline", "Key stakeholders", "Links"]} value={tab} onChange={setTab} />
           {tab === "Timeline" &&
             (data.milestones.length === 0 ? (
-              <p className="copy">No GitHub milestones on this project yet. Phase dates for the whole project are still a later part of this release.</p>
+              <p className="copy">No milestones on this project yet. Phase dates for the whole project are still a later part of this release.</p>
             ) : (
+              // One step per plan milestone, ordered by target date. The filled dot is any milestone that is not confirmed yet.
               <div className="timeline">
                 {data.milestones.map((item) => (
                   <div className={`timeline-step ${item.state === "confirmed" ? "" : "current"}`} key={item.key}>
@@ -212,15 +209,6 @@ export function OverviewPage({ session }: { session: Session | null }) {
                 Progress: {data.summary.progress ?? "Not Started / No Tasks"}. {data.summary.activeDocuments} active documents.
                 {data.publishedReport ? ` Latest report: ${data.publishedReport.title}.` : " No published report yet."}
               </p>
-            </section>
-          )}
-          {tab === "GitHub" && (
-            <section className="panel">
-              <h3>GitHub integration</h3>
-              <p className="copy">{sync}</p>
-              <Link className="btn" to={modulePath("plan", projectId)}>
-                Open project plan
-              </Link>
             </section>
           )}
         </>
@@ -678,34 +666,6 @@ export function DocumentDetailPage({ session }: { session: Session | null }) {
               </div>
               <h2>{document.name}</h2>
             </div>
-            <div className="row">
-              <button className="btn" type="button" onClick={() => download(current?.versionId)}>
-                Download
-              </button>
-              {session && canWrite && !document.deletedAt && (
-                <button className="btn" type="button" onClick={() => setRenaming(true)}>
-                  Rename
-                </button>
-              )}
-              {session && canWrite && document.deletedAt && (
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={() => {
-                    api(`/projects/${projectId}/documents/${document.documentId}/restore`, session.idToken, { method: "POST", body: {} })
-                      .then(reload)
-                      .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not restore the document."));
-                  }}
-                >
-                  Restore
-                </button>
-              )}
-              {session && canWrite && !document.deletedAt && (
-                <button className="btn" type="button" title="Move to the recycle bin. You can restore it later." onClick={() => setConfirmDelete(true)}>
-                  Delete
-                </button>
-              )}
-            </div>
           </div>
           <Tabs label="Document" tabs={["Preview", "Version history", "Audit history"]} value={tab} onChange={setTab} />
           {tab === "Preview" && (
@@ -721,6 +681,35 @@ export function DocumentDetailPage({ session }: { session: Session | null }) {
               />
               <section className="panel">
                 <h3>Version details</h3>
+                {/* Document actions live here so they stay with the current version they act on. */}
+                <div className="row version-actions">
+                  <button className="btn" type="button" onClick={() => download(current?.versionId)}>
+                    Download
+                  </button>
+                  {session && canWrite && !document.deletedAt && (
+                    <button className="btn" type="button" onClick={() => setRenaming(true)}>
+                      Rename
+                    </button>
+                  )}
+                  {session && canWrite && document.deletedAt && (
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => {
+                        api(`/projects/${projectId}/documents/${document.documentId}/restore`, session.idToken, { method: "POST", body: {} })
+                          .then(reload)
+                          .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not restore the document."));
+                      }}
+                    >
+                      Restore
+                    </button>
+                  )}
+                  {session && canWrite && !document.deletedAt && (
+                    <button className="btn" type="button" title="Move to the recycle bin. You can restore it later." onClick={() => setConfirmDelete(true)}>
+                      Delete
+                    </button>
+                  )}
+                </div>
                 <dl className="detail-list">
                   <dt>Version</dt>
                   <dd>{currentVersionNumber ? `v${currentVersionNumber}` : "No file"}</dd>

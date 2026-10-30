@@ -1800,6 +1800,10 @@ button.backlink {
   line-height: 1.5;
 }
 
+.version-actions {
+  margin: 0 0 16px;
+}
+
 .detail-list {
   display: grid;
   grid-template-columns: 1fr 1fr;

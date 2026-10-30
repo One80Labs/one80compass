@@ -1,3 +1,4 @@
+import { Workbook } from "exceljs";
 import { describe, expect, it } from "vitest";
 import { createLoadVaultChunks, createVaultIngestDeps } from "./vault-client";
 import type { Store } from "./store";
@@ -8,7 +9,7 @@ describe("vault client wiring", () => {
       createVaultIngestDeps({
         store: {} as Store,
         vaultFunctionName: undefined,
-        readObjectText: async () => "",
+        readObjectBytes: async () => new Uint8Array(),
       }),
     ).toBeNull();
     expect(createLoadVaultChunks({ vaultFunctionName: " " })).toBeUndefined();
@@ -65,7 +66,7 @@ describe("vault client wiring", () => {
         },
       } as unknown as Store,
       vaultFunctionName: "one80compass-dev-vault",
-      readObjectText: async () => "",
+      readObjectBytes: async () => new Uint8Array(),
       invokeVault: async <T,>(event: Record<string, unknown>) => {
         events.push(event);
         if (event.type === "read-allowlist") {
@@ -97,6 +98,42 @@ describe("vault client wiring", () => {
       },
     ]);
     expect(events.map((event) => event.type)).toEqual(["read-allowlist", "save-allowlist", "save-rows", "list-chunks"]);
+  });
+
+  it("loads extracted workbook text without replacing the stored version", async () => {
+    const workbook = new Workbook();
+    workbook.addWorksheet("Plan").addRow(["Launch"]);
+    const bytes = new Uint8Array(await workbook.xlsx.writeBuffer());
+    let writes = 0;
+    const deps = createVaultIngestDeps({
+      store: {
+        async getVersion() {
+          return {
+            versionId: "v1",
+            documentId: "d1",
+            objectKey: "objects/plan.xlsx",
+            contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            fileName: "plan.xlsx",
+            status: "stored",
+            projectId: "prog-1",
+          };
+        },
+        async putVersion() {
+          writes += 1;
+        },
+        async putDocument() {
+          writes += 1;
+        },
+      } as unknown as Store,
+      vaultFunctionName: "one80compass-dev-vault",
+      readObjectBytes: async () => bytes,
+      invokeVault: async <T,>() => ({}) as T,
+    });
+    const loaded = await deps!.loadVersionText("d1", "v1");
+    expect(loaded?.fileName).toBe("plan.xlsx");
+    expect(loaded?.contentType).toBe("text/csv");
+    expect(loaded?.text).toContain("Launch");
+    expect(writes).toBe(0);
   });
 
   it("loads chunks through list-chunks", async () => {

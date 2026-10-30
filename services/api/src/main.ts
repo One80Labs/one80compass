@@ -8,7 +8,7 @@ import { createFileSigner } from "./files";
 import { loadGithubSecret } from "./github-secret";
 import { createHandler, type HttpEvent, type HttpResult } from "./router";
 import { DynamoStore } from "./store";
-import { createLoadVaultChunks, createObjectTextReader, createVaultIngestDeps } from "./vault-client";
+import { createLoadVaultChunks, createObjectBytesReader, createVaultIngestDeps } from "./vault-client";
 import { runScheduledVaultIngest, type ScheduledVaultIngestSummary } from "./vault-schedule";
 
 const tableName = required("TABLE_NAME");
@@ -17,12 +17,12 @@ const bucketName = required("BUCKET_NAME");
 const queueUrl = process.env.SYNC_QUEUE_URL ?? "";
 const vaultFunctionName = process.env.VAULT_FUNCTION_NAME ?? "";
 const files = createFileSigner(bucketName);
-const readObjectText = createObjectTextReader(bucketName);
+const readObjectBytes = createObjectBytesReader(bucketName);
 const sqs = new SQSClient({});
 
 const store = new DynamoStore(DynamoDBDocumentClient.from(new DynamoDBClient({})), tableName);
 const cognito = new CognitoIdentityProviderClient({});
-const vault = createVaultIngestDeps({ store, vaultFunctionName, readObjectText });
+const vault = createVaultIngestDeps({ store, vaultFunctionName, readObjectBytes });
 const loadVaultChunks = createLoadVaultChunks({ vaultFunctionName });
 
 type ApiHandler = (event: HttpEvent) => Promise<HttpResult>;

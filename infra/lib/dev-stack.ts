@@ -270,6 +270,8 @@ export class DevStack extends cdk.Stack {
       depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
       runtime: lambda.Runtime.NODEJS_20_X,
       // EventBridge sweep of every allowlisted program; HTTP API keeps its own gateway limit.
+      // Workbook and Word extraction expand the stored object in this function.
+      memorySize: 1024,
       timeout: cdk.Duration.minutes(5),
       environment: {
         TABLE_NAME: table.tableName,
@@ -282,7 +284,12 @@ export class DevStack extends cdk.Stack {
         GITHUB_SECRET_ARN: githubSecret.secretArn,
         GITHUB_WEBHOOK_SECRET: githubWebhookSecret,
       },
-      bundling: { sourceMap: true, minify: true },
+      bundling: {
+        sourceMap: true,
+        minify: true,
+        // These parsers use dynamic requires. Install them beside the bundle instead of inlining them.
+        nodeModules: ["exceljs", "mammoth", "mailparser"],
+      },
     });
     table.grantReadWriteData(apiFunction);
     documents.grantPut(apiFunction);
