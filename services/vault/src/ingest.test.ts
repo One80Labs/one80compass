@@ -296,11 +296,21 @@ describe("ingestProgram", () => {
       decidedBy: "ada",
       decidedOn: "2026-10-20",
     });
+    const kept = decision({
+      decisionId: "dec-keep",
+      statement: "Original question",
+    });
     const duplicate = decision({
       decisionId: "dec-dup",
       status: "duplicate",
       statement: "Repeated question",
       duplicateOfId: "dec-keep",
+    });
+    const dangling = decision({
+      decisionId: "dec-dangling",
+      status: "duplicate",
+      statement: "Missing survivor",
+      duplicateOfId: "dec-missing",
     });
     const foreign = decision({
       decisionId: "dec-foreign",
@@ -357,7 +367,7 @@ describe("ingestProgram", () => {
         }),
       ],
       milestones: [],
-      decisions: [question, linked, duplicate, foreign, otherProgram],
+      decisions: [question, linked, kept, duplicate, dangling, foreign, otherProgram],
       documents: [],
       versions: [],
       recordedAt: RECORDED,
@@ -418,6 +428,7 @@ describe("ingestProgram", () => {
     );
     expect(result.relations.some((row) => row.fromSourceId === "dec-foreign" || row.toSourceId === "dec-foreign")).toBe(false);
     expect(result.relations.some((row) => row.kind === "decided" && row.fromSourceId === "dec-q")).toBe(false);
+    expect(result.relations.some((row) => row.fromSourceId === "dec-missing" || row.toSourceId === "dec-dangling")).toBe(false);
     expect(result.chunks).toEqual([]);
   });
 

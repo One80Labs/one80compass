@@ -842,12 +842,14 @@ function previewKind(contentType: string | null, fileName: string | null): Previ
   const type = (contentType ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
   const extension = fileName?.split(".").pop()?.toLowerCase() ?? "";
   if (type === "application/pdf" || extension === "pdf") return "pdf";
+  // HTML is not loaded as a document. A sandboxed frame still would not run its scripts, and download avoids that surface.
+  if (type === "text/html" || type === "application/xhtml+xml" || ["html", "htm", "xhtml"].includes(extension)) return "none";
   if (type.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"].includes(extension)) return "image";
   if (
     type.startsWith("text/") ||
     type === "application/json" ||
     type === "application/xml" ||
-    ["txt", "md", "csv", "json", "xml", "log", "html", "htm", "css", "js", "ts"].includes(extension)
+    ["txt", "md", "csv", "json", "xml", "log", "css", "js", "ts"].includes(extension)
   ) {
     return "text";
   }
@@ -929,7 +931,13 @@ function DocumentPreview({
 
   return (
     <div className="preview preview-media">
-      <iframe className="preview-frame" title={`Preview of ${documentName}`} src={url} />
+      <iframe
+        className="preview-frame"
+        title={`Preview of ${documentName}`}
+        src={url}
+        referrerPolicy="no-referrer"
+        {...(mode === "text" ? { sandbox: "" as const } : {})}
+      />
     </div>
   );
 }

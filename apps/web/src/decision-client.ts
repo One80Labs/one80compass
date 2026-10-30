@@ -93,10 +93,19 @@ export type SuggestionAccept = {
   targetDate: string | null;
 };
 
+export type TranscriptAvailability = "ready" | "unavailable" | "not_ingested";
+
 /** Proposals parsed from Krisp and Fireflies transcripts. Accepted and dismissed rows are omitted. */
-export async function listSuggestions(projectId: string, idToken: string): Promise<{ suggestions: DecisionSuggestion[] }> {
-  const result = await api<{ suggestions: DecisionSuggestion[] }>(`/projects/${projectId}/decision-suggestions`, idToken);
-  return { suggestions: Array.isArray(result.suggestions) ? result.suggestions : [] };
+export async function listSuggestions(
+  projectId: string,
+  idToken: string,
+): Promise<{ suggestions: DecisionSuggestion[]; transcripts: TranscriptAvailability }> {
+  const result = await api<{ suggestions: DecisionSuggestion[]; transcripts?: TranscriptAvailability }>(
+    `/projects/${projectId}/decision-suggestions`,
+    idToken,
+  );
+  const transcripts = result.transcripts === "unavailable" || result.transcripts === "not_ingested" ? result.transcripts : "ready";
+  return { suggestions: Array.isArray(result.suggestions) ? result.suggestions : [], transcripts };
 }
 
 /** Creates a register row from a proposal. Does not create a plan issue. */

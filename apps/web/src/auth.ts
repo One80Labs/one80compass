@@ -13,7 +13,7 @@ const pool = new CognitoUserPool({
   ClientId: import.meta.env.VITE_USER_POOL_CLIENT_ID,
 });
 
-/** Stage and production builds set VITE_MFA_REQUIRED=true. The dev pool does not ask for a code. */
+/** Extra admin gate in the app. The user pool itself requires an authenticator whether or not this is set. */
 export const mfaRequired = import.meta.env.VITE_MFA_REQUIRED === "true";
 
 export type Session = {
@@ -35,7 +35,8 @@ function acceptIfWithinMaxAge(session: Session): Session | null {
 type SignInResult =
   | { status: "signedIn"; session: Session }
   | { status: "newPassword"; user: CognitoUser }
-  | { status: "totp"; user: CognitoUser };
+  | { status: "totp"; user: CognitoUser }
+  | { status: "totpSetup"; user: CognitoUser; secret: string };
 
 export function signIn(email: string, password: string): Promise<SignInResult> {
   const user = new CognitoUser({ Username: email, Pool: pool });
@@ -45,6 +46,24 @@ export function signIn(email: string, password: string): Promise<SignInResult> {
 export function completeNewPassword(user: CognitoUser, email: string, password: string): Promise<SignInResult> {
   return new Promise((resolve, reject) => {
     user.completeNewPasswordChallenge(password, {}, callbacks(user, email, resolve, reject));
+  });
+}
+
+/** Completes the MFA_SETUP challenge from sign-in and keeps the authenticator as the preferred factor. */
+export function finishTotpSetup(user: CognitoUser, email: string, code: string): Promise<Session> {
+  return new Promise((resolve, reject) => {
+    user.verifySoftwareToken(code, "One80Compass", {
+      onSuccess: (session) => {
+        user.setUserMfaPreference(null, { PreferredMfa: true, Enabled: true }, (preferenceError) => {
+          if (preferenceError) {
+            reject(preferenceError);
+            return;
+          }
+          resolve({ ...readSession(session, email), mfa: true });
+        });
+      },
+      onFailure: reject,
+    });
   });
 }
 
@@ -178,6 +197,22 @@ function callbacks(
     onFailure: (error: Error) => reject(error),
     newPasswordRequired: () => resolve({ status: "newPassword" as const, user }),
     totpRequired: () => resolve({ status: "totp" as const, user }),
+    mfaRequired: () => resolve({ status: "totp" as const, user }),
+    // Required MFA with no authenticator yet. The secret is shown once; the code finishes sign-in.
+    mfaSetup: () => {
+      user.associateSoftwareToken({
+        associateSecretCode: (secret) => resolve({ status: "totpSetup" as const, user, secret }),
+        onFailure: (error: Error) => reject(error instanceof Error ? error : new Error("Could not start authenticator setup.")),
+      });
+    },
+    selectMFAType: () => {
+      user.sendMFASelectionAnswer("SOFTWARE_TOKEN_MFA", {
+        onSuccess: (session) => resolve({ status: "signedIn" as const, session: readSession(session, email) }),
+        onFailure: (error: Error) => reject(error instanceof Error ? error : new Error("Could not choose an authenticator.")),
+        totpRequired: () => resolve({ status: "totp" as const, user }),
+        mfaRequired: () => resolve({ status: "totp" as const, user }),
+      });
+    },
   };
 }
 

@@ -9,7 +9,7 @@ Stdio MCP server (`one80compass-vault`) that exposes staff vault tools to Cursor
 | Variable | Purpose |
 | --- | --- |
 | `ONE80COMPASS_API_URL` | Portal API base URL (no trailing slash) |
-| `ONE80COMPASS_ID_TOKEN` | Cognito ID token for a `one80-admin` user |
+| `ONE80COMPASS_ID_TOKEN` | Cognito ID token for a `one80-admin` user. Treat it as a secret. It lasts about one hour. This process checks the admin group and `exp` only; API Gateway verifies the signature. |
 
 ## Run
 

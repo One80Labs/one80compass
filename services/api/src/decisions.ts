@@ -250,8 +250,8 @@ type OpenSuggestion = ParsedSuggestion & {
 async function listSuggestions(ctx: DecisionCtx, projectId: string): Promise<HttpResult> {
   const project = await readable(ctx, projectId);
   if (!project) return notFound(ctx.correlationId);
-  const suggestions = await openSuggestions(ctx, project.customerId, projectId, project.projectKey);
-  return json(200, { suggestions: suggestions.map(suggestionResponse) }, ctx.correlationId);
+  const open = await openSuggestions(ctx, project.customerId, projectId, project.projectKey);
+  return json(200, { suggestions: open.suggestions.map(suggestionResponse), transcripts: open.transcripts }, ctx.correlationId);
 }
 
 async function acceptSuggestion(ctx: DecisionCtx, projectId: string, suggestionId: string): Promise<HttpResult> {
@@ -259,7 +259,7 @@ async function acceptSuggestion(ctx: DecisionCtx, projectId: string, suggestionI
   if (opened === "view") return viewOnly(ctx.correlationId);
   if (!opened) return notFound(ctx.correlationId);
   const open = await openSuggestions(ctx, opened.customerId, projectId, opened.projectKey);
-  const suggestion = open.find((item) => item.suggestionId === suggestionId);
+  const suggestion = open.suggestions.find((item) => item.suggestionId === suggestionId);
   if (!suggestion) return notFound(ctx.correlationId, "That suggestion is not in the inbox.");
   if (!suggestionIsAcceptable(suggestion.mark)) return validation(ctx.correlationId, blockedMarkMessage(suggestion.mark));
 
@@ -323,7 +323,7 @@ async function dismissSuggestion(ctx: DecisionCtx, projectId: string, suggestion
   if (opened === "view") return viewOnly(ctx.correlationId);
   if (!opened) return notFound(ctx.correlationId);
   const open = await openSuggestions(ctx, opened.customerId, projectId, opened.projectKey);
-  if (!open.some((item) => item.suggestionId === suggestionId)) return notFound(ctx.correlationId, "That suggestion is not in the inbox.");
+  if (!open.suggestions.some((item) => item.suggestionId === suggestionId)) return notFound(ctx.correlationId, "That suggestion is not in the inbox.");
   const ledger = await ctx.deps.store.getSuggestionLedger(projectId);
   await ctx.deps.store.putSuggestionLedger(projectId, {
     acceptedIds: ledger.acceptedIds,
@@ -357,8 +357,15 @@ function blockedMarkMessage(mark: SuggestionMark): string {
   return "This remark was only discussed. It cannot be accepted as a commitment.";
 }
 
-async function openSuggestions(ctx: DecisionCtx, customerId: string, projectId: string, projectKey: string | null): Promise<OpenSuggestion[]> {
-  const [ledger, documents, issues, settings, memberships, texts] = await Promise.all([
+type TranscriptAvailability = "ready" | "unavailable" | "not_ingested";
+
+async function openSuggestions(
+  ctx: DecisionCtx,
+  customerId: string,
+  projectId: string,
+  projectKey: string | null,
+): Promise<{ suggestions: OpenSuggestion[]; transcripts: TranscriptAvailability }> {
+  const [ledger, documents, issues, settings, memberships, loaded] = await Promise.all([
     ctx.deps.store.getSuggestionLedger(projectId),
     ctx.deps.store.listDocuments(projectId),
     ctx.deps.store.listIssues(projectId),
@@ -366,6 +373,9 @@ async function openSuggestions(ctx: DecisionCtx, customerId: string, projectId: 
     ctx.deps.store.listMembershipsForCustomer(customerId),
     transcriptText(ctx, customerId, projectId),
   ]);
+  const texts = loaded.texts;
+  const transcripts: TranscriptAvailability =
+    loaded.availability === "ready" && texts.size === 0 && documents.some(isFiledTranscript) ? "not_ingested" : loaded.availability;
   const closed = new Set([...ledger.acceptedIds, ...ledger.dismissedIds]);
   const names = new Map(documents.map((document) => [document.documentId, document.name]));
   const works = issues
@@ -387,17 +397,27 @@ async function openSuggestions(ctx: DecisionCtx, customerId: string, projectId: 
       });
     }
   }
-  return open;
+  return { suggestions: open, transcripts };
 }
 
-async function transcriptText(ctx: DecisionCtx, customerId: string, projectId: string): Promise<Map<string, string>> {
+/** Krisp or Fireflies file with a stored version. Deleted files are not waiting on ingest. */
+function isFiledTranscript(document: { sourceLabel: string | null; deletedAt: string | null; currentVersionId: string | null }): boolean {
+  if (document.deletedAt || !document.currentVersionId) return false;
+  return document.sourceLabel === "krisp" || document.sourceLabel === "fireflies";
+}
+
+async function transcriptText(
+  ctx: DecisionCtx,
+  customerId: string,
+  projectId: string,
+): Promise<{ texts: Map<string, string>; availability: TranscriptAvailability }> {
   const load = ctx.deps.loadVaultChunks;
-  if (!load) return new Map();
+  if (!load) return { texts: new Map(), availability: "unavailable" };
   let chunks: VaultChunk[] = [];
   try {
     chunks = await load(customerId, projectId);
   } catch {
-    return new Map();
+    return { texts: new Map(), availability: "unavailable" };
   }
   const grouped = new Map<string, VaultChunk[]>();
   for (const chunk of chunks) {
@@ -412,7 +432,7 @@ async function transcriptText(ctx: DecisionCtx, customerId: string, projectId: s
     list.sort((left, right) => chunkIndex(left.id) - chunkIndex(right.id));
     texts.set(documentId, list.map((chunk) => chunk.body).join("\n"));
   }
-  return texts;
+  return { texts, availability: "ready" };
 }
 
 function chunkIndex(id: string): number {

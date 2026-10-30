@@ -6,6 +6,7 @@ import {
   beginTotpSetup,
   completeNewPassword,
   confirmTotpSetup,
+  finishTotpSetup,
   mfaIsEnrolled,
   mfaRequired,
   msUntilSessionExpiry,
@@ -137,8 +138,9 @@ function SignIn({ onSession }: { onSession: (session: Session) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const [totpSecret, setTotpSecret] = useState<string | null>(null);
   const [pendingUser, setPendingUser] = useState<CognitoUser | null>(null);
-  const [mode, setMode] = useState<"password" | "newPassword" | "totp">("password");
+  const [mode, setMode] = useState<"password" | "newPassword" | "totp" | "totpSetup">("password");
   const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(event: FormEvent) {
@@ -154,6 +156,10 @@ function SignIn({ onSession }: { onSession: (session: Session) => void }) {
         onSession(await submitTotp(pendingUser, email, totpCode));
         return;
       }
+      if (mode === "totpSetup" && pendingUser) {
+        onSession(await finishTotpSetup(pendingUser, email, totpCode));
+        return;
+      }
       applyResult(await signIn(email, password));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Sign-in failed.");
@@ -167,24 +173,38 @@ function SignIn({ onSession }: { onSession: (session: Session) => void }) {
     }
     setPendingUser(result.user);
     setPassword("");
+    if (result.status === "totpSetup") {
+      setTotpSecret(result.secret);
+      setTotpCode("");
+      setMode("totpSetup");
+      return;
+    }
+    setTotpSecret(null);
     setMode(result.status === "newPassword" ? "newPassword" : "totp");
   }
 
-  const label = mode === "newPassword" ? "Choose a password" : mode === "totp" ? "Authenticator code" : "Password";
+  const label = mode === "newPassword" ? "Choose a password" : mode === "totp" || mode === "totpSetup" ? "Authenticator code" : "Password";
 
   return (
     <form onSubmit={onSubmit}>
-      <h2>{mode === "totp" ? "Authenticator code" : "Sign in"}</h2>
+      <h2>{mode === "totpSetup" ? "Set up authenticator" : mode === "totp" ? "Authenticator code" : "Sign in"}</h2>
       {mode === "password" && (
         <label>
           Email
           <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required />
         </label>
       )}
-      {mode === "password" && !mfaRequired && <p>This development site signs you in with your email and password.</p>}
+      {mode === "password" && (
+        <p>After your password, sign-in asks for an authenticator. The first time, add the secret to Passwords or another authenticator app.</p>
+      )}
+      {mode === "totpSetup" && totpSecret && (
+        <p>
+          Add this secret to an authenticator app, then enter the current 6-digit code: <strong>{totpSecret}</strong>
+        </p>
+      )}
       <label>
         {label}
-        {mode === "totp" ? (
+        {mode === "totp" || mode === "totpSetup" ? (
           <input
             type="text"
             inputMode="numeric"

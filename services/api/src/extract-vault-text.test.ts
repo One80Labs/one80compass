@@ -82,7 +82,34 @@ describe("extractVaultText", () => {
       text: "",
     });
   });
+
+  it("skips an xlsx whose zip claims a huge uncompressed size", async () => {
+    const extracted = await extractVaultText(zipClaimingUncompressed(64 * 1024 * 1024), XLSX_TYPE, "bomb.xlsx");
+    expect(extracted).toEqual({ contentType: XLSX_TYPE, text: "" });
+  });
 });
+
+/** Central directory only. The parser must refuse this before Excel inflates it. */
+function zipClaimingUncompressed(size: number): Buffer {
+  const name = Buffer.from("xl/workbook.xml");
+  const local = Buffer.alloc(30 + name.length);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(name.length, 26);
+  name.copy(local, 30);
+  const central = Buffer.alloc(46 + name.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt32LE(10, 20);
+  central.writeUInt32LE(size, 24);
+  central.writeUInt16LE(name.length, 28);
+  name.copy(central, 46);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(central.length, 12);
+  eocd.writeUInt32LE(local.length, 16);
+  return Buffer.concat([local, central, eocd]);
+}
 
 function docxBytes(paragraph: string): Uint8Array {
   const document = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

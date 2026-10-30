@@ -4,6 +4,7 @@ import {
   dismissSuggestion,
   listSuggestions,
   type DecisionSuggestion,
+  type TranscriptAvailability,
 } from "./decision-client";
 import { ApiError } from "./api";
 import { formatWhen } from "./ui";
@@ -38,6 +39,7 @@ export function SuggestionInbox({
   onAccepted: () => Promise<void>;
 }) {
   const [suggestions, setSuggestions] = useState<DecisionSuggestion[]>([]);
+  const [transcripts, setTranscripts] = useState<TranscriptAvailability>("ready");
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -56,7 +58,10 @@ export function SuggestionInbox({
     setOpenId(null);
     listSuggestions(projectId, idToken)
       .then((result) => {
-        if (!cancelled) setSuggestions(result.suggestions);
+        if (!cancelled) {
+          setSuggestions(result.suggestions);
+          setTranscripts(result.transcripts);
+        }
       })
       .catch((caught) => {
         if (cancelled) return;
@@ -74,6 +79,7 @@ export function SuggestionInbox({
   async function reload() {
     const result = await listSuggestions(projectId, idToken);
     setSuggestions(result.suggestions);
+    setTranscripts(result.transcripts);
   }
 
   function startAccept(item: DecisionSuggestion) {
@@ -136,8 +142,8 @@ export function SuggestionInbox({
       )}
       {!loaded ? (
         <p className="muted small">Loading…</p>
-      ) : suggestions.length === 0 ? (
-        <p className="muted small">No suggestions from labeled transcripts.</p>
+      ) : error ? null : suggestions.length === 0 ? (
+        <p className="muted small">{emptyTranscriptMessage(transcripts)}</p>
       ) : (
         <div className="table-wrap">
           <table className="decision-table">
@@ -252,6 +258,12 @@ function workLabel(item: DecisionSuggestion, issues: IssueChoice[]): string {
 function assigneeNames(item: DecisionSuggestion, members: PersonChoice[]): string {
   if (item.assigneeIds.length === 0) return item.assigneeLabel || "—";
   return item.assigneeIds.map((id) => members.find((member) => member.id === id)?.name ?? (item.assigneeLabel || id)).join(", ");
+}
+
+function emptyTranscriptMessage(transcripts: TranscriptAvailability): string {
+  if (transcripts === "unavailable") return "Suggestions could not be loaded from the vault. Try again in a few minutes.";
+  if (transcripts === "not_ingested") return "Labeled transcripts are not in the vault yet. Suggestions show up after vault ingest.";
+  return "No suggestions from labeled transcripts.";
 }
 
 function message(caught: unknown): string {

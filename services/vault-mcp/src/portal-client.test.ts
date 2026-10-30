@@ -200,4 +200,19 @@ describe("createPortalClient", () => {
       /409.*Project is not on the vault allowlist\..*CONFLICT/,
     );
   });
+
+  it("surfaces a 409 from vault_draft_status when the program is not allowlisted", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(409, {
+        code: "CONFLICT",
+        message: "Project is not on the vault allowlist.",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createPortalClient(config);
+    await expect(client.draftFromVault("prog-1", "What shipped?")).rejects.toThrow(
+      /409.*Project is not on the vault allowlist\..*CONFLICT/,
+    );
+  });
 });

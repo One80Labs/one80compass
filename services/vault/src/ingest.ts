@@ -289,8 +289,11 @@ export function ingestProgram(input: IngestInput): IngestResult {
   }
 
   // Register rows are keyed by decisionId. An issue whose type is Decision stays a separate row.
-  for (const decision of input.decisions ?? []) {
-    if (decision.customerId !== program.customerId || decision.projectId !== program.programId) continue;
+  const acceptedDecisions = (input.decisions ?? []).filter(
+    (decision) => decision.customerId === program.customerId && decision.projectId === program.programId,
+  );
+  const acceptedDecisionIds = new Set(acceptedDecisions.map((decision) => decision.decisionId));
+  for (const decision of acceptedDecisions) {
     const body = decisionRegisterBody(decision);
     rows.push({
       ...identity(decision.decisionId),
@@ -309,7 +312,8 @@ export function ingestProgram(input: IngestInput): IngestResult {
         toSourceId: decision.issueId,
       });
     }
-    if (decision.duplicateOfId) {
+    // A survivor that is not in this batch would be a dangling edge.
+    if (decision.duplicateOfId && acceptedDecisionIds.has(decision.duplicateOfId)) {
       relations.push({
         ...identity(`supersedes:${decision.duplicateOfId}->${decision.decisionId}`),
         kind: "supersedes",

@@ -41,6 +41,15 @@ describe("assertAdminToken", () => {
     expect(() => assertAdminToken(token)).toThrow(/one80-admin/i);
   });
 
+  it("throws when exp is in the past", () => {
+    const token = fakeJwt({
+      email: "admin@example.com",
+      "cognito:groups": ["one80-admin"],
+      exp: Math.floor(Date.now() / 1000) - 60,
+    });
+    expect(() => assertAdminToken(token)).toThrow(/expired/i);
+  });
+
   it("returns session when admin group is present", () => {
     const token = fakeJwt({
       email: "admin@example.com",

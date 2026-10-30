@@ -65,11 +65,10 @@ export class DevStack extends cdk.Stack {
       userPoolName: "one80compass-dev",
       selfSignUpEnabled: false,
       signInAliases: { email: true },
-      // WARNING: this shared stack fronts one80compass.ai. Mfa.REQUIRED would lock out
-      // existing users who have not enrolled TOTP (app login does not yet handle MFA_SETUP).
-      // OPTIONAL enables software-token MFA without forcing cutover. Dedicated stage/prod
-      // pools MUST use cognito.Mfa.REQUIRED + otp before a pilot.
-      mfa: cognito.Mfa.OPTIONAL,
+      // This pool fronts one80compass.ai. Software-token MFA is required.
+      // Sign-in handles MFA_SETUP, so a user without an authenticator enrolls on the next login
+      // instead of being locked out. SMS is off.
+      mfa: cognito.Mfa.REQUIRED,
       mfaSecondFactor: { otp: true, sms: false },
       passwordPolicy: {
         minLength: 12,

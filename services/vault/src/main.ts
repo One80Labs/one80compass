@@ -14,6 +14,10 @@ export type VaultEvent =
 /**
  * Staff vault Lambda. The portal API invokes these events; it does not hold the vault secret.
  * apply-schema is also used by the deploy custom resource.
+ *
+ * IAM is the only caller gate. Grant `lambda:InvokeFunction` only to the portal API role
+ * and the deploy custom resource. This handler does not receive a user identity, so a
+ * broader invoke permission can read or replace vault rows.
  */
 export async function handler(event: unknown): Promise<Record<string, unknown>> {
   const typed = event as VaultEvent | null;

@@ -2,9 +2,9 @@
 
 Development stack `One80Compass-dev` in account `168034219908`, region `us-east-2`. Deploy only with the `one80compass` AWS profile.
 
-The stack creates Cognito with **optional** software-token (TOTP) MFA, the `one80-admin` group, an invitation for `nick@one80labs.com`, a DynamoDB table (RETAIN + PITR), a private documents bucket (RETAIN), an HTTP API, a separate sync worker, and a CloudFront site for the React app. API Gateway checks the Cognito token before the API Lambda, except for `POST /webhooks/github`, which checks the GitHub signature instead.
+The stack creates Cognito with **required** software-token (TOTP) MFA, the `one80-admin` group, an invitation for `nick@one80labs.com`, a DynamoDB table (RETAIN + PITR), a private documents bucket (RETAIN), an HTTP API, a separate sync worker, and a CloudFront site for the React app. API Gateway checks the Cognito token before the API Lambda, except for `POST /webhooks/github`, which checks the GitHub signature instead.
 
-**MFA warning:** this stack fronts live DNS (`one80compass.ai`). The pool uses `Mfa.OPTIONAL` so existing users are not locked out before TOTP enrollment / `MFA_SETUP` handling. Dedicated stage and production pools must use `cognito.Mfa.REQUIRED` with software-token MFA before a pilot.
+**MFA:** this stack fronts live DNS (`one80compass.ai`). The pool uses `Mfa.REQUIRED` with software-token MFA. Sign-in handles `MFA_SETUP`, so a user who has not enrolled adds an authenticator on the next login. Deploy `One80Compass-dev` for that pool change to take effect. SMS MFA stays off.
 
 The site name is `https://one80compass.ai` (and `www`). CloudFront uses the certificate `arn:aws:acm:us-east-1:168034219908:certificate/c630a40c-640f-43ec-898f-11aec9c02ece`. DNS is Route 53 hosted zone `Z0060300L4EB8CFDVZ1D`.
 

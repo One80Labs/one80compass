@@ -1,6 +1,6 @@
 # One80Compass — Unified release plan
 
-*Single plan for the portal product and the staff AI vault. Version 1.20 — 2026-10-30.*
+*Single plan for the portal product and the staff AI vault. Version 1.21 — 2026-10-30.*
 
 This document **combines**:
 
@@ -22,7 +22,7 @@ Use this file as the release plan. The v7.5 implementation plan remains historic
 | R3 backlog — ingest UI, upload-triggered ingest, scheduled ingest, richer ontology | **Complete** |
 | Absolute 2-hour browser session sign-out | **Complete** (auth_time + Cognito refresh 2h) |
 | R1 pilot / first external customer gate | **Not started** |
-| Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; MFA REQUIRED cutover remains for stage/prod; 2h session Done) |
+| Security hardening follow-ups (Oct 2026 review) | **Complete** (COMP-31 Secrets Manager done; live pool `Mfa.REQUIRED` with sign-in enrollment; 2h session Done) |
 | Gantt dependency enhancements (post-v1) | **Complete** |
 | Sidebar FAQ beginner guides (all roles) | **Complete** |
 | Decision Register (Project Plan) | **Complete** — register, plan marker, and suggestion inbox |
@@ -153,11 +153,11 @@ Staff SOP: [docs/sop/staff-vault.md](../sop/staff-vault.md).
 
 ### G2 — Security hardening follow-ups (Oct 2026 review) — Complete
 
-Code review + security scan closed Critical/High defects, then this slice landed the remaining G2 items (including **COMP-31** GitHub App PEM / webhook secret → Secrets Manager). Stage/prod Cognito should still use `Mfa.REQUIRED` on a stack without password-only admins (dev stays `OPTIONAL` with software tokens).
+Code review + security scan closed Critical/High defects, then this slice landed the remaining G2 items (including **COMP-31** GitHub App PEM / webhook secret → Secrets Manager). The live pool requires software-token MFA. Sign-in handles `MFA_SETUP`, so a user without an authenticator enrolls on the next login. That pool change takes effect on the next deploy of `One80Compass-dev`.
 
 | Item | Severity | Notes | Status |
 | --- | --- | --- | --- |
-| Cognito MFA on live DNS | Critical | Dev stack: `Mfa.OPTIONAL` + software OTP. Stage/prod must use `REQUIRED` on a stack without password-only admins | **Done** (code; REQUIRED cutover is stage/prod) |
+| Cognito MFA on live DNS | Critical | Dev stack: `Mfa.REQUIRED` + software OTP. Sign-in enrolls on `MFA_SETUP`. Takes effect on the next `One80Compass-dev` deploy | **Done** |
 | GitHub secrets in Secrets Manager (COMP-31) | Critical | Secret `one80compass-dev-github`; Lambdas read `GITHUB_SECRET_ARN`; PEM not in Lambda env | **Done** |
 | DynamoDB query pagination | High | `queryAll` / `queryUpTo` in `services/api/src/store.ts` (shared with sync) | **Done** |
 | Baseline number concurrency | High | `BASELINE_SEQ` ADD + conditional put; `409` on race | **Done** |
@@ -342,3 +342,4 @@ MCP server for Cursor/Claude: package `services/vault-mcp`.
 | 2026-10-29 | v1.18 §5 K suggestion inbox **Done**; COMP-79 and COMP-82 **Done**; vault ingest still uses the issue-type convention |
 | 2026-10-30 | v1.19 MCP SOP states ingest skips the Decision register and its history. §5 H adds copy-on-ingest and draft/MCP citation as **Not started**; mirrored on One80Compass Dev |
 | 2026-10-30 | v1.20 Decision register vault ingest **Done** (COMP-83, COMP-84, COMP-85): copy comments and history, cite the decision id in drafts and MCP; mirrored on One80Compass Dev |
+| 2026-10-30 | v1.21 Live Cognito pool `Mfa.REQUIRED`; sign-in enrolls on `MFA_SETUP`. Takes effect on the next dev-stack deploy |

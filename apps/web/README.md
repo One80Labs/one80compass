@@ -1,6 +1,6 @@
 # Web
 
-Vite and React. Sign-in uses the Cognito user pool from the dev stack. The browser keeps that session, so a refresh stays signed in. The app sends the ID token. API Gateway checks that token. The dev pool accepts email and password. Set `VITE_MFA_REQUIRED=true` only for a build whose pool requires an authenticator.
+Vite and React. Sign-in uses the Cognito user pool from the dev stack. The browser keeps that session, so a refresh stays signed in. The app sends the ID token. API Gateway checks that token. The pool requires a software-token authenticator. The first sign-in after that change shows a secret to add to an authenticator app; later sign-ins ask for the current code. `VITE_MFA_REQUIRED=true` is an extra admin gate in the app and is separate from the pool setting.
 
 An administrator can open and change every project. A Contributor can edit, add, and upload on the projects they can open. View can open those same screens and cannot change them. The members list and the invite form set that access. The API refuses a View change even if a button is shown. An administrator renames the selected project in Settings, under General.
 

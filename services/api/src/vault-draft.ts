@@ -49,9 +49,28 @@ export async function handleVaultDraft(ctx: VaultDraftCtx): Promise<HttpResult |
     return json(400, { code: "VALIDATION", message: "question is required.", correlationId: ctx.correlationId }, ctx.correlationId);
   }
 
-  const workItems = await ctx.deps.loadWorkItems(projectId);
-  const chunks = await ctx.deps.loadChunks(project.customerId, projectId);
-  const decisions = await ctx.deps.loadDecisions(project.customerId, projectId);
+  let workItems: Awaited<ReturnType<VaultDraftDeps["loadWorkItems"]>>;
+  let chunks: Awaited<ReturnType<VaultDraftDeps["loadChunks"]>>;
+  let decisions: Awaited<ReturnType<VaultDraftDeps["loadDecisions"]>>;
+  try {
+    workItems = await ctx.deps.loadWorkItems(projectId);
+    chunks = await ctx.deps.loadChunks(project.customerId, projectId);
+    decisions = await ctx.deps.loadDecisions(project.customerId, projectId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/not allowlisted/i.test(message)) {
+      return json(
+        409,
+        {
+          code: "CONFLICT",
+          message: "Project is not on the vault allowlist.",
+          correlationId: ctx.correlationId,
+        },
+        ctx.correlationId,
+      );
+    }
+    throw error;
+  }
   const drafted = draftStatus({
     customerId: project.customerId,
     programId: projectId,

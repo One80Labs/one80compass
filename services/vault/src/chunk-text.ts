@@ -1,5 +1,8 @@
 const MAX_CHUNK = 1000;
 
+/** A complete suggestion mark. Chunking must not cut the opening or closing tag. */
+const SUGGESTION_BLOCK = /\[suggestion\b[\s\S]*?\[\/suggestion\]/gi;
+
 const TEXT_EXTENSIONS = [".md", ".txt", ".csv", ".json"];
 
 /**
@@ -52,10 +55,33 @@ export function chunkText(text: string, contentType: string, fileName: string): 
   return chunks.filter((chunk) => chunk.length > 0);
 }
 
+/**
+ * Split a long paragraph on the size limit, but keep each `[suggestion]…[/suggestion]`
+ * block in one piece. A block longer than the limit becomes one oversized chunk so
+ * rejoining chunks cannot insert a character inside the tag.
+ */
 function hardSplit(text: string): string[] {
+  const spans = suggestionSpans(text);
   const parts: string[] = [];
-  for (let i = 0; i < text.length; i += MAX_CHUNK) {
-    parts.push(text.slice(i, i + MAX_CHUNK));
+  let index = 0;
+  while (index < text.length) {
+    let end = Math.min(index + MAX_CHUNK, text.length);
+    const span = spans.find((item) => item.start < end && item.end > end);
+    if (span) {
+      end = span.start > index ? span.start : span.end;
+    }
+    if (end <= index) end = Math.min(index + MAX_CHUNK, text.length);
+    parts.push(text.slice(index, end));
+    index = end;
   }
-  return parts;
+  return parts.filter((part) => part.length > 0);
+}
+
+function suggestionSpans(text: string): { start: number; end: number }[] {
+  const spans: { start: number; end: number }[] = [];
+  for (const match of text.matchAll(SUGGESTION_BLOCK)) {
+    const start = match.index ?? 0;
+    spans.push({ start, end: start + match[0].length });
+  }
+  return spans;
 }

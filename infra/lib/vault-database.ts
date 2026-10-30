@@ -151,6 +151,7 @@ export class VaultDatabase extends Construct {
       },
       policy: cr.AwsCustomResourcePolicy.fromStatements([
         new iam.PolicyStatement({
+          // Deploy-time schema apply. The portal API role is the only other intended invoker.
           actions: ["lambda:InvokeFunction"],
           resources: [vaultFunction.functionArn],
         }),

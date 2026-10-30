@@ -140,6 +140,36 @@ describe("handleVaultDraft", () => {
     expect(emptyPayload.citations).toEqual([]);
     expect(emptyPayload.report.body).not.toMatch(/recommend|should|Discovery interviews/i);
   });
+
+  it("returns 409 when the vault program is not allowlisted", async () => {
+    const deps: VaultDraftDeps = {
+      getProject: async () => ({ projectId: "proj-1", customerId: "cust-1" }),
+      listMembershipsForUser: async () => [],
+      loadWorkItems: async () => [],
+      loadChunks: async () => {
+        throw new Error("Vault Lambda failed: list-chunks program is not allowlisted");
+      },
+      loadDecisions: async () => [],
+      createReport: async () => {
+        throw new Error("draft must not be saved");
+      },
+      newId: () => "report-1",
+      now: () => new Date("2026-10-24T12:00:00.000Z"),
+    };
+    const result = await handleVaultDraft({
+      deps,
+      principal: { userId: "admin-1", groups: ["one80-admin"], mfa: true },
+      method: "POST",
+      path: "/projects/proj-1/reports/draft",
+      body: { question: "What shipped?" },
+      correlationId: "corr-409",
+    });
+    expect(result?.statusCode).toBe(409);
+    expect(JSON.parse(result!.body)).toMatchObject({
+      code: "CONFLICT",
+      message: "Project is not on the vault allowlist.",
+    });
+  });
 });
 
 describe("publish putReportText", () => {

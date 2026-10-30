@@ -480,7 +480,7 @@ describe("suggestion inbox", () => {
         embedding: null,
       },
     ];
-    return { rows, issues, ledger, send };
+    return { rows, issues, documents, ledger, deps, send };
   }
 
   it("lists transcript proposals and keeps hypothetical remarks from a normal accept", async () => {
@@ -549,6 +549,35 @@ describe("suggestion inbox", () => {
     expect(rows).toHaveLength(0);
     const remaining = (JSON.parse((await send("view", "GET", "/projects/proj-1/decision-suggestions")).body) as { suggestions: { suggestionId: string }[] }).suggestions;
     expect(remaining.map((item) => item.suggestionId)).toEqual([suggestions[0].suggestionId]);
+  });
+
+  it("says when vault text could not be loaded", async () => {
+    const { deps, send } = inboxHarness();
+    deps.loadVaultChunks = async () => {
+      throw new Error("Vault Lambda failed");
+    };
+    const listed = await send("view", "GET", "/projects/proj-1/decision-suggestions");
+    expect(listed.statusCode).toBe(200);
+    const body = JSON.parse(listed.body) as { suggestions: unknown[]; transcripts: string };
+    expect(body.suggestions).toEqual([]);
+    expect(body.transcripts).toBe("unavailable");
+  });
+
+  it("says when a labeled transcript has not been ingested", async () => {
+    const { deps, documents, send } = inboxHarness();
+    documents.splice(0, documents.length, {
+      documentId: "doc-1",
+      projectId: "proj-1",
+      name: "Standup",
+      sourceLabel: "fireflies",
+      currentVersionId: "ver-1",
+      deletedAt: null,
+    } as never);
+    deps.loadVaultChunks = async () => [];
+    const listed = await send("view", "GET", "/projects/proj-1/decision-suggestions");
+    const body = JSON.parse(listed.body) as { suggestions: unknown[]; transcripts: string };
+    expect(body.suggestions).toEqual([]);
+    expect(body.transcripts).toBe("not_ingested");
   });
 });
 
